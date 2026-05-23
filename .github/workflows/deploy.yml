@@ -13,7 +13,7 @@ permissions:
 
 concurrency:
   group: "pages"
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build-and-deploy:
@@ -31,12 +31,12 @@ jobs:
         run: |
           TAG=${GITHUB_REF#refs/tags/}
           echo "tag=$TAG" >> $GITHUB_OUTPUT
-          
+
           TAG_DATE=$(git log -1 --format=%ci $TAG 2>/dev/null || date -u +"%Y-%m-%d %H:%M:%S")
           echo "build_time=$TAG_DATE" >> $GITHUB_OUTPUT
-          
+
           echo "sha=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
-          
+
           echo "📦 Version: $TAG"
           echo "🕐 Build Time: $TAG_DATE"
           echo "🔨 Commit: ${GITHUB_SHA::7}"
@@ -81,9 +81,6 @@ jobs:
   deploy-pages:
     needs: build-and-deploy
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
