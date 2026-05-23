@@ -8,6 +8,7 @@ import SearchBar from '@/components/SearchBar'
 import BookmarkGrid from '@/components/BookmarkGrid'
 import SettingsDialog from '@/components/SettingsDialog'
 import { RefreshCw, Loader2 } from 'lucide-react'
+import { versionDisplay, buildTimeDisplay } from '@/lib/version'
 
 export default function MainPage() {
   const [webdavConfig, setWebdavConfig] = useState<WebDAVConfig | null>(null)
@@ -217,6 +218,13 @@ export default function MainPage() {
               openInNewTab={appConfig.display.openInNewTab}
             />
           </div>
+        </div>
+
+        {/* Version info */}
+        <div className="text-center pb-4 text-white/20 text-xs">
+          <span>{versionDisplay}</span>
+          <span className="mx-2">·</span>
+          <span>{buildTimeDisplay}</span>
         </div>
       </main>
 
