@@ -3,6 +3,7 @@ import type { AppConfig, DisplayBookmark, WebDAVConfig, BookmarksStore } from '@
 import { loadWebDAVConfig, loadAppConfig, fetchAppConfig, fetchBookmarks, getDefaultAppConfig, saveAppConfig, loadBookmarksCache } from '@/lib/config'
 import { filterByTag, getMostVisitedBookmarks, isDeleted, getFaviconUrl, stringToColor } from '@/lib/bookmarks'
 import { recordClick, loadClickStatsFromWebDAV, togglePinnedBookmark, loadPinnedBookmarks } from '@/lib/stats'
+import { checkUrlReachable } from '@/lib/reachability'
 import Sidebar from '@/components/Sidebar'
 import BookmarkGrid from '@/components/BookmarkGrid'
 import SettingsDialog from '@/components/SettingsDialog'
@@ -120,6 +121,23 @@ export default function MainPage() {
       b.tags.some(t => t.toLowerCase().includes(query))
     )
   }, [bookmarks, allBookmarks, searchQuery, activeTag])
+
+  // 当书签列表变化时，自动检测连接状态
+  useEffect(() => {
+    if (bookmarks.length === 0) return
+
+    // 先标记所有书签为检测中（null）
+    setBookmarks(prev => prev.map(b => ({ ...b, reachable: null })))
+
+    // 并发检测每个书签的可达性
+    bookmarks.forEach((bookmark) => {
+      checkUrlReachable(bookmark.url).then(reachable => {
+        setBookmarks(prev =>
+          prev.map(b => b.url === bookmark.url ? { ...b, reachable } : b)
+        )
+      })
+    })
+  }, [activeTag]) // 只在标签切换时触发，避免频繁检测
 
   useEffect(() => {
     const wdav = loadWebDAVConfig()

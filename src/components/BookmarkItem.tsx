@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { DisplayBookmark } from '@/types'
-import { Pin } from 'lucide-react'
+import { Pin, Circle, Loader2 } from 'lucide-react'
 
 interface BookmarkItemProps {
   bookmark: DisplayBookmark
@@ -42,8 +42,28 @@ export default function BookmarkItem({
     onTogglePin?.(bookmark.url)
   }
 
+  // 连接状态指示器
+  const renderReachability = () => {
+    const { reachable } = bookmark
+    if (reachable === null || reachable === undefined) {
+      // 未检测：不显示
+      return null
+    }
+    if (reachable === true) {
+      return (
+        <span className="absolute -top-1 -left-1 z-10 w-3 h-3 rounded-full bg-green-500 border border-white/30" title="可连接" />
+      )
+    }
+    return (
+      <span className="absolute -top-1 -left-1 z-10 w-3 h-3 rounded-full bg-red-500 border border-white/30" title="不可连接" />
+    )
+  }
+
   return (
     <div className="relative flex flex-col items-center gap-1.5 group w-full">
+      {/* Reachability indicator */}
+      {renderReachability()}
+
       {/* Pin button */}
       <button
         onClick={handlePinClick}
