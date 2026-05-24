@@ -198,6 +198,7 @@ export default function SettingsDialog({ open, onOpenChange, config, onConfigSav
                         value={tag.tag}
                         onChange={(e) => updateTag(tag.id, { tag: e.target.value })}
                         className="bg-white/10 border-white/20 text-white text-sm h-7"
+                        placeholder="多个 tag 用逗号分隔"
                       />
                     </div>
                     <div>
