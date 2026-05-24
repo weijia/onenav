@@ -3,6 +3,7 @@ import { getFileContents, putFileContents, createDirectory } from '@/lib/webdav'
 
 const WEBDAV_CONFIG_KEY = 'webDAVConfig'
 const APP_CONFIG_KEY = 'onenavConfig'
+const BOOKMARKS_CACHE_KEY = 'onenavBookmarksCache'
 
 export function loadWebDAVConfig(): WebDAVConfig | null {
   try {
@@ -55,9 +56,30 @@ export async function saveAppConfigToWebDAV(wdav: WebDAVConfig, config: AppConfi
 export async function fetchBookmarks(wdav: WebDAVConfig, path: string): Promise<BookmarksStore | null> {
   try {
     const raw = await getFileContents(wdav, path)
+    const store = JSON.parse(raw) as BookmarksStore
+    // 缓存到 localStorage
+    saveBookmarksCache(store)
+    return store
+  } catch {
+    return null
+  }
+}
+
+export function loadBookmarksCache(): BookmarksStore | null {
+  try {
+    const raw = localStorage.getItem(BOOKMARKS_CACHE_KEY)
+    if (!raw) return null
     return JSON.parse(raw) as BookmarksStore
   } catch {
     return null
+  }
+}
+
+export function saveBookmarksCache(store: BookmarksStore): void {
+  try {
+    localStorage.setItem(BOOKMARKS_CACHE_KEY, JSON.stringify(store))
+  } catch {
+    // localStorage 满了就忽略
   }
 }
 

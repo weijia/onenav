@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import type { AppConfig, DisplayBookmark, WebDAVConfig, BookmarksStore } from '@/types'
-import { loadWebDAVConfig, loadAppConfig, fetchAppConfig, fetchBookmarks, getDefaultAppConfig, saveAppConfig } from '@/lib/config'
+import { loadWebDAVConfig, loadAppConfig, fetchAppConfig, fetchBookmarks, getDefaultAppConfig, saveAppConfig, loadBookmarksCache } from '@/lib/config'
 import { filterByTag, filterByMultipleTags, getMostVisitedBookmarks, isDeleted } from '@/lib/bookmarks'
 import { recordClick, loadClickStatsFromWebDAV } from '@/lib/stats'
 import Sidebar from '@/components/Sidebar'
@@ -20,6 +20,7 @@ export default function MainPage() {
   const [refreshing, setRefreshing] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [allBookmarks, setAllBookmarks] = useState<DisplayBookmark[]>([])
+  const cachedStoreRef = useRef(false)
 
   const loadAllData = useCallback(async (wdav: WebDAVConfig, showLoading = true) => {
     if (showLoading) setLoading(true)
@@ -36,13 +37,24 @@ export default function MainPage() {
       }
       setAppConfig(config)
 
-      // Load bookmarks
+      // 先从本地缓存加载，立即显示
+      const cachedStore = loadBookmarksCache()
+      if (cachedStore) {
+        cachedStoreRef.current = true
+        processBookmarks(cachedStore, config)
+        if (showLoading) setLoading(false)
+      }
+
+      // 从 WebDAV 加载最新数据，更新缓存和显示
       const store = await fetchBookmarks(wdav, config.bookmarkPath)
       if (store) {
         processBookmarks(store, config)
       }
     } catch (err) {
-      setError(`Failed to load data: ${err instanceof Error ? err.message : 'Unknown error'}`)
+      // WebDAV 加载失败，如果已有缓存数据就不报错
+      if (!cachedStoreRef.current) {
+        setError(`Failed to load data: ${err instanceof Error ? err.message : 'Unknown error'}`)
+      }
     } finally {
       setLoading(false)
     }
