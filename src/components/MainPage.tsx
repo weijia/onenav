@@ -74,24 +74,8 @@ export default function MainPage() {
       // Show all bookmarks from all configured tags
       result = filterByMultipleTags(store, configuredTags)
     } else if (activeTag === 'onenav') {
-      // Special: show most visited bookmarks (from all bookmarks, not just configured tags)
-      const all = Object.entries(store.data)
-        .filter(([_, e]) => !isDeleted(e))
-        .map(([_, e]) => {
-          const url = e.meta.url || e.meta.mainUrl || ''
-          return {
-            url,
-            title: e.meta.shortTitle || e.meta.title || url,
-            favicon: e.meta.favicon || '',
-            color: '', // Will be set by getMostVisitedBookmarks
-            tags: e.tags,
-          }
-        })
+      // Special: show most visited bookmarks
       result = getMostVisitedBookmarks(store, 100)
-      // If no click stats yet, show all bookmarks
-      if (result.length === 0) {
-        result = all.slice(0, 100)
-      }
     } else if (activeTag === '._all_') {
       // Special: show all bookmarks (not deleted)
       result = Object.entries(store.data)
