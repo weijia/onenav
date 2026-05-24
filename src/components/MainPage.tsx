@@ -169,7 +169,7 @@ export default function MainPage() {
       />
 
       {/* Main content */}
-      <main className="relative z-10 min-h-screen flex flex-col" style={{ marginLeft: '60px', width: 'calc(100vw - 60px)' }}>
+      <main className="relative z-10 min-h-screen flex flex-col" style={{ marginLeft: '60px' }}>
         {/* Top bar */}
         <div className="flex items-center justify-between px-6 py-3">
           <div className="flex items-center gap-2">
@@ -189,7 +189,7 @@ export default function MainPage() {
         {/* Center content */}
         <div className="flex-1 flex flex-col items-center justify-center px-4">
           {/* Bookmark grid */}
-          <div className="w-full overflow-x-auto">
+          <div className="w-full overflow-hidden">
             <BookmarkGrid
               bookmarks={bookmarks}
               iconSize={appConfig.display.iconSize}
