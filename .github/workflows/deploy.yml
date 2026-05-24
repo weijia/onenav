@@ -56,7 +56,6 @@ jobs:
           VITE_APP_VERSION: ${{ steps.version.outputs.tag }}
           VITE_APP_BUILD_TIME: ${{ steps.version.outputs.build_time }}
           VITE_APP_COMMIT_SHA: ${{ steps.version.outputs.sha }}
-          VITE_BASE: /${{ github.event.repository.name }}/
 
       # ========== 部署到 WebDAV ==========
       - name: Upload to WebDAV
