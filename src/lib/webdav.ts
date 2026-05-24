@@ -46,6 +46,27 @@ export async function putFileContents(config: WebDAVConfig, path: string, data: 
   }
 }
 
+/**
+ * 创建 WebDAV 目录（如果不存在）
+ */
+export async function createDirectory(config: WebDAVConfig, path: string): Promise<void> {
+  const baseUrl = normalizeUrl(config.url)
+  const fullPath = path.startsWith('/') ? path : `/${path}`
+  const url = `${baseUrl}${fullPath}`
+
+  const response = await fetch(url, {
+    method: 'MKCOL',
+    headers: {
+      'Authorization': getAuthHeader(config),
+    },
+  })
+
+  // 201 Created 或 405 Method Not Allowed（目录已存在）都算成功
+  if (response.status !== 201 && response.status !== 405) {
+    throw new Error(`Failed to create directory ${path}: ${response.status} ${response.statusText}`)
+  }
+}
+
 export async function stat(config: WebDAVConfig, path: string): Promise<{ etag: string; lastmod: string } | null> {
   const baseUrl = normalizeUrl(config.url)
   const fullPath = path.startsWith('/') ? path : `/${path}`

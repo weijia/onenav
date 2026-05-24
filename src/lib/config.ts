@@ -1,5 +1,5 @@
 import type { WebDAVConfig, AppConfig, BookmarksStore } from '@/types'
-import { getFileContents, putFileContents } from '@/lib/webdav'
+import { getFileContents, putFileContents, createDirectory } from '@/lib/webdav'
 
 const WEBDAV_CONFIG_KEY = 'webDAVConfig'
 const APP_CONFIG_KEY = 'onenavConfig'
@@ -44,6 +44,10 @@ export async function fetchAppConfig(wdav: WebDAVConfig): Promise<AppConfig | nu
 }
 
 export async function saveAppConfigToWebDAV(wdav: WebDAVConfig, config: AppConfig): Promise<void> {
+  // 确保目录存在
+  await createDirectory(wdav, 'app_data')
+  await createDirectory(wdav, 'app_data/onenav')
+  // 保存配置文件
   await putFileContents(wdav, 'app_data/onenav/config.json', JSON.stringify(config, null, 2))
   saveAppConfig(config)
 }
