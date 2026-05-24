@@ -8,6 +8,7 @@ interface BookmarkItemProps {
   showName: boolean
   nameSize: number
   openInNewTab: boolean
+  onClick?: (bookmark: DisplayBookmark) => void
 }
 
 export default function BookmarkItem({
@@ -17,6 +18,7 @@ export default function BookmarkItem({
   showName,
   nameSize,
   openInNewTab,
+  onClick,
 }: BookmarkItemProps) {
   const [imgError, setImgError] = useState(false)
   const [imgLoaded, setImgLoaded] = useState(false)
@@ -24,6 +26,7 @@ export default function BookmarkItem({
   const firstLetter = bookmark.title.charAt(0).toUpperCase()
 
   const handleClick = () => {
+    onClick?.(bookmark)
     if (openInNewTab) {
       window.open(bookmark.url, '_blank')
     } else {

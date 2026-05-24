@@ -64,7 +64,9 @@ export async function fetchBookmarks(wdav: WebDAVConfig, path: string): Promise<
 export function getDefaultAppConfig(): AppConfig {
   return {
     version: 1,
-    tags: [],
+    tags: [
+      { id: 'default-onenav', label: '常用', tag: 'onenav', icon: 'LayoutGrid', order: 0 }
+    ],
     bookmarkPath: 'app_data/utags/bookmarks.json',
     display: {
       iconSize: 60,

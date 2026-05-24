@@ -10,6 +10,7 @@ interface BookmarkGridProps {
   nameSize: number
   maxWidth: number
   openInNewTab: boolean
+  onItemClick?: (bookmark: DisplayBookmark) => void
 }
 
 export default function BookmarkGrid({
@@ -21,6 +22,7 @@ export default function BookmarkGrid({
   nameSize,
   maxWidth,
   openInNewTab,
+  onItemClick,
 }: BookmarkGridProps) {
   if (bookmarks.length === 0) {
     return (
@@ -56,6 +58,7 @@ export default function BookmarkGrid({
             showName={showName}
             nameSize={nameSize}
             openInNewTab={openInNewTab}
+            onClick={onItemClick}
           />
         ))}
       </div>

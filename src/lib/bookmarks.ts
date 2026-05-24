@@ -1,4 +1,5 @@
 import type { BookmarksStore, DisplayBookmark } from '@/types'
+import { loadClickStats } from './stats'
 
 export function filterByTag(store: BookmarksStore, tag: string): DisplayBookmark[] {
   const results: DisplayBookmark[] = []
@@ -94,4 +95,50 @@ export function stringToColor(str: string): string {
   const lightness = 45 + (Math.abs(hash >> 16) % 15) // 45-60%
 
   return `hsl(${hue}, ${saturation}%, ${lightness}%)`
+}
+
+/**
+ * 获取最常访问的书签（用于 'onenav' 标签页）
+ */
+export function getMostVisitedBookmarks(store: BookmarksStore, limit: number = 30): DisplayBookmark[] {
+  const stats = loadClickStats()
+  const records = Object.values(stats.records)
+    .sort((a, b) => {
+      if (b.count !== a.count) return b.count - a.count
+      return b.lastClicked - a.lastClicked
+    })
+    .slice(0, limit)
+
+  const results: DisplayBookmark[] = []
+  for (const record of records) {
+    // 从 store 中查找完整的书签信息
+    const entry = Object.entries(store.data).find(([_, e]) => {
+      const url = e.meta.url || e.meta.mainUrl || ''
+      return url === record.url && !e.deletedMeta && !e.meta.deleted
+    })
+
+    if (entry) {
+      const [_, e] = entry
+      const url = e.meta.url || e.meta.mainUrl || ''
+      const title = e.meta.shortTitle || e.meta.title || url
+      results.push({
+        url,
+        title,
+        favicon: e.meta.favicon || getFaviconUrl(url),
+        color: stringToColor(new URL(url).hostname),
+        tags: e.tags,
+      })
+    } else {
+      // 如果书签已从 utags 删除，但统计还在，使用统计中的信息
+      results.push({
+        url: record.url,
+        title: record.title,
+        favicon: getFaviconUrl(record.url),
+        color: stringToColor(new URL(record.url).hostname),
+        tags: ['onenav'],
+      })
+    }
+  }
+
+  return results
 }
