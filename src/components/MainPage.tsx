@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import type { AppConfig, DisplayBookmark, WebDAVConfig, BookmarksStore } from '@/types'
 import { loadWebDAVConfig, loadAppConfig, fetchAppConfig, fetchBookmarks, getDefaultAppConfig, saveAppConfig, loadBookmarksCache } from '@/lib/config'
-import { filterByTag, filterByMultipleTags, getMostVisitedBookmarks, isDeleted, getFaviconUrl, stringToColor } from '@/lib/bookmarks'
+import { filterByTag, getMostVisitedBookmarks, isDeleted, getFaviconUrl, stringToColor } from '@/lib/bookmarks'
 import { recordClick, loadClickStatsFromWebDAV } from '@/lib/stats'
 import Sidebar from '@/components/Sidebar'
 import BookmarkGrid from '@/components/BookmarkGrid'
@@ -61,9 +61,7 @@ export default function MainPage() {
   }, [])
 
   const processBookmarks = useCallback((store: BookmarksStore, config: AppConfig) => {
-    const configuredTags = config.tags.map((t) => t.tag)
-
-    if (configuredTags.length === 0) {
+    if (config.tags.length === 0) {
       setAllBookmarks([])
       setBookmarks([])
       return
