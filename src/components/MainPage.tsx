@@ -123,21 +123,27 @@ export default function MainPage() {
   }, [bookmarks, allBookmarks, searchQuery, activeTag])
 
   // 当书签列表变化时，自动检测连接状态
+  const reachabilityCacheRef = useRef<Map<string, boolean>>(new Map())
+
   useEffect(() => {
     if (bookmarks.length === 0) return
 
-    // 先标记所有书签为检测中（null）
-    setBookmarks(prev => prev.map(b => ({ ...b, reachable: null })))
+    // 先用缓存的结果设置状态，避免闪烁
+    setBookmarks(prev => prev.map(b => {
+      const cached = reachabilityCacheRef.current.get(b.url)
+      return { ...b, reachable: cached !== undefined ? cached : null }
+    }))
 
-    // 并发检测每个书签的可达性
+    // 并发检测，只检测缓存中没有的或需要更新的
     bookmarks.forEach((bookmark) => {
       checkUrlReachable(bookmark.url).then(reachable => {
+        reachabilityCacheRef.current.set(bookmark.url, reachable)
         setBookmarks(prev =>
           prev.map(b => b.url === bookmark.url ? { ...b, reachable } : b)
         )
       })
     })
-  }, [activeTag]) // 只在标签切换时触发，避免频繁检测
+  }, [activeTag])
 
   useEffect(() => {
     const wdav = loadWebDAVConfig()
