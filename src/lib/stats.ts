@@ -39,6 +39,7 @@ export function recordClick(bookmark: DisplayBookmark): void {
   if (stats.records[bookmark.url]) {
     stats.records[bookmark.url].count++
     stats.records[bookmark.url].lastClicked = now
+    stats.records[bookmark.url].title = bookmark.title // Update title in case it changed
   } else {
     stats.records[bookmark.url] = {
       url: bookmark.url,
@@ -49,6 +50,7 @@ export function recordClick(bookmark: DisplayBookmark): void {
   }
   
   saveClickStats(stats)
+  console.log('[OneNav] Click recorded:', bookmark.url, 'count:', stats.records[bookmark.url].count)
 }
 
 export function getMostVisitedBookmarks(limit: number = 20): ClickRecord[] {
