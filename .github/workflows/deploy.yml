@@ -3,6 +3,8 @@ name: "Auto Deploy with Version"
 on:
   workflow_dispatch:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
 
@@ -22,23 +24,26 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       # ========== 获取版本信息 ==========
       - name: Get version info
         id: version
         run: |
-          TAG=${GITHUB_REF#refs/tags/}
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          # 如果是 tag 推送，使用 tag 名作为版本号；否则使用 commit SHA
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/}
+          else
+            VERSION="dev"
+          fi
+          echo "tag=$VERSION" >> $GITHUB_OUTPUT
 
-          TAG_DATE=$(git log -1 --format=%ci $TAG 2>/dev/null || date -u +"%Y-%m-%d %H:%M:%S")
-          echo "build_time=$TAG_DATE" >> $GITHUB_OUTPUT
+          BUILD_TIME=$(date -u +"%Y-%m-%d %H:%M:%S")
+          echo "build_time=$BUILD_TIME" >> $GITHUB_OUTPUT
 
           echo "sha=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
 
-          echo "📦 Version: $TAG"
-          echo "🕐 Build Time: $TAG_DATE"
+          echo "📦 Version: $VERSION"
+          echo "🕐 Build Time: $BUILD_TIME"
           echo "🔨 Commit: ${GITHUB_SHA::7}"
 
       - name: Setup Node.js
