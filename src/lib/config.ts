@@ -61,7 +61,7 @@ export function getDefaultAppConfig(): AppConfig {
   return {
     version: 1,
     tags: [],
-    bookmarkPath: '/utags-bookmarks.json',
+    bookmarkPath: 'app_data/utags/utags-bookmarks.json',
     display: {
       iconSize: 60,
       iconBorderRadius: 16,
