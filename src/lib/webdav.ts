@@ -11,7 +11,8 @@ function normalizeUrl(url: string): string {
 export async function getFileContents(config: WebDAVConfig, path: string): Promise<string> {
   const baseUrl = normalizeUrl(config.url)
   const fullPath = path.startsWith('/') ? path : `/${path}`
-  const url = `${baseUrl}${fullPath}`
+  // 添加时间戳参数防止浏览器缓存
+  const url = `${baseUrl}${fullPath}?_t=${Date.now()}`
 
   const response = await fetch(url, {
     method: 'GET',
