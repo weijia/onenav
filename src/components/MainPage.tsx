@@ -7,7 +7,7 @@ import TimeDisplay from '@/components/TimeDisplay'
 import SearchBar from '@/components/SearchBar'
 import BookmarkGrid from '@/components/BookmarkGrid'
 import SettingsDialog from '@/components/SettingsDialog'
-import { RefreshCw, Loader2 } from 'lucide-react'
+import { RefreshCw, Loader2, LayoutGrid } from 'lucide-react'
 import { versionDisplay, buildTimeDisplay } from '@/lib/version'
 
 export default function MainPage() {
@@ -171,10 +171,13 @@ export default function MainPage() {
       />
 
       {/* Main content */}
-      <main className="ml-[60px] relative z-10 min-h-screen flex flex-col w-[calc(100vw-60px)]">
+      <main className="relative z-10 min-h-screen flex flex-col" style={{ marginLeft: '60px', width: 'calc(100vw - 60px)' }}>
         {/* Top bar */}
         <div className="flex items-center justify-between px-6 py-3">
-          <div />
+          <div className="flex items-center gap-2">
+            <LayoutGrid className="w-5 h-5 text-white/60" />
+            <span className="text-white/60 text-sm">OneNav</span>
+          </div>
           <button
             onClick={handleRefresh}
             disabled={refreshing}
@@ -186,27 +189,9 @@ export default function MainPage() {
         </div>
 
         {/* Center content */}
-        <div className="flex-1 flex flex-col items-center justify-center px-4 -mt-20">
-          {/* Time */}
-          {appConfig.widgets.showTime && (
-            <div className="mb-8">
-              <TimeDisplay
-                fontSize={appConfig.widgets.fontSize}
-                fontColor={appConfig.widgets.fontColor}
-                showSeconds={appConfig.widgets.showSeconds}
-              />
-            </div>
-          )}
-
-          {/* Search bar */}
-          {appConfig.widgets.showSearchBar && (
-            <div className="mb-12">
-              <SearchBar searchEngine={appConfig.widgets.searchEngine} />
-            </div>
-          )}
-
+        <div className="flex-1 flex flex-col items-center justify-center px-4">
           {/* Bookmark grid */}
-          <div className="w-full">
+          <div className="w-full overflow-x-auto">
             <BookmarkGrid
               bookmarks={bookmarks}
               iconSize={appConfig.display.iconSize}
