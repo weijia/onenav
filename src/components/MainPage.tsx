@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import type { AppConfig, DisplayBookmark, WebDAVConfig, BookmarksStore } from '@/types'
 import { loadWebDAVConfig, loadAppConfig, fetchAppConfig, fetchBookmarks, getDefaultAppConfig, saveAppConfig } from '@/lib/config'
 import { filterByTag, filterByMultipleTags, getMostVisitedBookmarks } from '@/lib/bookmarks'
@@ -6,7 +6,7 @@ import { recordClick } from '@/lib/stats'
 import Sidebar from '@/components/Sidebar'
 import BookmarkGrid from '@/components/BookmarkGrid'
 import SettingsDialog from '@/components/SettingsDialog'
-import { RefreshCw, Loader2, LayoutGrid } from 'lucide-react'
+import { RefreshCw, Loader2, LayoutGrid, Search } from 'lucide-react'
 import { versionDisplay, buildTimeDisplay } from '@/lib/version'
 
 export default function MainPage() {
@@ -18,6 +18,8 @@ export default function MainPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [refreshing, setRefreshing] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [allBookmarks, setAllBookmarks] = useState<DisplayBookmark[]>([])
 
   const loadAllData = useCallback(async (wdav: WebDAVConfig, showLoading = true) => {
     if (showLoading) setLoading(true)
@@ -47,20 +49,54 @@ export default function MainPage() {
     const configuredTags = config.tags.map((t) => t.tag)
 
     if (configuredTags.length === 0) {
+      setAllBookmarks([])
       setBookmarks([])
       return
     }
 
+    let result: DisplayBookmark[]
     if (activeTag === null) {
       // Show all bookmarks from all configured tags
-      setBookmarks(filterByMultipleTags(store, configuredTags))
+      result = filterByMultipleTags(store, configuredTags)
     } else if (activeTag === 'onenav') {
-      // Special: show most visited bookmarks
-      setBookmarks(getMostVisitedBookmarks(store, 30))
+      // Special: show most visited bookmarks (from all bookmarks, not just configured tags)
+      const all = Object.entries(store.data)
+        .filter(([_, e]) => !e.deletedMeta && !e.meta.deleted)
+        .map(([_, e]) => {
+          const url = e.meta.url || e.meta.mainUrl || ''
+          return {
+            url,
+            title: e.meta.shortTitle || e.meta.title || url,
+            favicon: e.meta.favicon || '',
+            color: '', // Will be set by getMostVisitedBookmarks
+            tags: e.tags,
+          }
+        })
+      result = getMostVisitedBookmarks(store, 100)
+      // If no click stats yet, show all bookmarks
+      if (result.length === 0) {
+        result = all.slice(0, 100)
+      }
     } else {
-      setBookmarks(filterByTag(store, activeTag))
+      result = filterByTag(store, activeTag)
     }
+    
+    setAllBookmarks(result)
+    setBookmarks(result)
   }, [activeTag])
+
+  // Filter bookmarks based on search query (only for onenav tag)
+  const filteredBookmarks = useMemo(() => {
+    if (activeTag !== 'onenav' || !searchQuery.trim()) {
+      return bookmarks
+    }
+    const query = searchQuery.toLowerCase()
+    return allBookmarks.filter(b => 
+      b.title.toLowerCase().includes(query) ||
+      b.url.toLowerCase().includes(query) ||
+      b.tags.some(t => t.toLowerCase().includes(query))
+    )
+  }, [bookmarks, allBookmarks, searchQuery, activeTag])
 
   useEffect(() => {
     const wdav = loadWebDAVConfig()
@@ -192,10 +228,25 @@ export default function MainPage() {
 
         {/* Center content */}
         <div className="flex-1 flex flex-col items-center justify-center px-4">
+          {/* Search bar for onenav tag */}
+          {activeTag === 'onenav' && (
+            <div className="w-full max-w-md mb-6">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
+                <input
+                  type="text"
+                  placeholder="搜索书签..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full h-10 pl-10 pr-4 rounded-lg bg-white/10 border border-white/20 text-white placeholder:text-white/40 focus:outline-none focus:border-white/40"
+                />
+              </div>
+            </div>
+          )}
           {/* Bookmark grid */}
           <div className="w-full overflow-hidden">
             <BookmarkGrid
-              bookmarks={bookmarks}
+              bookmarks={filteredBookmarks}
               iconSize={appConfig.display.iconSize}
               borderRadius={appConfig.display.iconBorderRadius}
               spacing={appConfig.display.iconSpacing}
