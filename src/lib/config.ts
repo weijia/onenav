@@ -87,7 +87,8 @@ export function getDefaultAppConfig(): AppConfig {
   return {
     version: 1,
     tags: [
-      { id: 'default-onenav', label: '常用', tag: 'onenav', icon: 'LayoutGrid', order: 0 }
+      { id: 'default-onenav', label: '常用', tag: 'onenav', icon: 'LayoutGrid', order: 0 },
+      { id: 'default-all', label: '全部', tag: '._all_', icon: 'Globe', order: 1 }
     ],
     bookmarkPath: 'app_data/utags/bookmarks.json',
     display: {

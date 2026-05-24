@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import type { AppConfig, DisplayBookmark, WebDAVConfig, BookmarksStore } from '@/types'
 import { loadWebDAVConfig, loadAppConfig, fetchAppConfig, fetchBookmarks, getDefaultAppConfig, saveAppConfig, loadBookmarksCache } from '@/lib/config'
-import { filterByTag, filterByMultipleTags, getMostVisitedBookmarks, isDeleted } from '@/lib/bookmarks'
+import { filterByTag, filterByMultipleTags, getMostVisitedBookmarks, isDeleted, getFaviconUrl, stringToColor } from '@/lib/bookmarks'
 import { recordClick, loadClickStatsFromWebDAV } from '@/lib/stats'
 import Sidebar from '@/components/Sidebar'
 import BookmarkGrid from '@/components/BookmarkGrid'
@@ -92,6 +92,22 @@ export default function MainPage() {
       if (result.length === 0) {
         result = all.slice(0, 100)
       }
+    } else if (activeTag === '._all_') {
+      // Special: show all bookmarks (not deleted)
+      result = Object.entries(store.data)
+        .filter(([_, e]) => !isDeleted(e))
+        .map(([_, e]) => {
+          const url = e.meta.url || e.meta.mainUrl || ''
+          if (!url) return null
+          return {
+            url,
+            title: e.meta.shortTitle || e.meta.title || url,
+            favicon: e.meta.favicon || getFaviconUrl(url),
+            color: stringToColor(new URL(url).hostname),
+            tags: e.tags,
+          }
+        })
+        .filter((b): b is DisplayBookmark => b !== null)
     } else {
       result = filterByTag(store, activeTag)
     }
