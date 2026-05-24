@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import type { AppConfig, DisplayBookmark, WebDAVConfig, BookmarksStore } from '@/types'
 import { loadWebDAVConfig, loadAppConfig, fetchAppConfig, fetchBookmarks, getDefaultAppConfig, saveAppConfig } from '@/lib/config'
 import { filterByTag, filterByMultipleTags, getMostVisitedBookmarks } from '@/lib/bookmarks'
-import { recordClick } from '@/lib/stats'
+import { recordClick, loadClickStatsFromWebDAV } from '@/lib/stats'
 import Sidebar from '@/components/Sidebar'
 import BookmarkGrid from '@/components/BookmarkGrid'
 import SettingsDialog from '@/components/SettingsDialog'
@@ -26,6 +26,9 @@ export default function MainPage() {
     setError('')
 
     try {
+      // Load click stats from WebDAV and merge with local
+      await loadClickStatsFromWebDAV(wdav)
+
       // Load app config from WebDAV or fall back to localStorage
       let config = await fetchAppConfig(wdav)
       if (!config) {
@@ -254,7 +257,7 @@ export default function MainPage() {
               nameSize={appConfig.display.nameSize}
               maxWidth={appConfig.display.maxWidth}
               openInNewTab={appConfig.display.openInNewTab}
-              onItemClick={recordClick}
+              onItemClick={(bookmark) => recordClick(bookmark, webdavConfig || undefined)}
             />
           </div>
         </div>
