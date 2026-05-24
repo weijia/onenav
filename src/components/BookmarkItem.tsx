@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { DisplayBookmark } from '@/types'
-import { Pin, Circle, Loader2 } from 'lucide-react'
+import { Pin } from 'lucide-react'
 
 interface BookmarkItemProps {
   bookmark: DisplayBookmark
