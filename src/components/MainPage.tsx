@@ -171,7 +171,7 @@ export default function MainPage() {
       />
 
       {/* Main content */}
-      <main className="ml-[60px] relative z-10 min-h-screen flex flex-col items-center">
+      <main className="ml-[60px] relative z-10 min-h-screen flex flex-col w-[calc(100vw-60px)]">
         {/* Top bar */}
         <div className="flex items-center justify-between px-6 py-3">
           <div />
@@ -206,7 +206,7 @@ export default function MainPage() {
           )}
 
           {/* Bookmark grid */}
-          <div className="w-full flex justify-center">
+          <div className="w-full">
             <BookmarkGrid
               bookmarks={bookmarks}
               iconSize={appConfig.display.iconSize}
