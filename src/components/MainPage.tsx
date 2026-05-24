@@ -70,13 +70,10 @@ export default function MainPage() {
     }
 
     let result: DisplayBookmark[]
-    if (activeTag === null) {
-      // Show all bookmarks from all configured tags
-      result = filterByMultipleTags(store, configuredTags)
-    } else if (activeTag === 'onenav') {
+    if (activeTag === 'onenav') {
       // Special: show most visited bookmarks
       result = getMostVisitedBookmarks(store, 100)
-    } else if (activeTag === '._all_') {
+    } else if (activeTag === '._all_' || activeTag === null) {
       // Special: show all bookmarks (not deleted)
       result = Object.entries(store.data)
         .filter(([_, e]) => !isDeleted(e))
@@ -102,7 +99,7 @@ export default function MainPage() {
 
   // Filter bookmarks based on search query (for onenav and _all_ tags)
   const filteredBookmarks = useMemo(() => {
-    if ((activeTag !== 'onenav' && activeTag !== '._all_') || !searchQuery.trim()) {
+    if ((activeTag !== 'onenav' && activeTag !== '._all_' && activeTag !== null) || !searchQuery.trim()) {
       return bookmarks
     }
     const query = searchQuery.toLowerCase()
@@ -244,7 +241,7 @@ export default function MainPage() {
         {/* Center content */}
         <div className="flex-1 flex flex-col items-center justify-center px-4">
           {/* Search bar for onenav and _all_ tags */}
-          {(activeTag === 'onenav' || activeTag === '._all_') && (
+          {(activeTag === 'onenav' || activeTag === '._all_' || activeTag === null) && (
             <div className="w-full max-w-md mb-6">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
