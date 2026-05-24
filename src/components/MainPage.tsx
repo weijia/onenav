@@ -95,9 +95,9 @@ export default function MainPage() {
     setBookmarks(result)
   }, [activeTag])
 
-  // Filter bookmarks based on search query (for onenav and _all_ tags)
+  // Filter bookmarks based on search query
   const filteredBookmarks = useMemo(() => {
-    if ((activeTag !== 'onenav' && activeTag !== '._all_' && activeTag !== null) || !searchQuery.trim()) {
+    if (!searchQuery.trim()) {
       return bookmarks
     }
     const query = searchQuery.toLowerCase()
@@ -238,8 +238,8 @@ export default function MainPage() {
 
         {/* Center content */}
         <div className="flex-1 flex flex-col items-center justify-center px-4">
-          {/* Search bar for onenav and _all_ tags */}
-          {(activeTag === 'onenav' || activeTag === '._all_' || activeTag === null) && (
+          {/* Search bar */}
+          {bookmarks.length > 0 && (
             <div className="w-full max-w-md mb-6">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
