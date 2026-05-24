@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import type { AppConfig, DisplayBookmark, WebDAVConfig, BookmarksStore } from '@/types'
 import { loadWebDAVConfig, loadAppConfig, fetchAppConfig, fetchBookmarks, getDefaultAppConfig, saveAppConfig, loadBookmarksCache } from '@/lib/config'
 import { filterByTag, getMostVisitedBookmarks, isDeleted, getFaviconUrl, stringToColor } from '@/lib/bookmarks'
-import { recordClick, loadClickStatsFromWebDAV } from '@/lib/stats'
+import { recordClick, loadClickStatsFromWebDAV, togglePinnedBookmark, loadPinnedBookmarks } from '@/lib/stats'
 import Sidebar from '@/components/Sidebar'
 import BookmarkGrid from '@/components/BookmarkGrid'
 import SettingsDialog from '@/components/SettingsDialog'
@@ -20,6 +20,7 @@ export default function MainPage() {
   const [refreshing, setRefreshing] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [allBookmarks, setAllBookmarks] = useState<DisplayBookmark[]>([])
+  const [pinnedUrls, setPinnedUrls] = useState<string[]>(loadPinnedBookmarks())
   const cachedStoreRef = useRef(false)
 
   const loadAllData = useCallback(async (wdav: WebDAVConfig, showLoading = true) => {
@@ -69,10 +70,11 @@ export default function MainPage() {
 
     let result: DisplayBookmark[]
     if (activeTag === 'onenav') {
-      // Special: show most visited bookmarks
-      result = getMostVisitedBookmarks(store, 100)
+      result = getMostVisitedBookmarks(store, 100).map(b => ({
+        ...b,
+        isPinned: pinnedUrls.includes(b.url),
+      }))
     } else if (activeTag === '._all_' || activeTag === null) {
-      // Special: show all bookmarks (not deleted)
       result = Object.entries(store.data)
         .filter(([_, e]) => !isDeleted(e))
         .map(([_, e]) => {
@@ -84,16 +86,27 @@ export default function MainPage() {
             favicon: e.meta.favicon || getFaviconUrl(url),
             color: stringToColor(new URL(url).hostname),
             tags: e.tags,
+            isPinned: pinnedUrls.includes(url),
           }
         })
         .filter((b): b is DisplayBookmark => b !== null)
     } else {
-      result = filterByTag(store, activeTag)
+      result = filterByTag(store, activeTag).map(b => ({
+        ...b,
+        isPinned: pinnedUrls.includes(b.url),
+      }))
     }
-    
+
+    // 按固定状态排序：固定的在前
+    result.sort((a, b) => {
+      if (a.isPinned && !b.isPinned) return -1
+      if (!a.isPinned && b.isPinned) return 1
+      return 0
+    })
+
     setAllBookmarks(result)
     setBookmarks(result)
-  }, [activeTag])
+  }, [activeTag, pinnedUrls])
 
   // Filter bookmarks based on search query
   const filteredBookmarks = useMemo(() => {
@@ -143,6 +156,19 @@ export default function MainPage() {
 
   const handleTagSelect = (tag: string | null) => {
     setActiveTag(tag)
+    setSearchQuery('')
+  }
+
+  const handleTogglePin = (url: string) => {
+    togglePinnedBookmark(url)
+    setPinnedUrls(loadPinnedBookmarks())
+    if (webdavConfig) {
+      fetchBookmarks(webdavConfig, appConfig.bookmarkPath).then(store => {
+        if (store) {
+          processBookmarks(store, appConfig)
+        }
+      })
+    }
   }
 
   // Render background
@@ -265,6 +291,7 @@ export default function MainPage() {
               maxWidth={appConfig.display.maxWidth}
               openInNewTab={appConfig.display.openInNewTab}
               onItemClick={(bookmark) => recordClick(bookmark, webdavConfig || undefined)}
+              onTogglePin={handleTogglePin}
             />
           </div>
         </div>

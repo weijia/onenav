@@ -32,6 +32,7 @@ export function filterByTag(store: BookmarksStore, tag: string): DisplayBookmark
       favicon: entry.meta.favicon || getFaviconUrl(url),
       color: stringToColor(new URL(url).hostname),
       tags: entry.tags,
+      isPinned: false,
     })
   }
 
@@ -59,6 +60,7 @@ export function filterByMultipleTags(store: BookmarksStore, tags: string[]): Dis
       favicon: entry.meta.favicon || getFaviconUrl(url),
       color: stringToColor(new URL(url).hostname),
       tags: entry.tags,
+      isPinned: false,
     })
   }
 
@@ -135,6 +137,7 @@ export function getMostVisitedBookmarks(store: BookmarksStore, limit: number = 3
         favicon: e.meta.favicon || getFaviconUrl(url),
         color: stringToColor(new URL(url).hostname),
         tags: e.tags,
+        isPinned: false,
       })
     }
     // 如果书签已从 utags 删除，跳过不显示

@@ -125,3 +125,34 @@ export function getRecentBookmarks(limit: number = 20): ClickRecord[] {
     .sort((a, b) => b.lastClicked - a.lastClicked)
     .slice(0, limit)
 }
+
+// 固定书签功能
+const PINNED_KEY = 'onenavPinnedBookmarks'
+
+export function loadPinnedBookmarks(): string[] {
+  try {
+    const raw = localStorage.getItem(PINNED_KEY)
+    if (!raw) return []
+    return JSON.parse(raw) as string[]
+  } catch {
+    return []
+  }
+}
+
+export function savePinnedBookmarks(urls: string[]): void {
+  localStorage.setItem(PINNED_KEY, JSON.stringify(urls))
+}
+
+export function togglePinnedBookmark(url: string): boolean {
+  const pinned = loadPinnedBookmarks()
+  const index = pinned.indexOf(url)
+  if (index > -1) {
+    pinned.splice(index, 1)
+    savePinnedBookmarks(pinned)
+    return false
+  } else {
+    pinned.push(url)
+    savePinnedBookmarks(pinned)
+    return true
+  }
+}

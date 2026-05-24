@@ -12,6 +12,7 @@ interface BookmarkGridProps {
   maxWidth: number
   openInNewTab: boolean
   onItemClick?: (bookmark: DisplayBookmark) => void
+  onTogglePin?: (url: string) => void
 }
 
 export default function BookmarkGrid({
@@ -24,6 +25,7 @@ export default function BookmarkGrid({
   maxWidth,
   openInNewTab,
   onItemClick,
+  onTogglePin,
 }: BookmarkGridProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [columns, setColumns] = useState(6)
@@ -32,7 +34,7 @@ export default function BookmarkGrid({
     const calculateColumns = () => {
       if (!containerRef.current) return
       const containerWidth = containerRef.current.clientWidth
-      const itemWidth = iconSize + spacing + 8 // +8 for safety margin
+      const itemWidth = iconSize + spacing + 8
       const newColumns = Math.max(3, Math.floor(containerWidth / itemWidth))
       setColumns(newColumns)
     }
@@ -74,6 +76,7 @@ export default function BookmarkGrid({
             nameSize={nameSize}
             openInNewTab={openInNewTab}
             onClick={onItemClick}
+            onTogglePin={onTogglePin}
           />
         ))}
       </div>

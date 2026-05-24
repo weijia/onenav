@@ -92,4 +92,5 @@ export interface DisplayBookmark {
   favicon: string
   color: string
   tags: string[]
+  isPinned: boolean
 }
