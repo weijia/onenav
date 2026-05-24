@@ -3,8 +3,6 @@ import type { AppConfig, DisplayBookmark, WebDAVConfig, BookmarksStore } from '@
 import { loadWebDAVConfig, loadAppConfig, fetchAppConfig, fetchBookmarks, getDefaultAppConfig, saveAppConfig } from '@/lib/config'
 import { filterByTag, filterByMultipleTags } from '@/lib/bookmarks'
 import Sidebar from '@/components/Sidebar'
-import TimeDisplay from '@/components/TimeDisplay'
-import SearchBar from '@/components/SearchBar'
 import BookmarkGrid from '@/components/BookmarkGrid'
 import SettingsDialog from '@/components/SettingsDialog'
 import { RefreshCw, Loader2, LayoutGrid } from 'lucide-react'
