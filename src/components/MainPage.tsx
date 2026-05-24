@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import type { AppConfig, DisplayBookmark, WebDAVConfig, BookmarksStore } from '@/types'
 import { loadWebDAVConfig, loadAppConfig, fetchAppConfig, fetchBookmarks, getDefaultAppConfig, saveAppConfig } from '@/lib/config'
-import { filterByTag, filterByMultipleTags, getMostVisitedBookmarks } from '@/lib/bookmarks'
+import { filterByTag, filterByMultipleTags, getMostVisitedBookmarks, isDeleted } from '@/lib/bookmarks'
 import { recordClick, loadClickStatsFromWebDAV } from '@/lib/stats'
 import Sidebar from '@/components/Sidebar'
 import BookmarkGrid from '@/components/BookmarkGrid'
@@ -64,7 +64,7 @@ export default function MainPage() {
     } else if (activeTag === 'onenav') {
       // Special: show most visited bookmarks (from all bookmarks, not just configured tags)
       const all = Object.entries(store.data)
-        .filter(([_, e]) => !e.deletedMeta && !e.meta.deleted)
+        .filter(([_, e]) => !isDeleted(e))
         .map(([_, e]) => {
           const url = e.meta.url || e.meta.mainUrl || ''
           return {

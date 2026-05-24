@@ -1,13 +1,20 @@
 import type { BookmarksStore, DisplayBookmark } from '@/types'
 import { loadClickStats } from './stats'
 
+// 检查书签是否已被删除
+export function isDeleted(entry: { deletedMeta?: unknown; meta: { deleted?: number }; tags: string[] }): boolean {
+  if (entry.deletedMeta) return true
+  if (entry.meta.deleted) return true
+  if (entry.tags.includes('._DELETED_')) return true
+  return false
+}
+
 export function filterByTag(store: BookmarksStore, tag: string): DisplayBookmark[] {
   const results: DisplayBookmark[] = []
 
   for (const [_key, entry] of Object.entries(store.data)) {
     // Skip deleted entries
-    if (entry.deletedMeta) continue
-    if (entry.meta.deleted) continue
+    if (isDeleted(entry)) continue
 
     // Check if entry has the requested tag
     if (!entry.tags.includes(tag)) continue
@@ -33,8 +40,7 @@ export function filterByMultipleTags(store: BookmarksStore, tags: string[]): Dis
   const results: DisplayBookmark[] = []
 
   for (const [_key, entry] of Object.entries(store.data)) {
-    if (entry.deletedMeta) continue
-    if (entry.meta.deleted) continue
+    if (isDeleted(entry)) continue
 
     // Entry must have at least one of the configured tags
     const hasTag = entry.tags.some((t: string) => tags.includes(t))
@@ -61,7 +67,7 @@ export function getAllTags(store: BookmarksStore): string[] {
   const tagSet = new Set<string>()
 
   for (const [_key, entry] of Object.entries(store.data)) {
-    if (entry.deletedMeta) continue
+    if (isDeleted(entry)) continue
     for (const tag of entry.tags) {
       // Exclude system tags (prefixed with ._)
       if (!tag.startsWith('._')) {
@@ -114,7 +120,7 @@ export function getMostVisitedBookmarks(store: BookmarksStore, limit: number = 3
     // 从 store 中查找完整的书签信息
     const entry = Object.entries(store.data).find(([_, e]) => {
       const url = e.meta.url || e.meta.mainUrl || ''
-      return url === record.url && !e.deletedMeta && !e.meta.deleted
+      return url === record.url && !isDeleted(e)
     })
 
     if (entry) {
