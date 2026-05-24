@@ -38,7 +38,7 @@ export default function BookmarkItem({
     <button
       onClick={handleClick}
       className="flex flex-col items-center gap-1.5 group cursor-pointer bg-transparent border-0 p-0 w-full"
-      title={bookmark.title}
+      title={`${bookmark.title}\n${bookmark.url}`}
     >
       <div
         className="relative overflow-hidden transition-transform duration-200 group-hover:scale-105 flex items-center justify-center"
