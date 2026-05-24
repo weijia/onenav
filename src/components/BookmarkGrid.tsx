@@ -37,8 +37,8 @@ export default function BookmarkGrid({
 
   return (
     <div
-      className="mx-auto px-4 animate-slide-in box-border"
-      style={{ maxWidth: `${maxWidth}px`, width: '100%' }}
+      className="mx-auto animate-slide-in box-border px-2"
+      style={{ maxWidth: `${maxWidth - 32}px`, width: '100%' }}
     >
       <div
         className="grid justify-items-center"
