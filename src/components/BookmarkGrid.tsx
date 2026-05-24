@@ -37,7 +37,7 @@ export default function BookmarkGrid({
 
   return (
     <div
-      className="mx-auto px-4 animate-slide-in"
+      className="mx-auto px-4 animate-slide-in box-border"
       style={{ maxWidth: `${maxWidth}px`, width: '100%' }}
     >
       <div

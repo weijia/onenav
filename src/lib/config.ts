@@ -72,7 +72,7 @@ export function getDefaultAppConfig(): AppConfig {
       iconSpacing: 27,
       showName: true,
       nameSize: 12,
-      maxWidth: 1800,
+      maxWidth: 1600,
       openInNewTab: true,
       defaultColor: '#1e293b',
     },
