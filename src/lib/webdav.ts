@@ -17,6 +17,8 @@ export async function getFileContents(config: WebDAVConfig, path: string): Promi
     method: 'GET',
     headers: {
       'Authorization': getAuthHeader(config),
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
     },
   })
 
