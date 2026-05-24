@@ -48,6 +48,7 @@ export interface AppConfig {
   display: DisplayConfig
   background: BackgroundConfig
   widgets: WidgetsConfig
+  pinnedBookmarks?: string[] // 固定的书签 URL 列表
 }
 
 // utags bookmark types (simplified)

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import type { AppConfig, DisplayBookmark, WebDAVConfig, BookmarksStore } from '@/types'
-import { loadWebDAVConfig, loadAppConfig, fetchAppConfig, fetchBookmarks, getDefaultAppConfig, saveAppConfig, loadBookmarksCache } from '@/lib/config'
+import { loadWebDAVConfig, loadAppConfig, fetchAppConfig, fetchBookmarks, getDefaultAppConfig, saveAppConfig, saveAppConfigToWebDAV, loadBookmarksCache } from '@/lib/config'
 import { filterByTag, getMostVisitedBookmarks, isDeleted, getFaviconUrl, stringToColor } from '@/lib/bookmarks'
 import { recordClick, loadClickStatsFromWebDAV, togglePinnedBookmark, loadPinnedBookmarks } from '@/lib/stats'
 import { checkUrlReachable } from '@/lib/reachability'
@@ -38,6 +38,12 @@ export default function MainPage() {
         config = loadAppConfig() || getDefaultAppConfig()
       }
       setAppConfig(config)
+
+      // 从配置文件恢复固定书签列表
+      if (config.pinnedBookmarks && config.pinnedBookmarks.length > 0) {
+        setPinnedUrls(config.pinnedBookmarks)
+        savePinnedBookmarks(config.pinnedBookmarks)
+      }
 
       // 先从本地缓存加载，立即显示
       const cachedStore = loadBookmarksCache()
@@ -185,11 +191,20 @@ export default function MainPage() {
 
   const handleTogglePin = (url: string) => {
     togglePinnedBookmark(url)
-    setPinnedUrls(loadPinnedBookmarks())
+    const newPinned = loadPinnedBookmarks()
+    setPinnedUrls(newPinned)
+
+    // 同步到配置文件（localStorage + WebDAV）
+    const updatedConfig = { ...appConfig, pinnedBookmarks: newPinned }
+    setAppConfig(updatedConfig)
+    saveAppConfig(updatedConfig)
     if (webdavConfig) {
+      saveAppConfigToWebDAV(webdavConfig, updatedConfig).catch(() => {
+        // WebDAV 保存失败不影响本地使用
+      })
       fetchBookmarks(webdavConfig, appConfig.bookmarkPath).then(store => {
         if (store) {
-          processBookmarks(store, appConfig)
+          processBookmarks(store, updatedConfig)
         }
       })
     }
