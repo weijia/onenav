@@ -67,9 +67,10 @@ export default function BookmarkItem({
       </div>
       {showName && (
         <span
-          className="text-white/80 text-center leading-tight w-full overflow-hidden transition-colors group-hover:text-white"
+          className="text-white/80 text-center leading-tight overflow-hidden transition-colors group-hover:text-white"
           style={{
             fontSize: `${nameSize}px`,
+            maxWidth: `${iconSize + 8}px`,
             display: '-webkit-box',
             WebkitLineClamp: 2,
             WebkitBoxOrient: 'vertical',
