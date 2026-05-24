@@ -77,3 +77,23 @@ export async function stat(config: WebDAVConfig, path: string): Promise<{ etag: 
     lastmod: lastmodMatch?.[1] ?? '',
   }
 }
+
+/**
+ * 测试 WebDAV 连接是否有效（访问根目录）
+ */
+export async function testConnection(config: WebDAVConfig): Promise<boolean> {
+  const baseUrl = normalizeUrl(config.url)
+
+  const response = await fetch(baseUrl, {
+    method: 'PROPFIND',
+    headers: {
+      'Authorization': getAuthHeader(config),
+      'Depth': '0',
+      'Content-Type': 'application/xml',
+    },
+  })
+
+  // 207 Multi-Status 是 PROPFIND 的成功响应
+  // 200 OK 也表示连接成功
+  return response.status === 207 || response.status === 200
+}

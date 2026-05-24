@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { WebDAVConfig } from '@/types'
 import { saveWebDAVConfig } from '@/lib/config'
-import { getFileContents } from '@/lib/webdav'
+import { testConnection } from '@/lib/webdav'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -35,8 +35,11 @@ export default function SetupPage({ onConfigured }: SetupPageProps) {
     }
 
     try {
-      // Test connection by trying to fetch the shared config file
-      await getFileContents(config, 'config/webdav_config.json')
+      // Test connection by accessing WebDAV root
+      const success = await testConnection(config)
+      if (!success) {
+        throw new Error('Authentication failed. Please check your credentials.')
+      }
       saveWebDAVConfig(config)
       onConfigured()
     } catch (err) {
