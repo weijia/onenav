@@ -1,3 +1,4 @@
+import { useRef, useEffect, useState } from 'react'
 import type { DisplayBookmark } from '@/types'
 import BookmarkItem from '@/components/BookmarkItem'
 
@@ -24,6 +25,23 @@ export default function BookmarkGrid({
   openInNewTab,
   onItemClick,
 }: BookmarkGridProps) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [columns, setColumns] = useState(6)
+
+  useEffect(() => {
+    const calculateColumns = () => {
+      if (!containerRef.current) return
+      const containerWidth = containerRef.current.clientWidth
+      const itemWidth = iconSize + spacing + 8 // +8 for safety margin
+      const newColumns = Math.max(3, Math.floor(containerWidth / itemWidth))
+      setColumns(newColumns)
+    }
+
+    calculateColumns()
+    window.addEventListener('resize', calculateColumns)
+    return () => window.removeEventListener('resize', calculateColumns)
+  }, [iconSize, spacing])
+
   if (bookmarks.length === 0) {
     return (
       <div className="text-center text-white/40 py-20">
@@ -33,19 +51,16 @@ export default function BookmarkGrid({
     )
   }
 
-  // Calculate columns based on available width and icon size + spacing
-  const itemWidth = iconSize + spacing
-  const columns = Math.max(4, Math.min(24, Math.floor(maxWidth / itemWidth)))
-
   return (
     <div
-      className="mx-auto animate-slide-in box-border px-2"
-      style={{ maxWidth: `${maxWidth - 32}px`, width: '100%' }}
+      ref={containerRef}
+      className="mx-auto animate-slide-in w-full px-2"
+      style={{ maxWidth: `${maxWidth}px` }}
     >
       <div
         className="grid justify-items-center"
         style={{
-          gridTemplateColumns: `repeat(${columns}, 1fr)`,
+          gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
           gap: `${spacing}px`,
         }}
       >
