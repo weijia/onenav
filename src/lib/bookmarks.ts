@@ -128,16 +128,8 @@ export function getMostVisitedBookmarks(store: BookmarksStore, limit: number = 3
         color: stringToColor(new URL(url).hostname),
         tags: e.tags,
       })
-    } else {
-      // 如果书签已从 utags 删除，但统计还在，使用统计中的信息
-      results.push({
-        url: record.url,
-        title: record.title,
-        favicon: getFaviconUrl(record.url),
-        color: stringToColor(new URL(record.url).hostname),
-        tags: ['onenav'],
-      })
     }
+    // 如果书签已从 utags 删除，跳过不显示
   }
 
   return results
