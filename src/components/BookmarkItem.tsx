@@ -50,7 +50,7 @@ export default function BookmarkItem({
         className={`absolute -top-1 -right-1 z-10 w-5 h-5 rounded-full flex items-center justify-center transition-all ${
           bookmark.isPinned
             ? 'bg-yellow-500 text-white opacity-100'
-            : 'bg-white/20 text-white/60 opacity-0 group-hover:opacity-100 hover:bg-white/40'
+            : 'bg-white/20 text-white/60 opacity-40 group-hover:opacity-100 hover:bg-white/40'
         }`}
         title={bookmark.isPinned ? '取消固定' : '固定书签'}
       >
