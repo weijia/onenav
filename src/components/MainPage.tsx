@@ -90,6 +90,7 @@ export default function MainPage() {
           return {
             url,
             title: e.meta.shortTitle || e.meta.title || url,
+            description: e.meta.description || '',
             favicon: e.meta.favicon || getFaviconUrl(url),
             color: stringToColor(new URL(url).hostname),
             tags: e.tags,

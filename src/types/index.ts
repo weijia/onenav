@@ -90,6 +90,7 @@ export interface BookmarksStore {
 export interface DisplayBookmark {
   url: string
   title: string
+  description?: string
   favicon: string
   color: string
   tags: string[]

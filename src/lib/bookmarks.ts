@@ -29,6 +29,7 @@ export function filterByTag(store: BookmarksStore, tag: string): DisplayBookmark
     results.push({
       url,
       title,
+      description: entry.meta.description || '',
       favicon: entry.meta.favicon || getFaviconUrl(url),
       color: stringToColor(new URL(url).hostname),
       tags: entry.tags,
@@ -57,6 +58,7 @@ export function filterByMultipleTags(store: BookmarksStore, tags: string[]): Dis
     results.push({
       url,
       title,
+      description: entry.meta.description || '',
       favicon: entry.meta.favicon || getFaviconUrl(url),
       color: stringToColor(new URL(url).hostname),
       tags: entry.tags,
@@ -134,6 +136,7 @@ export function getMostVisitedBookmarks(store: BookmarksStore, limit: number = 3
       results.push({
         url,
         title,
+        description: e.meta.description || '',
         favicon: e.meta.favicon || getFaviconUrl(url),
         color: stringToColor(new URL(url).hostname),
         tags: e.tags,

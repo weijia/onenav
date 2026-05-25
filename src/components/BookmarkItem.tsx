@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import type { DisplayBookmark } from '@/types'
 import { Pin } from 'lucide-react'
 
@@ -25,8 +25,25 @@ export default function BookmarkItem({
 }: BookmarkItemProps) {
   const [imgError, setImgError] = useState(false)
   const [imgLoaded, setImgLoaded] = useState(false)
+  const [showTooltip, setShowTooltip] = useState(false)
+  const longPressTimer = useRef<number | null>(null)
 
   const firstLetter = bookmark.title.charAt(0).toUpperCase()
+
+  // 生成完整的提示文本
+  const tooltipContent = () => {
+    const parts = [
+      bookmark.title,
+      bookmark.url,
+    ]
+    if (bookmark.tags.length > 0) {
+      parts.push(`标签: ${bookmark.tags.join(', ')}`)
+    }
+    if (bookmark.description) {
+      parts.push(`描述: ${bookmark.description}`)
+    }
+    return parts.join('\n')
+  }
 
   const handleClick = () => {
     onClick?.(bookmark)
@@ -42,11 +59,25 @@ export default function BookmarkItem({
     onTogglePin?.(bookmark.url)
   }
 
+  // 长按处理（移动端）
+  const handleTouchStart = () => {
+    longPressTimer.current = window.setTimeout(() => {
+      setShowTooltip(true)
+    }, 500) // 500ms 长按
+  }
+
+  const handleTouchEnd = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current)
+      longPressTimer.current = null
+    }
+    setTimeout(() => setShowTooltip(false), 2000) // 2秒后隐藏
+  }
+
   // 连接状态指示器
   const renderReachability = () => {
     const { reachable } = bookmark
     if (reachable === null || reachable === undefined) {
-      // 未检测：不显示
       return null
     }
     if (reachable === true) {
@@ -77,10 +108,21 @@ export default function BookmarkItem({
         <Pin className="w-3 h-3" fill={bookmark.isPinned ? 'currentColor' : 'none'} />
       </button>
 
+      {/* 长按提示（移动端） */}
+      {showTooltip && (
+        <div className="absolute -top-16 left-1/2 -translate-x-1/2 z-50 bg-black/90 text-white text-xs p-3 rounded-lg whitespace-pre-line max-w-xs pointer-events-none">
+          {tooltipContent()}
+        </div>
+      )}
+
       <button
         onClick={handleClick}
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
+        onMouseEnter={() => setShowTooltip(true)}
+        onMouseLeave={() => setShowTooltip(false)}
         className="flex flex-col items-center gap-1.5 cursor-pointer bg-transparent border-0 p-0 w-full"
-        title={`${bookmark.title}\n${bookmark.url}`}
+        title={tooltipContent()}
       >
         <div
           className="relative overflow-hidden transition-transform duration-200 group-hover:scale-105 flex items-center justify-center"
