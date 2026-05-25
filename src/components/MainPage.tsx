@@ -336,10 +336,32 @@ export default function MainPage() {
         </div>
 
         {/* Version info */}
-        <div className="text-center pb-4 text-white/20 text-xs">
+        <div className="text-center pb-4 text-white/20 text-xs flex items-center justify-center gap-2">
           <span>{versionDisplay}</span>
-          <span className="mx-2">·</span>
+          <span>·</span>
           <span>{buildTimeDisplay}</span>
+          {(() => {
+            const pathname = window.location.pathname.replace(/\/index\.html$/, '').replace(/\/$/, '')
+            const segments = pathname.split('/').filter(Boolean)
+            const currentDir = segments[segments.length - 1] || ''
+            if (currentDir === 'latest') {
+              return (
+                <>
+                  <span>·</span>
+                  <a href="../release/" className="hover:text-white/40 transition-colors">切换到正式版</a>
+                </>
+              )
+            }
+            if (currentDir === 'release' || /^\d{8}$/.test(currentDir)) {
+              return (
+                <>
+                  <span>·</span>
+                  <a href="../latest/" className="hover:text-white/40 transition-colors">切换到最新版</a>
+                </>
+              )
+            }
+            return null
+          })()}
         </div>
       </main>
 
