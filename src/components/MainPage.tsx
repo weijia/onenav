@@ -130,27 +130,57 @@ export default function MainPage() {
   }, [bookmarks, allBookmarks, searchQuery, activeTag])
 
   // 当书签列表变化时，自动检测连接状态
-  const reachabilityCacheRef = useRef<Map<string, boolean>>(new Map())
+  const CACHE_TTL = 60 * 60 * 1000 // 1小时过期
 
   useEffect(() => {
     if (bookmarks.length === 0) return
 
+    const cache = appConfig.reachabilityCache || {}
+    const now = Date.now()
+
     // 先用缓存的结果设置状态，避免闪烁
     setBookmarks(prev => prev.map(b => {
-      const cached = reachabilityCacheRef.current.get(b.url)
-      return { ...b, reachable: cached !== undefined ? cached : null }
+      const entry = cache[b.url]
+      if (entry && (now - entry.checkedAt) < CACHE_TTL) {
+        return { ...b, reachable: entry.reachable }
+      }
+      return { ...b, reachable: null }
     }))
 
-    // 并发检测，只检测缓存中没有的或需要更新的
+    // 并发检测，只检测缓存中没有的或已过期的
+    const newCache = { ...cache }
+    let cacheChanged = false
+
     bookmarks.forEach((bookmark) => {
+      const entry = newCache[bookmark.url]
+      if (entry && (now - entry.checkedAt) < CACHE_TTL) {
+        return // 未过期，跳过
+      }
       checkUrlReachable(bookmark.url).then(reachable => {
-        reachabilityCacheRef.current.set(bookmark.url, reachable)
+        newCache[bookmark.url] = { reachable, checkedAt: Date.now() }
+        cacheChanged = true
         setBookmarks(prev =>
           prev.map(b => b.url === bookmark.url ? { ...b, reachable } : b)
         )
       })
     })
-  }, [activeTag])
+
+    // 检测完成后同步缓存到配置
+    // 使用定时检查：当所有检测完成后保存一次
+    const checkInterval = setInterval(() => {
+      if (cacheChanged) {
+        const updatedConfig = { ...appConfig, reachabilityCache: newCache }
+        setAppConfig(updatedConfig)
+        saveAppConfig(updatedConfig)
+        if (webdavConfig) {
+          saveAppConfigToWebDAV(webdavConfig, updatedConfig).catch(() => {})
+        }
+        cacheChanged = false
+      }
+    }, 3000) // 每3秒检查一次是否有新结果需要保存
+
+    return () => clearInterval(checkInterval)
+  }, [activeTag, appConfig.reachabilityCache])
 
   useEffect(() => {
     const wdav = loadWebDAVConfig()

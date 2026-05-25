@@ -49,6 +49,7 @@ export interface AppConfig {
   background: BackgroundConfig
   widgets: WidgetsConfig
   pinnedBookmarks?: string[] // 固定的书签 URL 列表
+  reachabilityCache?: Record<string, { reachable: boolean; checkedAt: number }> // URL -> {是否可达, 检测时间戳}
 }
 
 // utags bookmark types (simplified)
