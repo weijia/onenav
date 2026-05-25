@@ -59,9 +59,6 @@ export default function MainPage() {
       // 从 WebDAV 加载最新数据，更新缓存和显示
       const store = await fetchBookmarks(wdav, config.bookmarkPath)
       if (store) {
-        const total = Object.keys(store.data).length
-        const deleted = Object.values(store.data).filter(e => isDeleted(e)).length
-        console.log(`[Debug] WebDAV loaded: ${total} total, ${deleted} deleted, ${total - deleted} active`)
         processBookmarksRef.current?.(store, config)
       }
     } catch (err) {
@@ -75,9 +72,6 @@ export default function MainPage() {
   }, [])
 
   const processBookmarks = useCallback((store: BookmarksStore, config: AppConfig) => {
-    const total = Object.keys(store.data).length
-    const deleted = Object.values(store.data).filter(e => isDeleted(e)).length
-    console.log(`[Debug] processBookmarks: ${total} total, ${deleted} deleted, activeTag=${activeTag}`)
     if (config.tags.length === 0) {
       setAllBookmarks([])
       setBookmarks([])
@@ -93,20 +87,15 @@ export default function MainPage() {
     } else if (activeTag === '._all_' || activeTag === null) {
       result = Object.entries(store.data)
         .filter(([_, e]) => !isDeleted(e))
-        .map(([_, e]) => {
-          const url = e.meta.url || e.meta.mainUrl || ''
-          if (!url) return null
-          return {
-            url,
-            title: e.meta.shortTitle || e.meta.title || url,
-            description: e.meta.description || '',
-            favicon: e.meta.favicon || getFaviconUrl(url),
-            color: stringToColor(new URL(url).hostname),
-            tags: e.tags,
-            isPinned: pinnedUrls.includes(url),
-          }
-        })
-        .filter((b): b is DisplayBookmark => b !== null)
+        .map(([url, e]) => ({
+          url,
+          title: e.meta.shortTitle || e.meta.title || url,
+          description: e.meta.description || '',
+          favicon: e.meta.favicon || getFaviconUrl(url),
+          color: stringToColor(new URL(url).hostname),
+          tags: e.tags,
+          isPinned: pinnedUrls.includes(url),
+        }))
     } else {
       result = filterByTag(store, activeTag).map(b => ({
         ...b,
@@ -123,7 +112,6 @@ export default function MainPage() {
 
     setAllBookmarks(result)
     setBookmarks(result)
-    console.log(`[Debug] processBookmarks result: ${result.length} bookmarks displayed`)
   }, [activeTag, pinnedUrls])
 
   // 保持 ref 与最新 processBookmarks 同步

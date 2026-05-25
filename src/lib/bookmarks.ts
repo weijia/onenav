@@ -14,29 +14,15 @@ export function filterByTag(store: BookmarksStore, tag: string): DisplayBookmark
   // 支持逗号分隔的多个 tag，书签匹配其中任意一个即可
   const tags = tag.split(',').map(t => t.trim()).filter(Boolean)
 
-  let deletedCount = 0
-  let noTagCount = 0
-  let noUrlCount = 0
-
-  for (const [_key, entry] of Object.entries(store.data)) {
+  for (const [key, entry] of Object.entries(store.data)) {
     // Skip deleted entries
-    if (isDeleted(entry)) {
-      deletedCount++
-      continue
-    }
+    if (isDeleted(entry)) continue
 
     // Check if entry has at least one of the requested tags
-    if (!entry.tags.some((t: string) => tags.includes(t))) {
-      noTagCount++
-      continue
-    }
+    if (!entry.tags.some((t: string) => tags.includes(t))) continue
 
-    const url = entry.meta.url || entry.meta.mainUrl || ''
-    if (!url) {
-      noUrlCount++
-      console.log(`[Debug] filterByTag: skipped entry with no URL, tags: ${entry.tags.join(',')}`)
-      continue
-    }
+    // URL 从 key 获取（key 就是 URL），meta.url 可能为空
+    const url = key
 
     const title = entry.meta.shortTitle || entry.meta.title || url
 
@@ -51,22 +37,20 @@ export function filterByTag(store: BookmarksStore, tag: string): DisplayBookmark
     })
   }
 
-  console.log(`[Debug] filterByTag("${tag}"): matched ${results.length}, deleted skipped ${deletedCount}, no tag ${noTagCount}, no URL ${noUrlCount}`)
   return results
 }
 
 export function filterByMultipleTags(store: BookmarksStore, tags: string[]): DisplayBookmark[] {
   const results: DisplayBookmark[] = []
 
-  for (const [_key, entry] of Object.entries(store.data)) {
+  for (const [key, entry] of Object.entries(store.data)) {
     if (isDeleted(entry)) continue
 
     // Entry must have at least one of the configured tags
     const hasTag = entry.tags.some((t: string) => tags.includes(t))
     if (!hasTag) continue
 
-    const url = entry.meta.url || entry.meta.mainUrl || ''
-    if (!url) continue
+    const url = key
 
     const title = entry.meta.shortTitle || entry.meta.title || url
 
@@ -138,15 +122,13 @@ export function getMostVisitedBookmarks(store: BookmarksStore, limit: number = 3
 
   const results: DisplayBookmark[] = []
   for (const record of records) {
-    // 从 store 中查找完整的书签信息
-    const entry = Object.entries(store.data).find(([_, e]) => {
-      const url = e.meta.url || e.meta.mainUrl || ''
-      return url === record.url && !isDeleted(e)
+    // 从 store 中查找完整的书签信息（用 key 匹配 URL）
+    const entry = Object.entries(store.data).find(([key, e]) => {
+      return key === record.url && !isDeleted(e)
     })
 
     if (entry) {
-      const [_, e] = entry
-      const url = e.meta.url || e.meta.mainUrl || ''
+      const [url, e] = entry
       const title = e.meta.shortTitle || e.meta.title || url
       results.push({
         url,
