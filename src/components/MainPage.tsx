@@ -14,7 +14,9 @@ export default function MainPage() {
   const [webdavConfig, setWebdavConfig] = useState<WebDAVConfig | null>(null)
   const [appConfig, setAppConfig] = useState<AppConfig>(getDefaultAppConfig())
   const [bookmarks, setBookmarks] = useState<DisplayBookmark[]>([])
-  const [activeTag, setActiveTag] = useState<string | null>('onenav')
+  const [activeTag, setActiveTag] = useState<string | null>(() => {
+    return window.location.hash.replace('#', '') || 'onenav'
+  })
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -222,6 +224,7 @@ export default function MainPage() {
   const handleTagSelect = (tag: string | null) => {
     setActiveTag(tag)
     setSearchQuery('')
+    window.location.hash = tag || ''
   }
 
   const handleTogglePin = (url: string) => {
