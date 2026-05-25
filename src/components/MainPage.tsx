@@ -348,7 +348,7 @@ export default function MainPage() {
               return (
                 <>
                   <span>·</span>
-                  <a href="../release/" className="hover:text-white/40 transition-colors">切换到正式版</a>
+                  <a href="../release/index.html" className="hover:text-white/40 transition-colors">切换到正式版</a>
                 </>
               )
             }
@@ -356,7 +356,7 @@ export default function MainPage() {
               return (
                 <>
                   <span>·</span>
-                  <a href="../latest/" className="hover:text-white/40 transition-colors">切换到最新版</a>
+                  <a href="../latest/index.html" className="hover:text-white/40 transition-colors">切换到最新版</a>
                 </>
               )
             }
