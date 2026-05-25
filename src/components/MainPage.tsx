@@ -59,6 +59,9 @@ export default function MainPage() {
       // 从 WebDAV 加载最新数据，更新缓存和显示
       const store = await fetchBookmarks(wdav, config.bookmarkPath)
       if (store) {
+        const total = Object.keys(store.data).length
+        const deleted = Object.values(store.data).filter(e => isDeleted(e)).length
+        console.log(`[Debug] WebDAV loaded: ${total} total, ${deleted} deleted, ${total - deleted} active`)
         processBookmarksRef.current?.(store, config)
       }
     } catch (err) {
@@ -72,6 +75,9 @@ export default function MainPage() {
   }, [])
 
   const processBookmarks = useCallback((store: BookmarksStore, config: AppConfig) => {
+    const total = Object.keys(store.data).length
+    const deleted = Object.values(store.data).filter(e => isDeleted(e)).length
+    console.log(`[Debug] processBookmarks: ${total} total, ${deleted} deleted, activeTag=${activeTag}`)
     if (config.tags.length === 0) {
       setAllBookmarks([])
       setBookmarks([])
@@ -117,6 +123,7 @@ export default function MainPage() {
 
     setAllBookmarks(result)
     setBookmarks(result)
+    console.log(`[Debug] processBookmarks result: ${result.length} bookmarks displayed`)
   }, [activeTag, pinnedUrls])
 
   // 保持 ref 与最新 processBookmarks 同步
