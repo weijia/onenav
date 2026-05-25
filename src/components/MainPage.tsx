@@ -133,6 +133,23 @@ export default function MainPage() {
   // 当书签列表变化时，自动检测连接状态
   const CACHE_TTL = 7 * 24 * 60 * 60 * 1000 // 7天过期
 
+  // 处理图标加载结果 - 图标加载成功说明网站可用
+  const handleFaviconLoaded = useCallback((url: string, success: boolean) => {
+    if (success) {
+      const cache = appConfig.reachabilityCache || {}
+      const newCache = { ...cache, [url]: { reachable: true, checkedAt: Date.now() } }
+      const updatedConfig = { ...appConfig, reachabilityCache: newCache }
+      setAppConfig(updatedConfig)
+      saveAppConfig(updatedConfig)
+      if (webdavConfig) {
+        saveAppConfigToWebDAV(webdavConfig, updatedConfig).catch(() => {})
+      }
+      setBookmarks(prev =>
+        prev.map(b => b.url === url ? { ...b, reachable: true } : b)
+      )
+    }
+  }, [appConfig, webdavConfig])
+
   useEffect(() => {
     if (bookmarks.length === 0) return
 
@@ -153,7 +170,11 @@ export default function MainPage() {
     const newCache = { ...cache }
     let cacheChanged = false
 
-    bookmarks.forEach((bookmark) => {
+    // 优先检测当前可见的书签（前20个）
+    const visibleBookmarks = bookmarks.slice(0, 20)
+    const otherBookmarks = bookmarks.slice(20)
+
+    const checkBookmark = (bookmark: DisplayBookmark) => {
       const entry = newCache[bookmark.url]
       if (entry && (now - entry.checkedAt) < CACHE_TTL) {
         return // 未过期，跳过
@@ -169,10 +190,16 @@ export default function MainPage() {
           prev.map(b => b.url === bookmark.url ? { ...b, reachable } : b)
         )
       })
-    })
+    }
+
+    // 先检测可见书签
+    visibleBookmarks.forEach(checkBookmark)
+    // 延迟检测其他书签
+    setTimeout(() => {
+      otherBookmarks.forEach(checkBookmark)
+    }, 2000)
 
     // 检测完成后同步缓存到配置
-    // 使用定时检查：当所有检测完成后保存一次
     const checkInterval = setInterval(() => {
       if (cacheChanged) {
         const updatedConfig = { ...appConfig, reachabilityCache: newCache }
@@ -183,7 +210,7 @@ export default function MainPage() {
         }
         cacheChanged = false
       }
-    }, 3000) // 每3秒检查一次是否有新结果需要保存
+    }, 3000)
 
     return () => clearInterval(checkInterval)
   }, [activeTag, appConfig.reachabilityCache])
@@ -369,6 +396,7 @@ export default function MainPage() {
               openInNewTab={appConfig.display.openInNewTab}
               onItemClick={(bookmark) => recordClick(bookmark, webdavConfig || undefined)}
               onTogglePin={handleTogglePin}
+              onFaviconLoaded={handleFaviconLoaded}
             />
           </div>
         </div>

@@ -11,6 +11,7 @@ interface BookmarkItemProps {
   openInNewTab: boolean
   onClick?: (bookmark: DisplayBookmark) => void
   onTogglePin?: (url: string) => void
+  onFaviconLoaded?: (url: string, success: boolean) => void
 }
 
 export default function BookmarkItem({
@@ -22,6 +23,7 @@ export default function BookmarkItem({
   openInNewTab,
   onClick,
   onTogglePin,
+  onFaviconLoaded,
 }: BookmarkItemProps) {
   const [imgError, setImgError] = useState(false)
   const [imgLoaded, setImgLoaded] = useState(false)
@@ -144,8 +146,14 @@ export default function BookmarkItem({
               alt=""
               className="object-contain w-3/5 h-3/5 transition-opacity duration-200"
               style={{ opacity: imgLoaded ? 1 : 0 }}
-              onLoad={() => setImgLoaded(true)}
-              onError={() => setImgError(true)}
+              onLoad={() => {
+                setImgLoaded(true)
+                onFaviconLoaded?.(bookmark.url, true)
+              }}
+              onError={() => {
+                setImgError(true)
+                onFaviconLoaded?.(bookmark.url, false)
+              }}
               loading="lazy"
             />
           ) : (
