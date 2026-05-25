@@ -319,7 +319,7 @@ export default function MainPage() {
             </div>
           )}
           {/* Bookmark grid */}
-          <div className="w-full overflow-hidden">
+          <div className="w-full overflow-visible">
             <BookmarkGrid
               bookmarks={filteredBookmarks}
               iconSize={appConfig.display.iconSize}
