@@ -56,7 +56,6 @@ export default function MainPage() {
 
       // 从 WebDAV 加载最新数据，更新缓存和显示
       const store = await fetchBookmarks(wdav, config.bookmarkPath)
-      console.log('[Debug] WebDAV loaded store:', store ? Object.keys(store.data).length : 0, 'bookmarks')
       if (store) {
         processBookmarksRef.current?.(store, config)
       }
@@ -71,7 +70,6 @@ export default function MainPage() {
   }, [])
 
   const processBookmarks = useCallback((store: BookmarksStore, config: AppConfig) => {
-    console.log('[Debug] processBookmarks called with', Object.keys(store.data).length, 'bookmarks, activeTag:', activeTag)
     if (config.tags.length === 0) {
       setAllBookmarks([])
       setBookmarks([])
