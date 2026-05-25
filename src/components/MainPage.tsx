@@ -139,13 +139,14 @@ export default function MainPage() {
     const cache = appConfig.reachabilityCache || {}
     const now = Date.now()
 
-    // 先用缓存的结果设置状态，避免闪烁
+    // 先用缓存的结果设置状态，避免闪烁（保持已有状态直到新检测完成）
     setBookmarks(prev => prev.map(b => {
       const entry = cache[b.url]
       if (entry && (now - entry.checkedAt) < CACHE_TTL) {
         return { ...b, reachable: entry.reachable }
       }
-      return { ...b, reachable: null }
+      // 缓存过期时保持当前显示状态，不重置为 null
+      return b
     }))
 
     // 并发检测，只检测缓存中没有的或已过期的
