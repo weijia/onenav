@@ -23,7 +23,7 @@ export default function MainPage() {
   const [allBookmarks, setAllBookmarks] = useState<DisplayBookmark[]>([])
   const [pinnedUrls, setPinnedUrls] = useState<string[]>(loadPinnedBookmarks())
   const cachedStoreRef = useRef(false)
-  const processBookmarksRef = useRef<(store: BookmarksStore, config: AppConfig) => void>()
+  const processBookmarksRef = useRef<((store: BookmarksStore, config: AppConfig) => void) | undefined>(undefined)
 
   const loadAllData = useCallback(async (wdav: WebDAVConfig, showLoading = true) => {
     if (showLoading) setLoading(true)
