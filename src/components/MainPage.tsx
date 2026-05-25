@@ -131,7 +131,7 @@ export default function MainPage() {
   }, [bookmarks, allBookmarks, searchQuery, activeTag])
 
   // 当书签列表变化时，自动检测连接状态
-  const CACHE_TTL = 60 * 60 * 1000 // 1小时过期
+  const CACHE_TTL = 7 * 24 * 60 * 60 * 1000 // 7天过期
 
   useEffect(() => {
     if (bookmarks.length === 0) return
@@ -158,6 +158,10 @@ export default function MainPage() {
       if (entry && (now - entry.checkedAt) < CACHE_TTL) {
         return // 未过期，跳过
       }
+      // 标记为检测中
+      setBookmarks(prev =>
+        prev.map(b => b.url === bookmark.url ? { ...b, reachable: 'checking' } : b)
+      )
       checkUrlReachable(bookmark.url).then(reachable => {
         newCache[bookmark.url] = { reachable, checkedAt: Date.now() }
         cacheChanged = true

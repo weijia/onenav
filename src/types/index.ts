@@ -96,5 +96,5 @@ export interface DisplayBookmark {
   color: string
   tags: string[]
   isPinned: boolean
-  reachable?: boolean | null // null=未检测, true=可连接, false=不可连接
+  reachable?: boolean | null | 'checking' // null=未检测, true=可连接, false=不可连接, 'checking'=检测中
 }

@@ -80,6 +80,11 @@ export default function BookmarkItem({
     if (reachable === null || reachable === undefined) {
       return null
     }
+    if (reachable === 'checking') {
+      return (
+        <span className="absolute -top-1 -left-1 z-10 w-3 h-3 rounded-full bg-yellow-500 border border-white/30 animate-pulse" title="检测中..." />
+      )
+    }
     if (reachable === true) {
       return (
         <span className="absolute -top-1 -left-1 z-10 w-3 h-3 rounded-full bg-green-500 border border-white/30" title="可连接" />
