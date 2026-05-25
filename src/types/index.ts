@@ -49,7 +49,6 @@ export interface AppConfig {
   background: BackgroundConfig
   widgets: WidgetsConfig
   pinnedBookmarks?: string[] // 固定的书签 URL 列表
-  reachabilityCache?: Record<string, { reachable: boolean; checkedAt: number }> // URL -> {是否可达, 检测时间戳}
 }
 
 // utags bookmark types (simplified)
@@ -96,5 +95,4 @@ export interface DisplayBookmark {
   color: string
   tags: string[]
   isPinned: boolean
-  reachable?: boolean | null | 'checking' // null=未检测, true=可连接, false=不可连接, 'checking'=检测中
 }

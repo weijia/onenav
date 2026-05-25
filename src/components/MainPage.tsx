@@ -3,11 +3,10 @@ import type { AppConfig, DisplayBookmark, WebDAVConfig, BookmarksStore } from '@
 import { loadWebDAVConfig, loadAppConfig, fetchAppConfig, fetchBookmarks, getDefaultAppConfig, saveAppConfig, saveAppConfigToWebDAV, loadBookmarksCache } from '@/lib/config'
 import { filterByTag, getMostVisitedBookmarks, isDeleted, getFaviconUrl, stringToColor } from '@/lib/bookmarks'
 import { recordClick, loadClickStatsFromWebDAV, togglePinnedBookmark, loadPinnedBookmarks, savePinnedBookmarks } from '@/lib/stats'
-import { checkUrlReachable } from '@/lib/reachability'
 import Sidebar from '@/components/Sidebar'
 import BookmarkGrid from '@/components/BookmarkGrid'
 import SettingsDialog from '@/components/SettingsDialog'
-import { RefreshCw, Loader2, LayoutGrid, Search, Activity } from 'lucide-react'
+import { RefreshCw, Loader2, LayoutGrid, Search } from 'lucide-react'
 import { versionDisplay, buildTimeDisplay } from '@/lib/version'
 
 export default function MainPage() {
@@ -129,59 +128,6 @@ export default function MainPage() {
       b.tags.some(t => t.toLowerCase().includes(query))
     )
   }, [bookmarks, allBookmarks, searchQuery, activeTag])
-
-  // 书签可用性检测（手动触发）
-  const [checkingReachability, setCheckingReachability] = useState(false)
-  const CACHE_TTL = 7 * 24 * 60 * 60 * 1000 // 7天过期
-
-  const handleCheckReachability = useCallback(async () => {
-    if (bookmarks.length === 0 || checkingReachability) return
-    setCheckingReachability(true)
-
-    const cache = appConfig.reachabilityCache || {}
-    const now = Date.now()
-    const newCache = { ...cache }
-
-    // 标记所有书签为检测中
-    setBookmarks(prev => prev.map(b => ({ ...b, reachable: 'checking' })))
-
-    // 并发检测所有书签
-    const promises = bookmarks.map(async (bookmark) => {
-      const reachable = await checkUrlReachable(bookmark.url)
-      newCache[bookmark.url] = { reachable, checkedAt: Date.now() }
-      setBookmarks(prev =>
-        prev.map(b => b.url === bookmark.url ? { ...b, reachable } : b)
-      )
-    })
-
-    await Promise.all(promises)
-
-    // 保存缓存到配置
-    const updatedConfig = { ...appConfig, reachabilityCache: newCache }
-    setAppConfig(updatedConfig)
-    saveAppConfig(updatedConfig)
-    if (webdavConfig) {
-      await saveAppConfigToWebDAV(webdavConfig, updatedConfig).catch(() => {})
-    }
-
-    setCheckingReachability(false)
-  }, [bookmarks, appConfig, webdavConfig, checkingReachability])
-
-  // 加载时从缓存恢复可用性状态
-  useEffect(() => {
-    if (bookmarks.length === 0) return
-
-    const cache = appConfig.reachabilityCache || {}
-    const now = Date.now()
-
-    setBookmarks(prev => prev.map(b => {
-      const entry = cache[b.url]
-      if (entry && (now - entry.checkedAt) < CACHE_TTL) {
-        return { ...b, reachable: entry.reachable }
-      }
-      return { ...b, reachable: undefined }
-    }))
-  }, [activeTag, appConfig.reachabilityCache])
 
   useEffect(() => {
     const wdav = loadWebDAVConfig()
@@ -339,26 +285,15 @@ export default function MainPage() {
           {/* Search bar */}
           {bookmarks.length > 0 && (
             <div className="w-full max-w-md mb-6">
-              <div className="relative flex items-center gap-2">
-                <div className="relative flex-1">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
-                  <input
-                    type="text"
-                    placeholder="搜索书签..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full h-10 pl-10 pr-4 rounded-lg bg-white/10 border border-white/20 text-white placeholder:text-white/40 focus:outline-none focus:border-white/40"
-                  />
-                </div>
-                <button
-                  onClick={handleCheckReachability}
-                  disabled={checkingReachability}
-                  className="h-10 px-3 rounded-lg bg-white/10 border border-white/20 text-white/60 hover:text-white hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center gap-1.5"
-                  title="检测书签可用性"
-                >
-                  <Activity className={`w-4 h-4 ${checkingReachability ? 'animate-pulse' : ''}`} />
-                  <span className="text-sm hidden sm:inline">检测</span>
-                </button>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
+                <input
+                  type="text"
+                  placeholder="搜索书签..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full h-10 pl-10 pr-4 rounded-lg bg-white/10 border border-white/20 text-white placeholder:text-white/40 focus:outline-none focus:border-white/40"
+                />
               </div>
             </div>
           )}

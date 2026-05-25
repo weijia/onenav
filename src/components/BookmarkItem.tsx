@@ -11,7 +11,6 @@ interface BookmarkItemProps {
   openInNewTab: boolean
   onClick?: (bookmark: DisplayBookmark) => void
   onTogglePin?: (url: string) => void
-  onFaviconLoaded?: (url: string, success: boolean) => void
 }
 
 export default function BookmarkItem({
@@ -23,7 +22,6 @@ export default function BookmarkItem({
   openInNewTab,
   onClick,
   onTogglePin,
-  onFaviconLoaded,
 }: BookmarkItemProps) {
   const [imgError, setImgError] = useState(false)
   const [imgLoaded, setImgLoaded] = useState(false)
@@ -76,32 +74,8 @@ export default function BookmarkItem({
     setTimeout(() => setShowTooltip(false), 2000) // 2秒后隐藏
   }
 
-  // 连接状态指示器
-  const renderReachability = () => {
-    const { reachable } = bookmark
-    if (reachable === null || reachable === undefined) {
-      return null
-    }
-    if (reachable === 'checking') {
-      return (
-        <span className="absolute -top-1 -left-1 z-10 w-3 h-3 rounded-full bg-yellow-500 border border-white/30 animate-pulse" title="检测中..." />
-      )
-    }
-    if (reachable === true) {
-      return (
-        <span className="absolute -top-1 -left-1 z-10 w-3 h-3 rounded-full bg-green-500 border border-white/30" title="可连接" />
-      )
-    }
-    return (
-      <span className="absolute -top-1 -left-1 z-10 w-3 h-3 rounded-full bg-red-500 border border-white/30" title="不可连接" />
-    )
-  }
-
   return (
     <div className="relative flex flex-col items-center gap-1.5 group w-full">
-      {/* Reachability indicator */}
-      {renderReachability()}
-
       {/* Pin button */}
       <button
         onClick={handlePinClick}
@@ -146,14 +120,8 @@ export default function BookmarkItem({
               alt=""
               className="object-contain w-3/5 h-3/5 transition-opacity duration-200"
               style={{ opacity: imgLoaded ? 1 : 0 }}
-              onLoad={() => {
-                setImgLoaded(true)
-                onFaviconLoaded?.(bookmark.url, true)
-              }}
-              onError={() => {
-                setImgError(true)
-                onFaviconLoaded?.(bookmark.url, false)
-              }}
+              onLoad={() => setImgLoaded(true)}
+              onError={() => setImgError(true)}
               loading="lazy"
             />
           ) : (
