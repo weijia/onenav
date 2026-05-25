@@ -136,17 +136,24 @@ export default function MainPage() {
   // 处理图标加载结果 - 图标加载成功说明网站可用
   const handleFaviconLoaded = useCallback((url: string, success: boolean) => {
     if (success) {
-      const cache = appConfig.reachabilityCache || {}
-      const newCache = { ...cache, [url]: { reachable: true, checkedAt: Date.now() } }
-      const updatedConfig = { ...appConfig, reachabilityCache: newCache }
-      setAppConfig(updatedConfig)
-      saveAppConfig(updatedConfig)
-      if (webdavConfig) {
-        saveAppConfigToWebDAV(webdavConfig, updatedConfig).catch(() => {})
-      }
-      setBookmarks(prev =>
-        prev.map(b => b.url === url ? { ...b, reachable: true } : b)
-      )
+      // 找到对应的书签，只在没有检测结果时才设置为可用
+      setBookmarks(prev => {
+        const bookmark = prev.find(b => b.url === url)
+        // 如果已经有检测结果（true/false），不覆盖
+        if (bookmark && (bookmark.reachable === true || bookmark.reachable === false)) {
+          return prev
+        }
+        // 更新缓存
+        const cache = appConfig.reachabilityCache || {}
+        const newCache = { ...cache, [url]: { reachable: true, checkedAt: Date.now() } }
+        const updatedConfig = { ...appConfig, reachabilityCache: newCache }
+        setAppConfig(updatedConfig)
+        saveAppConfig(updatedConfig)
+        if (webdavConfig) {
+          saveAppConfigToWebDAV(webdavConfig, updatedConfig).catch(() => {})
+        }
+        return prev.map(b => b.url === url ? { ...b, reachable: true } : b)
+      })
     }
   }, [appConfig, webdavConfig])
 
@@ -156,28 +163,37 @@ export default function MainPage() {
     const cache = appConfig.reachabilityCache || {}
     const now = Date.now()
 
-    // 先用缓存的结果设置状态，避免闪烁（保持已有状态直到新检测完成）
+    // 先用缓存的结果设置状态
     setBookmarks(prev => prev.map(b => {
+      // 如果已经有检测结果（true/false/'checking'），保持不变
+      if (b.reachable !== undefined && b.reachable !== null) {
+        return b
+      }
+      // 没有检测结果时，用缓存设置
       const entry = cache[b.url]
       if (entry && (now - entry.checkedAt) < CACHE_TTL) {
         return { ...b, reachable: entry.reachable }
       }
-      // 缓存过期时保持当前显示状态，不重置为 null
+      // 缓存过期或没有缓存，保持不变
       return b
     }))
 
-    // 并发检测，只检测缓存中没有的或已过期的
+    // 并发检测，只检测还没有检测结果的
     const newCache = { ...cache }
     let cacheChanged = false
 
     // 优先检测当前可见的书签（前20个）
-    const visibleBookmarks = bookmarks.slice(0, 20)
-    const otherBookmarks = bookmarks.slice(20)
+    const visibleBookmarks = bookmarks.slice(0, 20).filter(b => b.reachable === undefined || b.reachable === null)
+    const otherBookmarks = bookmarks.slice(20).filter(b => b.reachable === undefined || b.reachable === null)
 
     const checkBookmark = (bookmark: DisplayBookmark) => {
       const entry = newCache[bookmark.url]
       if (entry && (now - entry.checkedAt) < CACHE_TTL) {
-        return // 未过期，跳过
+        // 缓存有效，直接使用
+        setBookmarks(prev =>
+          prev.map(b => b.url === bookmark.url ? { ...b, reachable: entry.reachable } : b)
+        )
+        return
       }
       // 标记为检测中
       setBookmarks(prev =>
