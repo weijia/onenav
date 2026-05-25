@@ -14,15 +14,29 @@ export function filterByTag(store: BookmarksStore, tag: string): DisplayBookmark
   // 支持逗号分隔的多个 tag，书签匹配其中任意一个即可
   const tags = tag.split(',').map(t => t.trim()).filter(Boolean)
 
+  let deletedCount = 0
+  let noTagCount = 0
+  let noUrlCount = 0
+
   for (const [_key, entry] of Object.entries(store.data)) {
     // Skip deleted entries
-    if (isDeleted(entry)) continue
+    if (isDeleted(entry)) {
+      deletedCount++
+      continue
+    }
 
     // Check if entry has at least one of the requested tags
-    if (!entry.tags.some((t: string) => tags.includes(t))) continue
+    if (!entry.tags.some((t: string) => tags.includes(t))) {
+      noTagCount++
+      continue
+    }
 
     const url = entry.meta.url || entry.meta.mainUrl || ''
-    if (!url) continue
+    if (!url) {
+      noUrlCount++
+      console.log(`[Debug] filterByTag: skipped entry with no URL, tags: ${entry.tags.join(',')}`)
+      continue
+    }
 
     const title = entry.meta.shortTitle || entry.meta.title || url
 
@@ -37,6 +51,7 @@ export function filterByTag(store: BookmarksStore, tag: string): DisplayBookmark
     })
   }
 
+  console.log(`[Debug] filterByTag("${tag}"): matched ${results.length}, deleted skipped ${deletedCount}, no tag ${noTagCount}, no URL ${noUrlCount}`)
   return results
 }
 
