@@ -23,6 +23,7 @@ export default function MainPage() {
   const [allBookmarks, setAllBookmarks] = useState<DisplayBookmark[]>([])
   const [pinnedUrls, setPinnedUrls] = useState<string[]>(loadPinnedBookmarks())
   const cachedStoreRef = useRef(false)
+  const processBookmarksRef = useRef<(store: BookmarksStore, config: AppConfig) => void>()
 
   const loadAllData = useCallback(async (wdav: WebDAVConfig, showLoading = true) => {
     if (showLoading) setLoading(true)
@@ -49,14 +50,14 @@ export default function MainPage() {
       const cachedStore = loadBookmarksCache()
       if (cachedStore) {
         cachedStoreRef.current = true
-        processBookmarks(cachedStore, config)
+        processBookmarksRef.current?.(cachedStore, config)
         if (showLoading) setLoading(false)
       }
 
       // 从 WebDAV 加载最新数据，更新缓存和显示
       const store = await fetchBookmarks(wdav, config.bookmarkPath)
       if (store) {
-        processBookmarks(store, config)
+        processBookmarksRef.current?.(store, config)
       }
     } catch (err) {
       // WebDAV 加载失败，如果已有缓存数据就不报错
@@ -115,6 +116,9 @@ export default function MainPage() {
     setAllBookmarks(result)
     setBookmarks(result)
   }, [activeTag, pinnedUrls])
+
+  // 保持 ref 与最新 processBookmarks 同步
+  processBookmarksRef.current = processBookmarks
 
   // Filter bookmarks based on search query
   const filteredBookmarks = useMemo(() => {
