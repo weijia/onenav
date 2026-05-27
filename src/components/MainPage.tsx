@@ -6,6 +6,7 @@ import { recordClick, loadClickStatsFromWebDAV, togglePinnedBookmark, loadPinned
 import Sidebar from '@/components/Sidebar'
 import BookmarkGrid from '@/components/BookmarkGrid'
 import SettingsDialog from '@/components/SettingsDialog'
+import SetupWizard from '@/components/SetupWizard'
 import { RefreshCw, Loader2, LayoutGrid, Search } from 'lucide-react'
 import { versionDisplay, buildTimeDisplay } from '@/lib/version'
 
@@ -23,6 +24,7 @@ export default function MainPage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [allBookmarks, setAllBookmarks] = useState<DisplayBookmark[]>([])
   const [pinnedUrls, setPinnedUrls] = useState<string[]>(loadPinnedBookmarks())
+  const [initialized, setInitialized] = useState(false)
   const cachedStoreRef = useRef(false)
   const processBookmarksRef = useRef<((store: BookmarksStore, config: AppConfig) => void) | undefined>(undefined)
 
@@ -139,10 +141,34 @@ export default function MainPage() {
   }, [bookmarks, allBookmarks, searchQuery, activeTag])
 
   useEffect(() => {
-    const wdav = loadWebDAVConfig()
-    if (!wdav) return
-    setWebdavConfig(wdav)
-    loadAllData(wdav)
+    const init = async () => {
+      const wdav = loadWebDAVConfig()
+      if (wdav) {
+        setWebdavConfig(wdav)
+        setInitialized(true)
+        loadAllData(wdav)
+      } else {
+        // 没有配置，尝试从 PouchDB/localStorage 加载缓存
+        let cachedConfig = loadAppConfig()
+        if (!cachedConfig) {
+          cachedConfig = await loadAppConfigFromPouchDB()
+        }
+        let cachedStore = loadBookmarksCache()
+        if (!cachedStore) {
+          cachedStore = await loadBookmarksFromPouchDB()
+        }
+        if (cachedStore && cachedConfig) {
+          setAppConfig(cachedConfig)
+          processBookmarksRef.current?.(cachedStore, cachedConfig)
+          setInitialized(true)
+          setLoading(false)
+        } else {
+          // 无任何缓存，显示初始化向导
+          setLoading(false)
+        }
+      }
+    }
+    init()
   }, [loadAllData])
 
   // Re-process bookmarks when active tag changes
@@ -198,6 +224,29 @@ export default function MainPage() {
     }
   }
 
+  // 向导回调：WebDAV 配置完成
+  const handleWebDAVSetup = useCallback((config: { url: string; username: string; password: string }) => {
+    const wdav: WebDAVConfig = config
+    setWebdavConfig(wdav)
+    setInitialized(true)
+    loadAllData(wdav)
+  }, [loadAllData])
+
+  // 向导回调：RemoteStorage 配置完成
+  const handleRemoteStorageSetup = useCallback((_credentials: { href: string; token: string }) => {
+    // RemoteStorage 数据已通过 PouchDB 同步，直接使用缓存数据
+    setInitialized(true)
+    // 使用默认配置（RemoteStorage 模式下配置存储在 PouchDB 中）
+    const cachedConfig = loadAppConfig() || getDefaultAppConfig()
+    setAppConfig(cachedConfig)
+    // 从 PouchDB 加载书签
+    loadBookmarksFromPouchDB().then(store => {
+      if (store) {
+        processBookmarksRef.current?.(store, cachedConfig)
+      }
+    })
+  }, [])
+
   // Render background
   const renderBackground = () => {
     const { background } = appConfig
@@ -240,6 +289,11 @@ export default function MainPage() {
         </div>
       </div>
     )
+  }
+
+  // 未初始化：显示初始化向导
+  if (!initialized) {
+    return <SetupWizard onWebDAVSetup={handleWebDAVSetup} onRemoteStorageSetup={handleRemoteStorageSetup} />
   }
 
   if (error) {

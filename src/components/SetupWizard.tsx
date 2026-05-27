@@ -1,0 +1,336 @@
+import { useState, useCallback } from 'react'
+import { Cloud, FolderOpen, ArrowRight, Loader2, CheckCircle, AlertCircle, Globe } from 'lucide-react'
+import {
+  connectWithUserAddress,
+  connectWithToken,
+  onStatusChange,
+  getStorageCredentials,
+  claimAccess,
+  type RSConnectionInfo,
+} from '@/lib/remotestorage-connection'
+import { syncToRemoteStorage } from '@/lib/remotestorage-sync'
+import { getPouchDB } from '@/lib/pouchdb'
+
+type SetupMode = 'choose' | 'webdav' | 'remotestorage'
+type RSLoginMode = 'widget' | 'manual'
+
+interface SetupWizardProps {
+  onWebDAVSetup: (config: { url: string; username: string; password: string }) => void
+  onRemoteStorageSetup: (credentials: { href: string; token: string }) => void
+}
+
+export default function SetupWizard({ onWebDAVSetup, onRemoteStorageSetup }: SetupWizardProps) {
+  const [mode, setMode] = useState<SetupMode>('choose')
+  const [rsConnectionInfo, setRsConnectionInfo] = useState<RSConnectionInfo>({ status: 'disconnected' })
+  const [rsLoginMode, setRsLoginMode] = useState<RSLoginMode>('widget')
+  const [rsUserAddress, setRsUserAddress] = useState('')
+  const [rsManualHref, setRsManualHref] = useState('')
+  const [rsManualToken, setRsManualToken] = useState('')
+  const [rsSyncing, setRsSyncing] = useState(false)
+
+  // WebDAV 表单
+  const [wdavUrl, setWdavUrl] = useState('')
+  const [wdavUsername, setWdavUsername] = useState('')
+  const [wdavPassword, setWdavPassword] = useState('')
+
+  // RemoteStorage 连接状态监听
+  const startRSMonitor = useCallback(() => {
+    claimAccess('onenav', 'rw')
+    return onStatusChange(setRsConnectionInfo)
+  }, [])
+
+  // RemoteStorage Widget 登录
+  const handleRSWidgetConnect = useCallback(() => {
+    if (!rsUserAddress.trim()) return
+    startRSMonitor()
+    connectWithUserAddress(rsUserAddress.trim())
+  }, [rsUserAddress, startRSMonitor])
+
+  // RemoteStorage 手动登录
+  const handleRSManualConnect = useCallback(() => {
+    if (!rsManualHref.trim() || !rsManualToken.trim()) return
+    startRSMonitor()
+    connectWithToken(rsManualHref.trim(), rsManualToken.trim())
+  }, [rsManualHref, rsManualToken, startRSMonitor])
+
+  // RemoteStorage 连接成功后，同步并进入应用
+  const handleRSEnter = useCallback(async () => {
+    const credentials = getStorageCredentials()
+    if (!credentials) return
+
+    setRsSyncing(true)
+    try {
+      const db = await getPouchDB()
+      await syncToRemoteStorage(db, credentials, {
+        maxFileSize: 500 * 1024,
+        autoMerge: true,
+      })
+      onRemoteStorageSetup(credentials)
+    } catch (err) {
+      console.error('RemoteStorage 初始化同步失败:', err)
+      // 即使同步失败，也允许进入（使用已有缓存数据）
+      onRemoteStorageSetup(credentials)
+    } finally {
+      setRsSyncing(false)
+    }
+  }, [onRemoteStorageSetup])
+
+  // WebDAV 提交
+  const handleWebDAVSubmit = useCallback(() => {
+    if (!wdavUrl.trim()) return
+    onWebDAVSetup({
+      url: wdavUrl.trim(),
+      username: wdavUsername.trim(),
+      password: wdavPassword,
+    })
+  }, [wdavUrl, wdavUsername, wdavPassword, onWebDAVSetup])
+
+  const rsConnected = rsConnectionInfo.status === 'connected'
+  const rsConnecting = rsConnectionInfo.status === 'connecting' || rsConnectionInfo.status === 'authing'
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-900 via-purple-900 to-indigo-900 p-4">
+      <div className="w-full max-w-lg">
+        {/* Logo */}
+        <div className="text-center mb-8">
+          <div className="w-16 h-16 rounded-2xl bg-white/10 flex items-center justify-center mx-auto mb-4">
+            <Globe className="w-8 h-8 text-white/80" />
+          </div>
+          <h1 className="text-2xl font-bold text-white">OneNav</h1>
+          <p className="text-white/50 text-sm mt-1">选择数据源来初始化</p>
+        </div>
+
+        {/* 选择模式 */}
+        {mode === 'choose' && (
+          <div className="space-y-3">
+            <button
+              onClick={() => setMode('webdav')}
+              className="w-full p-4 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 hover:border-white/20 transition-all text-left group"
+            >
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 rounded-xl bg-blue-500/10 flex items-center justify-center shrink-0">
+                  <FolderOpen className="w-6 h-6 text-blue-400" />
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-white font-medium">WebDAV</h3>
+                  <p className="text-white/40 text-sm">连接 WebDAV 服务器加载书签数据</p>
+                </div>
+                <ArrowRight className="w-5 h-5 text-white/20 group-hover:text-white/50 transition-colors" />
+              </div>
+            </button>
+
+            <button
+              onClick={() => {
+                setMode('remotestorage')
+                startRSMonitor()
+              }}
+              className="w-full p-4 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 hover:border-white/20 transition-all text-left group"
+            >
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 rounded-xl bg-green-500/10 flex items-center justify-center shrink-0">
+                  <Cloud className="w-6 h-6 text-green-400" />
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-white font-medium">RemoteStorage</h3>
+                  <p className="text-white/40 text-sm">使用 RemoteStorage 账号同步数据</p>
+                </div>
+                <ArrowRight className="w-5 h-5 text-white/20 group-hover:text-white/50 transition-colors" />
+              </div>
+            </button>
+          </div>
+        )}
+
+        {/* WebDAV 配置 */}
+        {mode === 'webdav' && (
+          <div className="rounded-xl bg-white/5 border border-white/10 p-6 space-y-4">
+            <button
+              onClick={() => setMode('choose')}
+              className="text-white/40 hover:text-white/70 text-sm transition-colors"
+            >
+              ← 返回
+            </button>
+            <h2 className="text-lg font-medium text-white">WebDAV 配置</h2>
+            <div>
+              <label className="block text-sm text-white/50 mb-1">服务器地址</label>
+              <input
+                type="url"
+                value={wdavUrl}
+                onChange={(e) => setWdavUrl(e.target.value)}
+                placeholder="https://dav.example.com"
+                className="w-full px-3 py-2.5 rounded-lg bg-white/10 border border-white/20 text-white placeholder:text-white/30 focus:outline-none focus:border-white/40"
+                autoFocus
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-white/50 mb-1">用户名</label>
+              <input
+                type="text"
+                value={wdavUsername}
+                onChange={(e) => setWdavUsername(e.target.value)}
+                placeholder="username"
+                className="w-full px-3 py-2.5 rounded-lg bg-white/10 border border-white/20 text-white placeholder:text-white/30 focus:outline-none focus:border-white/40"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-white/50 mb-1">密码</label>
+              <input
+                type="password"
+                value={wdavPassword}
+                onChange={(e) => setWdavPassword(e.target.value)}
+                placeholder="password"
+                onKeyDown={(e) => e.key === 'Enter' && handleWebDAVSubmit()}
+                className="w-full px-3 py-2.5 rounded-lg bg-white/10 border border-white/20 text-white placeholder:text-white/30 focus:outline-none focus:border-white/40"
+              />
+            </div>
+            <button
+              onClick={handleWebDAVSubmit}
+              disabled={!wdavUrl.trim()}
+              className="w-full py-2.5 rounded-lg bg-blue-500 hover:bg-blue-600 disabled:bg-white/10 disabled:text-white/30 text-white font-medium transition-colors"
+            >
+              连接
+            </button>
+          </div>
+        )}
+
+        {/* RemoteStorage 配置 */}
+        {mode === 'remotestorage' && (
+          <div className="rounded-xl bg-white/5 border border-white/10 p-6 space-y-4">
+            <button
+              onClick={() => setMode('choose')}
+              className="text-white/40 hover:text-white/70 text-sm transition-colors"
+            >
+              ← 返回
+            </button>
+            <h2 className="text-lg font-medium text-white">RemoteStorage</h2>
+
+            {/* 连接状态 */}
+            <div className={`rounded-lg p-3 flex items-center gap-3 ${
+              rsConnected ? 'bg-green-500/10 border border-green-500/30' :
+              rsConnecting ? 'bg-yellow-500/10 border border-yellow-500/30' :
+              rsConnectionInfo.status === 'error' ? 'bg-red-500/10 border border-red-500/30' :
+              'bg-white/5 border border-white/10'
+            }`}>
+              {rsConnected ? (
+                <CheckCircle className="w-5 h-5 text-green-400 shrink-0" />
+              ) : rsConnecting ? (
+                <Loader2 className="w-5 h-5 text-yellow-400 animate-spin shrink-0" />
+              ) : rsConnectionInfo.status === 'error' ? (
+                <AlertCircle className="w-5 h-5 text-red-400 shrink-0" />
+              ) : (
+                <Cloud className="w-5 h-5 text-white/40 shrink-0" />
+              )}
+              <div className="flex-1 min-w-0">
+                {rsConnected ? (
+                  <p className="text-sm text-green-300">已连接 · {rsConnectionInfo.userAddress}</p>
+                ) : rsConnecting ? (
+                  <p className="text-sm text-yellow-300">
+                    {rsConnectionInfo.status === 'connecting' ? '正在发现存储...' : '正在授权...'}
+                  </p>
+                ) : rsConnectionInfo.status === 'error' ? (
+                  <p className="text-sm text-red-300 truncate">{rsConnectionInfo.error}</p>
+                ) : (
+                  <p className="text-sm text-white/50">未连接</p>
+                )}
+              </div>
+            </div>
+
+            {/* 登录表单（未连接时显示） */}
+            {!rsConnected && !rsConnecting && (
+              <>
+                {/* 登录模式切换 */}
+                <div className="flex gap-1 bg-white/5 rounded-lg p-0.5">
+                  <button
+                    onClick={() => setRsLoginMode('widget')}
+                    className={`flex-1 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                      rsLoginMode === 'widget' ? 'bg-white/15 text-white' : 'text-white/50 hover:text-white/70'
+                    }`}
+                  >
+                    账号登录
+                  </button>
+                  <button
+                    onClick={() => setRsLoginMode('manual')}
+                    className={`flex-1 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                      rsLoginMode === 'manual' ? 'bg-white/15 text-white' : 'text-white/50 hover:text-white/70'
+                    }`}
+                  >
+                    手动输入
+                  </button>
+                </div>
+
+                {rsLoginMode === 'widget' ? (
+                  <div className="space-y-2">
+                    <p className="text-xs text-white/40">输入你的 RemoteStorage 用户地址</p>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={rsUserAddress}
+                        onChange={(e) => setRsUserAddress(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleRSWidgetConnect()}
+                        placeholder="user@storage.example.com"
+                        className="flex-1 px-3 py-2.5 rounded-lg bg-white/10 border border-white/20 text-white text-sm placeholder:text-white/30 focus:outline-none focus:border-white/40"
+                        autoFocus
+                      />
+                      <button
+                        onClick={handleRSWidgetConnect}
+                        disabled={!rsUserAddress.trim()}
+                        className="px-4 py-2.5 rounded-lg bg-green-500 hover:bg-green-600 disabled:bg-white/10 disabled:text-white/30 text-white text-sm font-medium transition-colors"
+                      >
+                        连接
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <input
+                      type="url"
+                      value={rsManualHref}
+                      onChange={(e) => setRsManualHref(e.target.value)}
+                      placeholder="https://storage.example.com"
+                      className="w-full px-3 py-2.5 rounded-lg bg-white/10 border border-white/20 text-white text-sm placeholder:text-white/30 focus:outline-none focus:border-white/40"
+                    />
+                    <input
+                      type="password"
+                      value={rsManualToken}
+                      onChange={(e) => setRsManualToken(e.target.value)}
+                      placeholder="Bearer Token"
+                      onKeyDown={(e) => e.key === 'Enter' && handleRSManualConnect()}
+                      className="w-full px-3 py-2.5 rounded-lg bg-white/10 border border-white/20 text-white text-sm placeholder:text-white/30 focus:outline-none focus:border-white/40"
+                    />
+                    <button
+                      onClick={handleRSManualConnect}
+                      disabled={!rsManualHref.trim() || !rsManualToken.trim()}
+                      className="w-full py-2.5 rounded-lg bg-green-500 hover:bg-green-600 disabled:bg-white/10 disabled:text-white/30 text-white text-sm font-medium transition-colors"
+                    >
+                      连接
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* 连接成功后显示进入按钮 */}
+            {rsConnected && (
+              <button
+                onClick={handleRSEnter}
+                disabled={rsSyncing}
+                className="w-full py-2.5 rounded-lg bg-green-500 hover:bg-green-600 disabled:bg-white/10 text-white font-medium transition-colors flex items-center justify-center gap-2"
+              >
+                {rsSyncing ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    正在同步数据...
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle className="w-4 h-4" />
+                    进入应用
+                  </>
+                )}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
