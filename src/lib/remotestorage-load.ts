@@ -50,28 +50,37 @@ export async function loadFromRemoteStorage(
     // 1. 读取 manifest-index.json
     let index: ManifestIndex | null = null
     try {
+      console.log('[RS Load] 尝试读取 manifest-index.json...')
       const indexData = await fs.readFile('/onenav/manifest-index.json', 'utf8')
+      console.log('[RS Load] manifest-index.json 内容:', indexData)
       index = JSON.parse(indexData as string)
+      console.log('[RS Load] 解析后的 index:', index)
     } catch (err) {
-      console.log('[RS Load] manifest-index.json 不存在:', err)
+      console.log('[RS Load] manifest-index.json 不存在或读取失败:', err)
     }
 
     // 2. 收集所有数据文件
     const dataFiles: Array<{ partition: string; file: DataFileMetadata }> = []
 
     if (index?.partitions) {
-      for (const [partition, info] of Object.entries(index.partitions)) {
+      console.log('[RS Load] 发现分区:', Object.keys(index.partitions))
+      for (const [partition] of Object.entries(index.partitions)) {
         try {
           const pmPath = `/onenav/data/${partition}/manifest.json`
+          console.log(`[RS Load] 读取分区 manifest: ${pmPath}`)
           const pmData = await fs.readFile(pmPath, 'utf8')
           const pm: PartitionManifest = JSON.parse(pmData as string)
+          console.log(`[RS Load] 分区 ${partition} 有 ${pm.files?.length || 0} 个文件`)
           for (const f of pm.files) {
             dataFiles.push({ partition, file: f })
           }
         } catch (err) {
+          console.error(`[RS Load] 读取分区 ${partition} manifest 失败:`, err)
           errors.push(`读取分区 ${partition} manifest 失败: ${err}`)
         }
       }
+    } else {
+      console.log('[RS Load] index.partitions 为空或不存在')
     }
 
     if (dataFiles.length === 0) {
