@@ -143,11 +143,14 @@ export default function MainPage() {
   useEffect(() => {
     const init = async () => {
       const wdav = loadWebDAVConfig()
+      console.log('[Init] WebDAV config:', wdav)
       if (wdav) {
+        console.log('[Init] 使用 WebDAV 配置')
         setWebdavConfig(wdav)
         setInitialized(true)
         loadAllData(wdav)
       } else {
+        console.log('[Init] 无 WebDAV 配置，显示初始化向导')
         // 没有 WebDAV 配置，显示初始化向导（让用户选择数据源）
         setLoading(false)
       }
