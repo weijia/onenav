@@ -304,6 +304,41 @@ export async function loadWebDAVConfigFromPouch(): Promise<WebDAVConfigDoc | nul
   }
 }
 
+// ==================== 固定书签 ====================
+
+export async function savePinnedToPouch(urls: string[]): Promise<void> {
+  try {
+    const database = await getDb()
+    const id = PREFIX.CONFIG + 'pinned'
+    const existing = await database.get(id).catch(() => null)
+    
+    const doc = {
+      _id: id,
+      type: 'pinned',
+      urls,
+      updatedAt: Date.now(),
+    }
+    
+    if (existing) {
+      await database.put({ ...doc, _rev: existing._rev })
+    } else {
+      await database.put(doc)
+    }
+  } catch (err) {
+    console.error('[PouchDB] savePinnedToPouch error:', err)
+  }
+}
+
+export async function loadPinnedFromPouch(): Promise<string[] | null> {
+  try {
+    const database = await getDb()
+    const doc = await database.get(PREFIX.CONFIG + 'pinned')
+    return doc.urls
+  } catch {
+    return null
+  }
+}
+
 // ==================== 元数据（同步用）====================
 
 export interface SyncMetaDoc {

@@ -75,30 +75,29 @@ export async function saveAppConfigToWebDAV(wdav: WebDAVConfig, config: AppConfi
 
 // ==================== 书签数据 ====================
 
-// 将 BookmarkDoc 转换为 DisplayBookmark
-function docToDisplayBookmark(doc: BookmarkDoc): DisplayBookmark {
+// 将 BookmarkDoc 转换为 BookmarkEntry（用于兼容旧格式）
+function docToBookmarkEntry(doc: BookmarkDoc): BookmarkEntry {
   return {
-    id: doc.url,
-    title: doc.title,
-    url: doc.url,
     tags: doc.tags,
-    description: doc.description,
-    icon: doc.icon,
-    clicks: doc.clicks,
-    lastClickedAt: doc.lastClickedAt,
+    meta: {
+      url: doc.url,
+      title: doc.title,
+      description: doc.description,
+      favicon: doc.icon,
+    },
   }
 }
 
-// 将 DisplayBookmark 转换为 BookmarkDoc
-function displayBookmarkToDoc(bm: DisplayBookmark): Omit<BookmarkDoc, '_id' | 'type'> {
+// 将 BookmarkEntry 转换为 BookmarkDoc
+function bookmarkEntryToDoc(url: string, entry: BookmarkEntry): Omit<BookmarkDoc, '_id' | 'type'> {
   return {
-    url: bm.url,
-    title: bm.title,
-    tags: bm.tags,
-    description: bm.description,
-    icon: bm.icon,
-    clicks: bm.clicks || 0,
-    lastClickedAt: bm.lastClickedAt,
+    url,
+    title: entry.meta?.title || url,
+    tags: entry.tags || [],
+    description: entry.meta?.description,
+    icon: entry.meta?.favicon,
+    clicks: 0,
+    lastClickedAt: undefined,
   }
 }
 
@@ -108,7 +107,7 @@ export async function fetchBookmarks(wdav: WebDAVConfig, path: string): Promise<
     const store = JSON.parse(raw) as BookmarksStore
     
     // 将书签保存到 PouchDB（每条一个文档）
-    const bookmarks = Object.values(store.data).map(bm => displayBookmarkToDoc(bm))
+    const bookmarks = Object.entries(store.data).map(([url, entry]) => bookmarkEntryToDoc(url, entry))
     await saveBookmarks(bookmarks)
     
     // 同时保存到 localStorage 缓存
@@ -181,16 +180,17 @@ export async function loadBookmarksFromPouchDB(): Promise<BookmarksStore | null>
   if (docs.length === 0) return null
   
   // 转换回 BookmarksStore 格式
-  const data: Record<string, DisplayBookmark> = {}
+  const data: Record<string, BookmarkEntry> = {}
   for (const doc of docs) {
-    data[doc.url] = docToDisplayBookmark(doc)
+    data[doc.url] = docToBookmarkEntry(doc)
   }
   
   return {
     data,
     meta: {
-      version: 1,
-      lastUpdated: Date.now(),
+      databaseVersion: 1,
+      created: Date.now(),
+      updated: Date.now(),
     },
   }
 }
