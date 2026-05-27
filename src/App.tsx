@@ -2,31 +2,26 @@ import { useState, useEffect } from 'react'
 import { loadWebDAVConfig, saveWebDAVConfig } from '@/lib/config'
 import SetupWizard from '@/components/SetupWizard'
 import MainPage from '@/components/MainPage'
-import OAuthCallback from '@/pages/OAuthCallback'
+import { onStatusChange } from '@/lib/remotestorage-connection'
 
 export default function App() {
   const [configured, setConfigured] = useState<boolean | null>(null)
-  const [isOAuthCallback, setIsOAuthCallback] = useState(false)
 
   useEffect(() => {
-    // 检查是否是 OAuth 回调
-    const hash = window.location.hash.substring(1)
-    const hasAccessToken = hash.includes('access_token=') || hash.includes('token=')
-    
-    if (hasAccessToken) {
-      console.log('[App] 检测到 OAuth 回调')
-      setIsOAuthCallback(true)
-      return
-    }
-
+    // 检查是否是首次访问或已有 WebDAV 配置
     const wdav = loadWebDAVConfig()
     setConfigured(!!wdav)
-  }, [])
 
-  // OAuth 回调页面
-  if (isOAuthCallback) {
-    return <OAuthCallback />
-  }
+    // 监听 RemoteStorage 连接状态
+    // 如果 URL 中有 access_token，RemoteStorage 会自动处理
+    const unsubscribe = onStatusChange((info) => {
+      if (info.status === 'connected') {
+        console.log('[App] RemoteStorage 已连接')
+      }
+    })
+
+    return unsubscribe
+  }, [])
 
   // Loading state
   if (configured === null) {
@@ -45,7 +40,8 @@ export default function App() {
           setConfigured(true)
         }}
         onRemoteStorageSetup={() => {
-          // RemoteStorage 模式不需要保存 WebDAV 配置
+          // RemoteStorage 模式：标记为已配置
+          // RemoteStorage 的连接状态由组件内部管理
           setConfigured(true)
         }}
       />

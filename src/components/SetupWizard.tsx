@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Cloud, FolderOpen, ArrowRight, Loader2, CheckCircle, AlertCircle, Globe } from 'lucide-react'
 import {
   connectWithUserAddress,
@@ -28,6 +28,7 @@ export default function SetupWizard({ onWebDAVSetup, onRemoteStorageSetup }: Set
   const [rsManualHref, setRsManualHref] = useState('')
   const [rsManualToken, setRsManualToken] = useState('')
   const [rsSyncing, setRsSyncing] = useState(false)
+  const [hasAutoEntered, setHasAutoEntered] = useState(false)
 
   // WebDAV 表单
   const [wdavUrl, setWdavUrl] = useState('')
@@ -39,6 +40,58 @@ export default function SetupWizard({ onWebDAVSetup, onRemoteStorageSetup }: Set
     claimAccess('onenav', 'rw')
     return onStatusChange(setRsConnectionInfo)
   }, [])
+
+  // 监听 RemoteStorage 连接状态，自动进入应用
+  useEffect(() => {
+    const handleAutoEnter = async () => {
+      if (rsConnectionInfo.status === 'connected' && !hasAutoEntered && !rsSyncing) {
+        console.log('[SetupWizard] RemoteStorage 连接成功，准备自动进入...')
+        
+        const credentials = getStorageCredentials()
+        if (!credentials) {
+          console.log('[SetupWizard] 等待 credentials...')
+          return
+        }
+
+        setHasAutoEntered(true)
+        setRsSyncing(true)
+        
+        try {
+          const db = await getPouchDB()
+          
+          // 检查 RemoteStorage 是否有数据
+          const rsHasData = await hasRemoteStorageData(credentials)
+          
+          if (rsHasData) {
+            // 从 RemoteStorage 加载数据到 PouchDB
+            const result = await loadFromRemoteStorage(db, credentials)
+            console.log(`从 RemoteStorage 加载了 ${result.count} 条数据`, result.errors)
+          } else {
+            // RemoteStorage 没有数据，将本地 PouchDB 数据同步上去
+            console.log('RemoteStorage 没有数据，执行首次同步...')
+            await syncToRemoteStorage(db, credentials, {
+              maxFileSize: 500 * 1024,
+              autoMerge: true,
+            })
+          }
+          
+          // 清理 URL 中的 hash
+          if (window.location.hash) {
+            history.replaceState(null, '', window.location.pathname)
+          }
+          
+          onRemoteStorageSetup(credentials)
+        } catch (err) {
+          console.error('RemoteStorage 初始化失败:', err)
+          onRemoteStorageSetup(credentials)
+        } finally {
+          setRsSyncing(false)
+        }
+      }
+    }
+    
+    handleAutoEnter()
+  }, [rsConnectionInfo.status, hasAutoEntered, rsSyncing, onRemoteStorageSetup])
 
   // RemoteStorage Widget 登录
   const handleRSWidgetConnect = useCallback(() => {
@@ -53,45 +106,6 @@ export default function SetupWizard({ onWebDAVSetup, onRemoteStorageSetup }: Set
     startRSMonitor()
     connectWithToken(rsManualHref.trim(), rsManualToken.trim())
   }, [rsManualHref, rsManualToken, startRSMonitor])
-
-  // RemoteStorage 连接成功后，从 RemoteStorage 加载数据到 PouchDB
-  const handleRSEnter = useCallback(async () => {
-    const credentials = getStorageCredentials()
-    if (!credentials) return
-
-    setRsSyncing(true)
-    try {
-      const db = await getPouchDB()
-      
-      // 检查 RemoteStorage 是否有数据
-      const hasData = await hasRemoteStorageData(credentials)
-      
-      if (hasData) {
-        // 从 RemoteStorage 加载数据到 PouchDB
-        const result = await loadFromRemoteStorage(db, credentials)
-        console.log(`从 RemoteStorage 加载了 ${result.count} 条数据`, result.errors)
-        
-        if (result.errors.length > 0) {
-          console.warn('加载过程中的错误:', result.errors)
-        }
-      } else {
-        // RemoteStorage 没有数据，将本地 PouchDB 数据同步上去
-        console.log('RemoteStorage 没有数据，执行首次同步...')
-        await syncToRemoteStorage(db, credentials, {
-          maxFileSize: 500 * 1024,
-          autoMerge: true,
-        })
-      }
-      
-      onRemoteStorageSetup(credentials)
-    } catch (err) {
-      console.error('RemoteStorage 初始化失败:', err)
-      // 即使失败，也允许进入（可能使用已有缓存数据）
-      onRemoteStorageSetup(credentials)
-    } finally {
-      setRsSyncing(false)
-    }
-  }, [onRemoteStorageSetup])
 
   // WebDAV 提交
   const handleWebDAVSubmit = useCallback(() => {
@@ -252,8 +266,16 @@ export default function SetupWizard({ onWebDAVSetup, onRemoteStorageSetup }: Set
               </div>
             </div>
 
+            {/* 同步状态 */}
+            {rsSyncing && (
+              <div className="rounded-lg p-3 bg-blue-500/10 border border-blue-500/30 flex items-center gap-3">
+                <Loader2 className="w-5 h-5 text-blue-400 animate-spin shrink-0" />
+                <p className="text-sm text-blue-300">正在加载数据...</p>
+              </div>
+            )}
+
             {/* 登录表单（未连接时显示） */}
-            {!rsConnected && !rsConnecting && (
+            {!rsConnected && !rsConnecting && !rsSyncing && (
               <>
                 {/* 登录模式切换 */}
                 <div className="flex gap-1 bg-white/5 rounded-lg p-0.5">
@@ -326,25 +348,12 @@ export default function SetupWizard({ onWebDAVSetup, onRemoteStorageSetup }: Set
               </>
             )}
 
-            {/* 连接成功后显示进入按钮 */}
-            {rsConnected && (
-              <button
-                onClick={handleRSEnter}
-                disabled={rsSyncing}
-                className="w-full py-2.5 rounded-lg bg-green-500 hover:bg-green-600 disabled:bg-white/10 text-white font-medium transition-colors flex items-center justify-center gap-2"
-              >
-                {rsSyncing ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    正在加载数据...
-                  </>
-                ) : (
-                  <>
-                    <CheckCircle className="w-4 h-4" />
-                    进入应用
-                  </>
-                )}
-              </button>
+            {/* 连接成功后自动进入 */}
+            {rsConnected && !rsSyncing && (
+              <div className="flex items-center gap-2 text-green-300 text-sm">
+                <CheckCircle className="w-4 h-4" />
+                连接成功，正在加载数据...
+              </div>
             )}
           </div>
         )}
