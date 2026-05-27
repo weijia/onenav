@@ -141,17 +141,25 @@ export default function MainPage() {
   }, [bookmarks, allBookmarks, searchQuery, activeTag])
 
   useEffect(() => {
+    console.log('[MainPage] mounted, loading:', loading, 'initialized:', initialized)
+    
     const init = async () => {
-      const wdav = loadWebDAVConfig()
-      console.log('[Init] WebDAV config:', wdav)
-      if (wdav) {
-        console.log('[Init] 使用 WebDAV 配置')
-        setWebdavConfig(wdav)
-        setInitialized(true)
-        loadAllData(wdav)
-      } else {
-        console.log('[Init] 无 WebDAV 配置，显示初始化向导')
-        // 没有 WebDAV 配置，显示初始化向导（让用户选择数据源）
+      try {
+        console.log('[Init] 开始初始化...')
+        const wdav = loadWebDAVConfig()
+        console.log('[Init] WebDAV config:', wdav)
+        if (wdav) {
+          console.log('[Init] 使用 WebDAV 配置')
+          setWebdavConfig(wdav)
+          setInitialized(true)
+          loadAllData(wdav)
+        } else {
+          console.log('[Init] 无 WebDAV 配置，显示初始化向导')
+          // 没有 WebDAV 配置，显示初始化向导（让用户选择数据源）
+          setLoading(false)
+        }
+      } catch (err) {
+        console.error('[Init] 初始化错误:', err)
         setLoading(false)
       }
     }
