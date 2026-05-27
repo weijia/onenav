@@ -9,6 +9,7 @@ import {
   type RSConnectionInfo,
 } from '@/lib/remotestorage-connection'
 import { syncToRemoteStorage } from '@/lib/remotestorage-sync'
+import { loadFromRemoteStorage, hasRemoteStorageData } from '@/lib/remotestorage-load'
 import { getPouchDB } from '@/lib/pouchdb'
 
 type SetupMode = 'choose' | 'webdav' | 'remotestorage'
@@ -53,7 +54,7 @@ export default function SetupWizard({ onWebDAVSetup, onRemoteStorageSetup }: Set
     connectWithToken(rsManualHref.trim(), rsManualToken.trim())
   }, [rsManualHref, rsManualToken, startRSMonitor])
 
-  // RemoteStorage 连接成功后，同步并进入应用
+  // RemoteStorage 连接成功后，从 RemoteStorage 加载数据到 PouchDB
   const handleRSEnter = useCallback(async () => {
     const credentials = getStorageCredentials()
     if (!credentials) return
@@ -61,14 +62,31 @@ export default function SetupWizard({ onWebDAVSetup, onRemoteStorageSetup }: Set
     setRsSyncing(true)
     try {
       const db = await getPouchDB()
-      await syncToRemoteStorage(db, credentials, {
-        maxFileSize: 500 * 1024,
-        autoMerge: true,
-      })
+      
+      // 检查 RemoteStorage 是否有数据
+      const hasData = await hasRemoteStorageData(credentials)
+      
+      if (hasData) {
+        // 从 RemoteStorage 加载数据到 PouchDB
+        const result = await loadFromRemoteStorage(db, credentials)
+        console.log(`从 RemoteStorage 加载了 ${result.count} 条数据`, result.errors)
+        
+        if (result.errors.length > 0) {
+          console.warn('加载过程中的错误:', result.errors)
+        }
+      } else {
+        // RemoteStorage 没有数据，将本地 PouchDB 数据同步上去
+        console.log('RemoteStorage 没有数据，执行首次同步...')
+        await syncToRemoteStorage(db, credentials, {
+          maxFileSize: 500 * 1024,
+          autoMerge: true,
+        })
+      }
+      
       onRemoteStorageSetup(credentials)
     } catch (err) {
-      console.error('RemoteStorage 初始化同步失败:', err)
-      // 即使同步失败，也允许进入（使用已有缓存数据）
+      console.error('RemoteStorage 初始化失败:', err)
+      // 即使失败，也允许进入（可能使用已有缓存数据）
       onRemoteStorageSetup(credentials)
     } finally {
       setRsSyncing(false)
@@ -318,7 +336,7 @@ export default function SetupWizard({ onWebDAVSetup, onRemoteStorageSetup }: Set
                 {rsSyncing ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    正在同步数据...
+                    正在加载数据...
                   </>
                 ) : (
                   <>
