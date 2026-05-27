@@ -66,7 +66,7 @@ export async function loadFromRemoteStorage(
 
     if (indexContent && indexContent.partitions) {
       // 新格式：按分区读取 manifest
-      for (const [partition, info] of Object.entries(indexContent.partitions)) {
+      for (const [partition] of Object.entries(indexContent.partitions)) {
         try {
           const partitionManifestPath = `/onenav/data/${partition}/manifest.json`
           const pmData = await fs.readFile(partitionManifestPath, 'utf8')
