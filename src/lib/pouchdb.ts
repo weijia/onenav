@@ -1,11 +1,9 @@
-// @ts-ignore - Vite requires direct path to avoid ESM/CJS conflict
-import PouchDB from 'pouchdb-browser/lib/index-browser.js'
-
 const DB_NAME = 'onenav'
-let db: PouchDB.Database | null = null
+let db: any = null
 
-function getDb(): PouchDB.Database {
+async function getDb(): Promise<any> {
   if (!db) {
+    const PouchDB = (await import('pouchdb-browser')).default
     db = new PouchDB(DB_NAME)
   }
   return db
@@ -14,7 +12,7 @@ function getDb(): PouchDB.Database {
 // 通用：写入或更新文档（upsert）
 async function upsertDoc(doc: any): Promise<void> {
   try {
-    const database = getDb()
+    const database = await getDb()
     const existing = await database.get(doc._id).catch(() => null)
     if (existing) {
       await database.put({ ...doc, _rev: existing._rev })
@@ -29,7 +27,7 @@ async function upsertDoc(doc: any): Promise<void> {
 // 通用：读取文档
 async function getDoc<T>(id: string): Promise<T | null> {
   try {
-    const database = getDb()
+    const database = await getDb()
     const doc = await database.get(id)
     return doc as unknown as T
   } catch {
@@ -39,38 +37,22 @@ async function getDoc<T>(id: string): Promise<T | null> {
 
 // ==================== WebDAV 配置 ====================
 
-interface WebDAVConfigDoc {
-  _id: string
-  type: 'webdav-config'
-  url: string
-  username: string
-  password: string
-  updatedAt: number
-}
-
 export async function saveWebDAVConfigToPouch(config: { url: string; username: string; password: string }): Promise<void> {
   await upsertDoc({
     _id: 'config:webdav',
     type: 'webdav-config',
     ...config,
     updatedAt: Date.now(),
-  } as WebDAVConfigDoc)
+  })
 }
 
 export async function loadWebDAVConfigFromPouch(): Promise<{ url: string; username: string; password: string } | null> {
-  const doc = await getDoc<WebDAVConfigDoc>('config:webdav')
+  const doc = await getDoc<any>('config:webdav')
   if (!doc) return null
   return { url: doc.url, username: doc.username, password: doc.password }
 }
 
 // ==================== 应用配置 ====================
-
-interface AppConfigDoc {
-  _id: string
-  type: 'app-config'
-  [key: string]: any
-  updatedAt: number
-}
 
 export async function saveAppConfigToPouch(config: any): Promise<void> {
   await upsertDoc({
@@ -78,22 +60,14 @@ export async function saveAppConfigToPouch(config: any): Promise<void> {
     type: 'app-config',
     ...config,
     updatedAt: Date.now(),
-  } as AppConfigDoc)
+  })
 }
 
 export async function loadAppConfigFromPouch(): Promise<any | null> {
-  return getDoc<AppConfigDoc>('config:app')
+  return getDoc<any>('config:app')
 }
 
 // ==================== 书签数据 ====================
-
-interface BookmarksDoc {
-  _id: string
-  type: 'bookmarks'
-  data: Record<string, any>
-  meta: any
-  updatedAt: number
-}
 
 export async function saveBookmarksToPouch(store: { data: Record<string, any>; meta: any }): Promise<void> {
   await upsertDoc({
@@ -102,24 +76,16 @@ export async function saveBookmarksToPouch(store: { data: Record<string, any>; m
     data: store.data,
     meta: store.meta,
     updatedAt: Date.now(),
-  } as BookmarksDoc)
+  })
 }
 
 export async function loadBookmarksFromPouch(): Promise<{ data: Record<string, any>; meta: any } | null> {
-  const doc = await getDoc<BookmarksDoc>('data:bookmarks')
+  const doc = await getDoc<any>('data:bookmarks')
   if (!doc) return null
   return { data: doc.data, meta: doc.meta }
 }
 
 // ==================== 点击统计 ====================
-
-interface ClickStatsDoc {
-  _id: string
-  type: 'click-stats'
-  version: number
-  records: Record<string, any>
-  updatedAt: number
-}
 
 export async function saveClickStatsToPouch(stats: { version: number; records: Record<string, any> }): Promise<void> {
   await upsertDoc({
@@ -128,23 +94,16 @@ export async function saveClickStatsToPouch(stats: { version: number; records: R
     version: stats.version,
     records: stats.records,
     updatedAt: Date.now(),
-  } as ClickStatsDoc)
+  })
 }
 
 export async function loadClickStatsFromPouch(): Promise<{ version: number; records: Record<string, any> } | null> {
-  const doc = await getDoc<ClickStatsDoc>('stats:clicks')
+  const doc = await getDoc<any>('stats:clicks')
   if (!doc) return null
   return { version: doc.version, records: doc.records }
 }
 
 // ==================== 固定书签 ====================
-
-interface PinnedDoc {
-  _id: string
-  type: 'pinned'
-  urls: string[]
-  updatedAt: number
-}
 
 export async function savePinnedToPouch(urls: string[]): Promise<void> {
   await upsertDoc({
@@ -152,11 +111,11 @@ export async function savePinnedToPouch(urls: string[]): Promise<void> {
     type: 'pinned',
     urls,
     updatedAt: Date.now(),
-  } as PinnedDoc)
+  })
 }
 
 export async function loadPinnedFromPouch(): Promise<string[] | null> {
-  const doc = await getDoc<PinnedDoc>('config:pinned')
+  const doc = await getDoc<any>('config:pinned')
   if (!doc) return null
   return doc.urls
 }
