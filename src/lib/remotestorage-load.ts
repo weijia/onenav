@@ -1,49 +1,121 @@
 /**
  * 从 RemoteStorage 加载数据到 PouchDB
  * 
- * 直接使用 universal-sync-v2 的 SyncEngine.pull() 方法
+ * universal-sync-v2 存储格式：
+ * - manifest-index.json: 分区索引
+ * - data/YYYY/MM/manifest.json: 分区 manifest
+ * - data/YYYY/MM/data-{seq}-{ts}.json: 数据文件（包含原始 PouchDB 文档）
  */
 
 import { RemoteStorageFileSystem } from './remotestorage-fs'
 import type { RemoteStorageConfig } from './remotestorage-fs'
+import { getPouchDB } from './pouchdb'
 
-// 动态导入 universal-sync-v2 浏览器版本
-let syncModule: any = null
+interface DataFileMetadata {
+  filename: string
+  startSeq: number
+  endSeq: number
+  timestamp: number
+  documentCount: number
+}
 
-async function getSyncModule(): Promise<any> {
-  if (!syncModule) {
-    syncModule = await import('universal-sync-v2/dist/browser.js' as any)
-  }
-  return syncModule
+interface PartitionManifest {
+  version: string
+  lastSequence: number
+  lastTimestamp: number
+  files: DataFileMetadata[]
+}
+
+interface ManifestIndex {
+  version: string
+  partitions: Record<string, {
+    manifestPath: string
+    lastSequence: number
+    lastTimestamp: number
+  }>
 }
 
 /**
  * 从 RemoteStorage 加载数据到 PouchDB
  */
 export async function loadFromRemoteStorage(
-  db: PouchDB.Database,
+  _db: PouchDB.Database,
   config: RemoteStorageConfig
 ): Promise<{ count: number; errors: string[] }> {
   const errors: string[] = []
+  let count = 0
+  const fs = new RemoteStorageFileSystem(config)
 
   try {
-    const fs = new RemoteStorageFileSystem(config)
-    const { SyncEngine } = await getSyncModule()
-    
-    const engine = new SyncEngine(db, fs as any, {
-      basePath: '/onenav',
-      maxFileSize: 500 * 1024,
-      autoMerge: false, // 加载时不需要合并
-    })
+    // 1. 读取 manifest-index.json
+    let index: ManifestIndex | null = null
+    try {
+      const indexData = await fs.readFile('/onenav/manifest-index.json', 'utf8')
+      index = JSON.parse(indexData as string)
+    } catch (err) {
+      console.log('[RS Load] manifest-index.json 不存在:', err)
+    }
 
-    await engine.initialize()
-    await engine.pull()
+    // 2. 收集所有数据文件
+    const dataFiles: Array<{ partition: string; file: DataFileMetadata }> = []
 
-    console.log('[RS Load] 加载完成')
-    return { count: 0, errors } // universal-sync-v2 内部处理计数
+    if (index?.partitions) {
+      for (const [partition, info] of Object.entries(index.partitions)) {
+        try {
+          const pmPath = `/onenav/data/${partition}/manifest.json`
+          const pmData = await fs.readFile(pmPath, 'utf8')
+          const pm: PartitionManifest = JSON.parse(pmData as string)
+          for (const f of pm.files) {
+            dataFiles.push({ partition, file: f })
+          }
+        } catch (err) {
+          errors.push(`读取分区 ${partition} manifest 失败: ${err}`)
+        }
+      }
+    }
+
+    if (dataFiles.length === 0) {
+      console.log('[RS Load] 没有找到数据文件')
+      return { count: 0, errors }
+    }
+
+    console.log(`[RS Load] 找到 ${dataFiles.length} 个数据文件`)
+
+    // 3. 读取所有数据文件中的文档
+    const allDocs: any[] = []
+    for (const { partition, file } of dataFiles) {
+      try {
+        const filePath = `/onenav/data/${partition}/${file.filename}`
+        const fileData = await fs.readFile(filePath, 'utf8')
+        const docs = JSON.parse(fileData as string)
+        if (Array.isArray(docs)) {
+          allDocs.push(...docs)
+        }
+      } catch (err) {
+        errors.push(`读取文件 ${file.filename} 失败: ${err}`)
+      }
+    }
+
+    console.log(`[RS Load] 共 ${allDocs.length} 条文档`)
+
+    // 4. 写入 PouchDB
+    if (allDocs.length > 0) {
+      const db = await getPouchDB()
+      const results = await db.bulkDocs(allDocs)
+      count = results.filter((r: any) => r.ok).length
+
+      results.forEach((r: any, i: number) => {
+        if (!r.ok && r.error && r.error !== 'conflict') {
+          errors.push(`写入 ${allDocs[i]?._id}: ${r.error}`)
+        }
+      })
+    }
+
+    console.log(`[RS Load] 成功写入 ${count} 条文档`)
+    return { count, errors }
   } catch (err) {
     errors.push(`加载失败: ${err}`)
-    return { count: 0, errors }
+    return { count, errors }
   }
 }
 
@@ -55,7 +127,6 @@ export async function hasRemoteStorageData(
 ): Promise<boolean> {
   const fs = new RemoteStorageFileSystem(config)
 
-  // 检查 manifest-index.json 或 manifest.json 是否存在
   try {
     await fs.readFile('/onenav/manifest-index.json', 'utf8')
     return true
