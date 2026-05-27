@@ -7,9 +7,9 @@
 import { RemoteStorageFileSystem, type RemoteStorageConfig } from './remotestorage-fs'
 
 // 动态导入 universal-sync-v2 浏览器版本
-let syncModule: typeof import('universal-sync-v2') | null = null
+let syncModule: any = null
 
-async function getSyncModule(): Promise<typeof import('universal-sync-v2')> {
+async function getSyncModule(): Promise<any> {
   if (!syncModule) {
     // 使用浏览器版本
     syncModule = await import('universal-sync-v2/dist/browser.js' as any)
