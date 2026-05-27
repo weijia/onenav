@@ -1,3 +1,4 @@
+// @ts-ignore - Vite requires direct path to avoid ESM/CJS conflict
 import PouchDB from 'pouchdb-browser/lib/index-browser.js'
 
 const DB_NAME = 'onenav'
