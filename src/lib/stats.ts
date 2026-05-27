@@ -1,6 +1,6 @@
 import type { DisplayBookmark, WebDAVConfig } from '@/types'
 import { getFileContents, putFileContents } from './webdav'
-import { saveClickStatsToPouch, loadClickStatsFromPouch, savePinnedToPouch } from './pouchdb'
+import { saveClickStatsToPouch, savePinnedToPouch } from './pouchdb'
 
 interface ClickRecord {
   url: string
