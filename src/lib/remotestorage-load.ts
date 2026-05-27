@@ -47,40 +47,49 @@ export async function loadFromRemoteStorage(
   const fs = new RemoteStorageFileSystem(config)
 
   try {
-    // 1. 读取 manifest-index.json
+    // 1. 尝试读取 manifest-index.json（多分区格式）
     let index: ManifestIndex | null = null
     try {
       console.log('[RS Load] 尝试读取 manifest-index.json...')
       const indexData = await fs.readFile('/onenav/manifest-index.json', 'utf8')
-      console.log('[RS Load] manifest-index.json 内容:', indexData)
       index = JSON.parse(indexData as string)
       console.log('[RS Load] 解析后的 index:', index)
     } catch (err) {
-      console.log('[RS Load] manifest-index.json 不存在或读取失败:', err)
+      console.log('[RS Load] manifest-index.json 不存在，尝试读取根 manifest.json')
     }
 
     // 2. 收集所有数据文件
     const dataFiles: Array<{ partition: string; file: DataFileMetadata }> = []
 
     if (index?.partitions) {
+      // 多分区格式
       console.log('[RS Load] 发现分区:', Object.keys(index.partitions))
       for (const [partition] of Object.entries(index.partitions)) {
         try {
           const pmPath = `/onenav/data/${partition}/manifest.json`
-          console.log(`[RS Load] 读取分区 manifest: ${pmPath}`)
           const pmData = await fs.readFile(pmPath, 'utf8')
           const pm: PartitionManifest = JSON.parse(pmData as string)
-          console.log(`[RS Load] 分区 ${partition} 有 ${pm.files?.length || 0} 个文件`)
           for (const f of pm.files) {
             dataFiles.push({ partition, file: f })
           }
         } catch (err) {
-          console.error(`[RS Load] 读取分区 ${partition} manifest 失败:`, err)
           errors.push(`读取分区 ${partition} manifest 失败: ${err}`)
         }
       }
     } else {
-      console.log('[RS Load] index.partitions 为空或不存在')
+      // 单分区格式：读取根目录 manifest.json
+      try {
+        console.log('[RS Load] 读取根目录 manifest.json...')
+        const manifestData = await fs.readFile('/onenav/manifest.json', 'utf8')
+        const manifest: PartitionManifest = JSON.parse(manifestData as string)
+        console.log('[RS Load] 根 manifest:', manifest)
+        for (const f of manifest.files) {
+          // 根目录的文件没有分区，使用空字符串
+          dataFiles.push({ partition: '', file: f })
+        }
+      } catch (err) {
+        console.log('[RS Load] 根目录 manifest.json 也不存在:', err)
+      }
     }
 
     if (dataFiles.length === 0) {
@@ -88,19 +97,25 @@ export async function loadFromRemoteStorage(
       return { count: 0, errors }
     }
 
-    console.log(`[RS Load] 找到 ${dataFiles.length} 个数据文件`)
+    console.log(`[RS Load] 找到 ${dataFiles.length} 个数据文件`, dataFiles)
 
     // 3. 读取所有数据文件中的文档
     const allDocs: any[] = []
     for (const { partition, file } of dataFiles) {
       try {
-        const filePath = `/onenav/data/${partition}/${file.filename}`
+        // 根据是否有分区决定路径
+        const filePath = partition 
+          ? `/onenav/data/${partition}/${file.filename}`
+          : `/onenav/${file.filename}`
+        console.log(`[RS Load] 读取文件: ${filePath}`)
         const fileData = await fs.readFile(filePath, 'utf8')
         const docs = JSON.parse(fileData as string)
+        console.log(`[RS Load] 文件 ${file.filename} 包含 ${docs?.length || 0} 条文档`)
         if (Array.isArray(docs)) {
           allDocs.push(...docs)
         }
       } catch (err) {
+        console.error(`[RS Load] 读取文件 ${file.filename} 失败:`, err)
         errors.push(`读取文件 ${file.filename} 失败: ${err}`)
       }
     }
