@@ -1,5 +1,6 @@
 import type { DisplayBookmark, WebDAVConfig } from '@/types'
 import { getFileContents, putFileContents } from './webdav'
+import { saveClickStatsToPouch, loadClickStatsFromPouch, savePinnedToPouch } from './pouchdb'
 
 interface ClickRecord {
   url: string
@@ -17,6 +18,8 @@ const STATS_KEY = 'onenavClickStats'
 const STATS_VERSION = 1
 const WEBDAV_STATS_PATH = 'app_data/onenav/click_stats.json'
 
+// ==================== 点击统计 ====================
+
 export function loadClickStats(): ClickStats {
   try {
     const raw = localStorage.getItem(STATS_KEY)
@@ -32,6 +35,7 @@ export function loadClickStats(): ClickStats {
 
 export function saveClickStats(stats: ClickStats): void {
   localStorage.setItem(STATS_KEY, JSON.stringify(stats))
+  saveClickStatsToPouch(stats) // 同步到 PouchDB
 }
 
 export async function syncClickStatsToWebDAV(wdav: WebDAVConfig): Promise<void> {
@@ -48,10 +52,9 @@ export async function loadClickStatsFromWebDAV(wdav: WebDAVConfig): Promise<Clic
     const raw = await getFileContents(wdav, WEBDAV_STATS_PATH)
     const data = JSON.parse(raw) as ClickStats
     if (data.version === STATS_VERSION) {
-      // Merge with local stats
       const localStats = loadClickStats()
       const merged = mergeStats(localStats, data)
-      saveClickStats(merged)
+      saveClickStats(merged) // 同时写入 localStorage 和 PouchDB
       return merged
     }
     return null
@@ -62,24 +65,23 @@ export async function loadClickStatsFromWebDAV(wdav: WebDAVConfig): Promise<Clic
 
 function mergeStats(local: ClickStats, remote: ClickStats): ClickStats {
   const merged: Record<string, ClickRecord> = { ...local.records }
-  
+
   for (const [url, record] of Object.entries(remote.records)) {
     if (merged[url]) {
-      // Use higher count and more recent timestamp
       merged[url].count = Math.max(merged[url].count, record.count)
       merged[url].lastClicked = Math.max(merged[url].lastClicked, record.lastClicked)
     } else {
       merged[url] = record
     }
   }
-  
+
   return { records: merged, version: STATS_VERSION }
 }
 
 export function recordClick(bookmark: DisplayBookmark, wdav?: WebDAVConfig): void {
   const stats = loadClickStats()
   const now = Date.now()
-  
+
   if (stats.records[bookmark.url]) {
     stats.records[bookmark.url].count++
     stats.records[bookmark.url].lastClicked = now
@@ -92,21 +94,18 @@ export function recordClick(bookmark: DisplayBookmark, wdav?: WebDAVConfig): voi
       lastClicked: now,
     }
   }
-  
-  saveClickStats(stats)
-  
-  // Sync to WebDAV if available
+
+  saveClickStats(stats) // 同时写入 localStorage 和 PouchDB
+
   if (wdav) {
     syncClickStatsToWebDAV(wdav)
   }
-  
-  console.log('[OneNav] Click recorded:', bookmark.url, 'count:', stats.records[bookmark.url].count)
 }
 
 export function getMostVisitedBookmarks(limit: number = 20): ClickRecord[] {
   const stats = loadClickStats()
   const records = Object.values(stats.records)
-  
+
   return records
     .sort((a, b) => {
       if (b.count !== a.count) {
@@ -120,13 +119,14 @@ export function getMostVisitedBookmarks(limit: number = 20): ClickRecord[] {
 export function getRecentBookmarks(limit: number = 20): ClickRecord[] {
   const stats = loadClickStats()
   const records = Object.values(stats.records)
-  
+
   return records
     .sort((a, b) => b.lastClicked - a.lastClicked)
     .slice(0, limit)
 }
 
-// 固定书签功能
+// ==================== 固定书签 ====================
+
 const PINNED_KEY = 'onenavPinnedBookmarks'
 
 export function loadPinnedBookmarks(): string[] {
@@ -141,6 +141,7 @@ export function loadPinnedBookmarks(): string[] {
 
 export function savePinnedBookmarks(urls: string[]): void {
   localStorage.setItem(PINNED_KEY, JSON.stringify(urls))
+  savePinnedToPouch(urls) // 同步到 PouchDB
 }
 
 export function togglePinnedBookmark(url: string): boolean {

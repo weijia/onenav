@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import type { AppConfig, DisplayBookmark, WebDAVConfig, BookmarksStore } from '@/types'
-import { loadWebDAVConfig, loadAppConfig, fetchAppConfig, fetchBookmarks, getDefaultAppConfig, saveAppConfig, saveAppConfigToWebDAV, loadBookmarksCache } from '@/lib/config'
+import { loadWebDAVConfig, loadAppConfig, fetchAppConfig, fetchBookmarks, getDefaultAppConfig, saveAppConfig, saveAppConfigToWebDAV, loadBookmarksCache, loadAppConfigFromPouchDB, loadBookmarksFromPouchDB } from '@/lib/config'
 import { filterByTag, getMostVisitedBookmarks, isDeleted, getFaviconUrl, stringToColor } from '@/lib/bookmarks'
 import { recordClick, loadClickStatsFromWebDAV, togglePinnedBookmark, loadPinnedBookmarks, savePinnedBookmarks } from '@/lib/stats'
 import Sidebar from '@/components/Sidebar'
@@ -34,10 +34,16 @@ export default function MainPage() {
       // Load click stats from WebDAV and merge with local
       await loadClickStatsFromWebDAV(wdav)
 
-      // Load app config from WebDAV or fall back to localStorage
+      // Load app config: WebDAV > PouchDB > localStorage > default
       let config = await fetchAppConfig(wdav)
       if (!config) {
-        config = loadAppConfig() || getDefaultAppConfig()
+        config = await loadAppConfigFromPouchDB()
+      }
+      if (!config) {
+        config = loadAppConfig()
+      }
+      if (!config) {
+        config = getDefaultAppConfig()
       }
       setAppConfig(config)
 
@@ -47,8 +53,11 @@ export default function MainPage() {
         savePinnedBookmarks(config.pinnedBookmarks)
       }
 
-      // 先从本地缓存加载，立即显示
-      const cachedStore = loadBookmarksCache()
+      // 先从 PouchDB 或 localStorage 加载，立即显示
+      let cachedStore = await loadBookmarksFromPouchDB()
+      if (!cachedStore) {
+        cachedStore = loadBookmarksCache()
+      }
       if (cachedStore) {
         cachedStoreRef.current = true
         processBookmarksRef.current?.(cachedStore, config)
