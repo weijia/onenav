@@ -4,9 +4,18 @@
  * 直接使用 universal-sync-v2 的 SyncEngine.pull() 方法
  */
 
-import { SyncEngine } from 'universal-sync-v2'
 import { RemoteStorageFileSystem } from './remotestorage-fs'
 import type { RemoteStorageConfig } from './remotestorage-fs'
+
+// 动态导入 universal-sync-v2 浏览器版本
+let syncModule: any = null
+
+async function getSyncModule(): Promise<any> {
+  if (!syncModule) {
+    syncModule = await import('universal-sync-v2/dist/browser.js' as any)
+  }
+  return syncModule
+}
 
 /**
  * 从 RemoteStorage 加载数据到 PouchDB
@@ -19,6 +28,7 @@ export async function loadFromRemoteStorage(
 
   try {
     const fs = new RemoteStorageFileSystem(config)
+    const { SyncEngine } = await getSyncModule()
     
     const engine = new SyncEngine(db, fs as any, {
       basePath: '/onenav',

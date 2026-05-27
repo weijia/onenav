@@ -4,8 +4,18 @@
  * 使用 universal-sync-v2 将 PouchDB 数据同步到 RemoteStorage
  */
 
-import { sync, SyncEngine } from 'universal-sync-v2'
 import { RemoteStorageFileSystem, type RemoteStorageConfig } from './remotestorage-fs'
+
+// 动态导入 universal-sync-v2 浏览器版本
+let syncModule: typeof import('universal-sync-v2') | null = null
+
+async function getSyncModule(): Promise<typeof import('universal-sync-v2')> {
+  if (!syncModule) {
+    // 使用浏览器版本
+    syncModule = await import('universal-sync-v2/dist/browser.js' as any)
+  }
+  return syncModule
+}
 
 let isConfigured = false
 let syncInProgress = false
@@ -80,6 +90,8 @@ export async function syncToRemoteStorage(
       throw new Error('文件系统未初始化')
     }
 
+    const { sync } = await getSyncModule()
+
     // basePath 使用模块名 'onenav'
     // universal-sync-v2 会生成路径: /onenav/data/2026/05/manifest.json
     // RemoteStorageFileSystem 会转换为: https://storage.5apps.com/weijia/onenav/data/2026/05/manifest.json
@@ -100,12 +112,14 @@ export async function createSyncEngine(
   db: PouchDB.Database,
   config: RemoteStorageConnectionConfig,
   options: RemoteStorageSyncOptions = {}
-): Promise<SyncEngine> {
+): Promise<any> {
   await configureRemoteStorage(config)
 
   if (!currentFs) {
     throw new Error('文件系统未初始化')
   }
+
+  const { SyncEngine } = await getSyncModule()
 
   const engine = new SyncEngine(db, currentFs as any, {
     basePath: '/onenav',
