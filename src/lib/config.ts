@@ -1,11 +1,12 @@
-import type { WebDAVConfig, AppConfig, BookmarksStore } from '@/types'
+import type { WebDAVConfig, AppConfig, BookmarksStore, DisplayBookmark } from '@/types'
 import { getFileContents, putFileContents, createDirectory } from '@/lib/webdav'
 import {
   saveWebDAVConfigToPouch,
   saveAppConfigToPouch,
-  saveBookmarksToPouch,
-  loadBookmarksFromPouch,
+  saveBookmarks,
+  getAllBookmarks,
   loadAppConfigFromPouch,
+  type BookmarkDoc,
 } from '@/lib/pouchdb'
 
 const WEBDAV_CONFIG_KEY = 'webDAVConfig'
@@ -43,7 +44,15 @@ export function loadAppConfig(): AppConfig | null {
 
 export function saveAppConfig(config: AppConfig): void {
   localStorage.setItem(APP_CONFIG_KEY, JSON.stringify(config))
-  saveAppConfigToPouch(config) // 同步到 PouchDB
+  saveAppConfigToPouch({
+    tags: config.tags.map(t => ({ name: t.tag, displayName: t.label, order: t.order })),
+    display: {
+      showFavicons: true,
+      cardStyle: 'comfortable',
+      showDescriptions: true,
+    },
+    pinnedBookmarks: [],
+  }) // 同步到 PouchDB
 }
 
 export async function fetchAppConfig(wdav: WebDAVConfig): Promise<AppConfig | null> {
@@ -66,11 +75,45 @@ export async function saveAppConfigToWebDAV(wdav: WebDAVConfig, config: AppConfi
 
 // ==================== 书签数据 ====================
 
+// 将 BookmarkDoc 转换为 DisplayBookmark
+function docToDisplayBookmark(doc: BookmarkDoc): DisplayBookmark {
+  return {
+    id: doc.url,
+    title: doc.title,
+    url: doc.url,
+    tags: doc.tags,
+    description: doc.description,
+    icon: doc.icon,
+    clicks: doc.clicks,
+    lastClickedAt: doc.lastClickedAt,
+  }
+}
+
+// 将 DisplayBookmark 转换为 BookmarkDoc
+function displayBookmarkToDoc(bm: DisplayBookmark): Omit<BookmarkDoc, '_id' | 'type'> {
+  return {
+    url: bm.url,
+    title: bm.title,
+    tags: bm.tags,
+    description: bm.description,
+    icon: bm.icon,
+    clicks: bm.clicks || 0,
+    lastClickedAt: bm.lastClickedAt,
+  }
+}
+
 export async function fetchBookmarks(wdav: WebDAVConfig, path: string): Promise<BookmarksStore | null> {
   try {
     const raw = await getFileContents(wdav, path)
     const store = JSON.parse(raw) as BookmarksStore
-    saveBookmarksCache(store) // 同时写入 localStorage 和 PouchDB
+    
+    // 将书签保存到 PouchDB（每条一个文档）
+    const bookmarks = Object.values(store.data).map(bm => displayBookmarkToDoc(bm))
+    await saveBookmarks(bookmarks)
+    
+    // 同时保存到 localStorage 缓存
+    saveBookmarksCache(store)
+    
     return store
   } catch {
     return null
@@ -90,22 +133,66 @@ export function loadBookmarksCache(): BookmarksStore | null {
 export function saveBookmarksCache(store: BookmarksStore): void {
   try {
     localStorage.setItem(BOOKMARKS_CACHE_KEY, JSON.stringify(store))
-    saveBookmarksToPouch(store) // 同步到 PouchDB
   } catch {
     // localStorage 满了就忽略
   }
 }
 
-// ==================== 从 PouchDB 加载（优先） ====================
+// ==================== 从 PouchDB 加载（优先）====================
 
 export async function loadAppConfigFromPouchDB(): Promise<AppConfig | null> {
-  return loadAppConfigFromPouch()
+  const doc = await loadAppConfigFromPouch()
+  if (!doc) return null
+  
+  // 转换回 AppConfig 格式
+  return {
+    version: 1,
+    tags: doc.tags.map(t => ({ id: t.name, label: t.displayName, tag: t.name, icon: 'LayoutGrid', order: t.order })),
+    bookmarkPath: 'app_data/utags/bookmarks.json',
+    display: {
+      iconSize: 60,
+      iconBorderRadius: 16,
+      iconSpacing: 27,
+      showName: true,
+      nameSize: 12,
+      maxWidth: 1600,
+      openInNewTab: true,
+      defaultColor: '#1e293b',
+    },
+    background: {
+      type: 'gradient',
+      value: 'from-blue-900 via-purple-900 to-indigo-900',
+      maskOpacity: 0.2,
+      blur: 0,
+    },
+    widgets: {
+      showTime: false,
+      showSearchBar: false,
+      showSeconds: false,
+      searchEngine: 'google',
+      fontSize: 70,
+      fontColor: '#ffffff',
+    },
+  }
 }
 
 export async function loadBookmarksFromPouchDB(): Promise<BookmarksStore | null> {
-  const result = await loadBookmarksFromPouch()
-  if (!result) return null
-  return { data: result.data, meta: result.meta } as BookmarksStore
+  const docs = await getAllBookmarks()
+  if (docs.length === 0) return null
+  
+  // 转换回 BookmarksStore 格式
+  const data: Record<string, DisplayBookmark> = {}
+  for (const doc of docs) {
+    data[doc.url] = docToDisplayBookmark(doc)
+  }
+  
+  return {
+    data,
+    meta: {
+      version: 1,
+      lastUpdated: Date.now(),
+    },
+  }
 }
 
 // ==================== 默认配置 ====================

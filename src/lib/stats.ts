@@ -1,6 +1,6 @@
 import type { DisplayBookmark, WebDAVConfig } from '@/types'
 import { getFileContents, putFileContents } from './webdav'
-import { saveClickStatsToPouch, savePinnedToPouch } from './pouchdb'
+import { recordClickToPouch, getClickStats, savePinnedToPouch } from './pouchdb'
 
 interface ClickRecord {
   url: string
@@ -35,7 +35,7 @@ export function loadClickStats(): ClickStats {
 
 export function saveClickStats(stats: ClickStats): void {
   localStorage.setItem(STATS_KEY, JSON.stringify(stats))
-  saveClickStatsToPouch(stats) // 同步到 PouchDB
+  // 注意：不再使用 saveClickStatsToPouch，改用 recordClickToPouch 逐条记录
 }
 
 export async function syncClickStatsToWebDAV(wdav: WebDAVConfig): Promise<void> {
@@ -54,7 +54,13 @@ export async function loadClickStatsFromWebDAV(wdav: WebDAVConfig): Promise<Clic
     if (data.version === STATS_VERSION) {
       const localStats = loadClickStats()
       const merged = mergeStats(localStats, data)
-      saveClickStats(merged) // 同时写入 localStorage 和 PouchDB
+      saveClickStats(merged) // 同时写入 localStorage
+      // 同时更新 PouchDB 中的点击记录
+      for (const [url, record] of Object.entries(merged.records)) {
+        for (let i = 0; i < record.count; i++) {
+          await recordClickToPouch(url)
+        }
+      }
       return merged
     }
     return null
@@ -95,7 +101,10 @@ export function recordClick(bookmark: DisplayBookmark, wdav?: WebDAVConfig): voi
     }
   }
 
-  saveClickStats(stats) // 同时写入 localStorage 和 PouchDB
+  saveClickStats(stats) // 写入 localStorage
+  
+  // 同时记录到 PouchDB（逐条记录）
+  recordClickToPouch(bookmark.url, bookmark.tags?.[0])
 
   if (wdav) {
     syncClickStatsToWebDAV(wdav)
