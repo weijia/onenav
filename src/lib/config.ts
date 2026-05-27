@@ -91,6 +91,7 @@ function docToBookmarkEntry(doc: BookmarkDoc): BookmarkEntry {
 
 // 将 BookmarkEntry 转换为 BookmarkDoc
 function bookmarkEntryToDoc(url: string, entry: BookmarkEntry): Omit<BookmarkDoc, '_id' | 'type'> {
+  const now = Date.now()
   return {
     url,
     title: entry.meta?.title || url,
@@ -99,6 +100,8 @@ function bookmarkEntryToDoc(url: string, entry: BookmarkEntry): Omit<BookmarkDoc
     icon: entry.meta?.favicon,
     clicks: 0,
     lastClickedAt: undefined,
+    createdAt: now,
+    updatedAt: now,
   }
 }
 
