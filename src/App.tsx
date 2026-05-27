@@ -2,25 +2,28 @@ import { useState, useEffect } from 'react'
 import { loadWebDAVConfig, saveWebDAVConfig } from '@/lib/config'
 import SetupWizard from '@/components/SetupWizard'
 import MainPage from '@/components/MainPage'
-import { onStatusChange } from '@/lib/remotestorage-connection'
+
+const RS_CONFIGURED_KEY = 'rsConfigured'
+
+function isRSConfigured(): boolean {
+  return localStorage.getItem(RS_CONFIGURED_KEY) === 'true'
+}
+
+function setRSConfigured(val: boolean): void {
+  if (val) {
+    localStorage.setItem(RS_CONFIGURED_KEY, 'true')
+  } else {
+    localStorage.removeItem(RS_CONFIGURED_KEY)
+  }
+}
 
 export default function App() {
   const [configured, setConfigured] = useState<boolean | null>(null)
 
   useEffect(() => {
-    // 检查是否是首次访问或已有 WebDAV 配置
     const wdav = loadWebDAVConfig()
-    setConfigured(!!wdav)
-
-    // 监听 RemoteStorage 连接状态
-    // 如果 URL 中有 access_token，RemoteStorage 会自动处理
-    const unsubscribe = onStatusChange((info) => {
-      if (info.status === 'connected') {
-        console.log('[App] RemoteStorage 已连接')
-      }
-    })
-
-    return unsubscribe
+    const rs = isRSConfigured()
+    setConfigured(!!wdav || rs)
   }, [])
 
   // Loading state
@@ -40,8 +43,7 @@ export default function App() {
           setConfigured(true)
         }}
         onRemoteStorageSetup={() => {
-          // RemoteStorage 模式：标记为已配置
-          // RemoteStorage 的连接状态由组件内部管理
+          setRSConfigured(true)
           setConfigured(true)
         }}
       />
