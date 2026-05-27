@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { loadWebDAVConfig } from '@/lib/config'
-import SetupPage from '@/components/SetupPage'
+import { loadWebDAVConfig, saveWebDAVConfig } from '@/lib/config'
+import SetupWizard from '@/components/SetupWizard'
 import MainPage from '@/components/MainPage'
 
 export default function App() {
@@ -21,7 +21,19 @@ export default function App() {
   }
 
   if (!configured) {
-    return <SetupPage onConfigured={() => setConfigured(true)} />
+    return (
+      <SetupWizard
+        onWebDAVSetup={(config) => {
+          saveWebDAVConfig(config)
+          setConfigured(true)
+        }}
+        onRemoteStorageSetup={() => {
+          // RemoteStorage 模式不需要保存 WebDAV 配置
+          // 但 App 层面我们设置为已配置
+          setConfigured(true)
+        }}
+      />
+    )
   }
 
   return <MainPage />
