@@ -148,24 +148,8 @@ export default function MainPage() {
         setInitialized(true)
         loadAllData(wdav)
       } else {
-        // 没有配置，尝试从 PouchDB/localStorage 加载缓存
-        let cachedConfig = loadAppConfig()
-        if (!cachedConfig) {
-          cachedConfig = await loadAppConfigFromPouchDB()
-        }
-        let cachedStore = loadBookmarksCache()
-        if (!cachedStore) {
-          cachedStore = await loadBookmarksFromPouchDB()
-        }
-        if (cachedStore && cachedConfig) {
-          setAppConfig(cachedConfig)
-          processBookmarksRef.current?.(cachedStore, cachedConfig)
-          setInitialized(true)
-          setLoading(false)
-        } else {
-          // 无任何缓存，显示初始化向导
-          setLoading(false)
-        }
+        // 没有 WebDAV 配置，显示初始化向导（让用户选择数据源）
+        setLoading(false)
       }
     }
     init()
