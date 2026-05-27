@@ -9,6 +9,13 @@ async function getDb(): Promise<any> {
   return db
 }
 
+/**
+ * 获取 PouchDB 实例（用于同步）
+ */
+export async function getPouchDB(): Promise<PouchDB.Database> {
+  return getDb()
+}
+
 // 通用：写入或更新文档（upsert）
 async function upsertDoc(doc: any): Promise<void> {
   try {

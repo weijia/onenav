@@ -12,6 +12,19 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Loader2, Plus, Trash2, GripVertical } from 'lucide-react'
+import RemoteStorageSync from '@/components/RemoteStorageSync'
+import { getPouchDB } from '@/lib/pouchdb'
+
+// Wrapper to load PouchDB instance
+function RemoteStorageSyncWrapper() {
+  const [db, setDb] = useState<PouchDB.Database | null>(null)
+  
+  useEffect(() => {
+    getPouchDB().then(setDb)
+  }, [])
+  
+  return <RemoteStorageSync db={db} />
+}
 
 interface SettingsDialogProps {
   open: boolean
@@ -20,7 +33,7 @@ interface SettingsDialogProps {
   onConfigSave: (config: AppConfig) => void
 }
 
-type SettingsTab = 'tags' | 'display' | 'background' | 'widgets' | 'webdav'
+type SettingsTab = 'tags' | 'display' | 'background' | 'widgets' | 'webdav' | 'remotestorage'
 
 const ICON_NAMES = [
   'Globe', 'Code', 'BookOpen', 'Music', 'Video', 'Gamepad2',
@@ -130,6 +143,7 @@ export default function SettingsDialog({ open, onOpenChange, config, onConfigSav
     { key: 'background', label: 'Background' },
     { key: 'widgets', label: 'Widgets' },
     { key: 'webdav', label: 'WebDAV' },
+    { key: 'remotestorage', label: 'RemoteStorage' },
   ]
 
   return (
@@ -580,6 +594,15 @@ export default function SettingsDialog({ open, onOpenChange, config, onConfigSav
                   Reset to Defaults
                 </Button>
               </div>
+            </div>
+          )}
+
+          {activeTab === 'remotestorage' && (
+            <div className="space-y-4">
+              <p className="text-sm text-white/60">
+                Sync your PouchDB data to RemoteStorage for distributed storage across cloud providers.
+              </p>
+              <RemoteStorageSyncWrapper />
             </div>
           )}
         </div>
