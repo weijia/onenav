@@ -1,4 +1,4 @@
-import PouchDB from 'pouchdb-browser'
+import PouchDB from 'pouchdb-browser/lib/index-browser.js'
 
 const DB_NAME = 'onenav'
 let db: PouchDB.Database | null = null
