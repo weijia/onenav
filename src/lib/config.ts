@@ -1,4 +1,4 @@
-import type { WebDAVConfig, AppConfig, BookmarksStore, DisplayBookmark } from '@/types'
+import type { WebDAVConfig, AppConfig, BookmarksStore, BookmarkEntry } from '@/types'
 import { getFileContents, putFileContents, createDirectory } from '@/lib/webdav'
 import {
   saveWebDAVConfigToPouch,
@@ -52,6 +52,7 @@ export function saveAppConfig(config: AppConfig): void {
       showDescriptions: true,
     },
     pinnedBookmarks: [],
+    updatedAt: Date.now(),
   }) // 同步到 PouchDB
 }
 
