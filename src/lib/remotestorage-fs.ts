@@ -1,11 +1,6 @@
 /**
- * 简化的 RemoteStorage 文件系统实现
- * 用于与 universal-sync-v2 集成
- * 
- * RemoteStorage 路径格式：
- * - href: https://storage.5apps.com/weijia/
- * - 模块路径: /onenav/（由 universal-sync-v2 的 basePath 提供）
- * - 最终 URL: href + 模块路径 + 文件路径
+ * RemoteStorage 文件系统实现
+ * 完全兼容 universal-sync-v2 的 IFileSystem 接口
  */
 
 export interface RemoteStorageConfig {
@@ -18,21 +13,20 @@ export interface RemoteStorageConfig {
 }
 
 /**
- * 简单的文件系统接口，兼容 universal-sync-v2 的 IFileSystem
+ * IFileSystem 接口（来自 universal-sync-v2）
  */
-export interface SimpleFileSystem {
-  readFile(path: string, encoding?: string): Promise<string | Uint8Array>
-  writeFile(path: string, data: string | Uint8Array): Promise<void>
-  unlink(path: string): Promise<void>
-  readdir(path: string): Promise<string[]>
-  mkdir(path: string): Promise<void>
-  rmdir(path: string): Promise<void>
-  rename(oldPath: string, newPath: string): Promise<void>
-  stat(path: string): Promise<{ size: number; mtimeMs: number; isDirectory(): boolean; isFile(): boolean }>
-  exists(path: string): Promise<boolean>
+export interface IFileSystem {
+  readFile(path: string, encoding: string): Promise<string>;
+  writeFile(path: string, data: string): Promise<void>;
+  readdir(path: string): Promise<string[]>;
+  mkdir(path: string, options?: { recursive?: boolean }): Promise<void>;
+  stat(path: string): Promise<{ isFile(): boolean; isDirectory(): boolean; mtime: Date }>;
+  unlink(path: string): Promise<void>;
+  rename(oldPath: string, newPath: string): Promise<void>;
+  exists(path: string): Promise<boolean>;
 }
 
-export class RemoteStorageFileSystem implements SimpleFileSystem {
+export class RemoteStorageFileSystem implements IFileSystem {
   private baseUrl: string
   private token: string
   private timeout: number
@@ -46,11 +40,8 @@ export class RemoteStorageFileSystem implements SimpleFileSystem {
 
   /**
    * 构建完整 URL
-   * path 格式: /onenav/data/2026/05/manifest.json
-   * 最终 URL: https://storage.5apps.com/weijia/onenav/data/2026/05/manifest.json
    */
   private buildUrl(path: string): string {
-    // 去掉 path 开头的斜杠
     const normalizedPath = path.startsWith('/') ? path.slice(1) : path
     return this.baseUrl + '/' + normalizedPath
   }
@@ -76,37 +67,23 @@ export class RemoteStorageFileSystem implements SimpleFileSystem {
     }
   }
 
-  async readFile(path: string, encoding?: string): Promise<string | Uint8Array> {
+  async readFile(path: string, encoding: string): Promise<string> {
     const url = this.buildUrl(path)
     const response = await this.makeRequest(url, { method: 'GET' })
     if (!response.ok) {
       throw new Error(`Failed to read file: ${response.status} ${response.statusText}`)
     }
-    
-    if (encoding === 'utf8' || encoding === 'utf-8') {
-      return await response.text()
-    }
-    
-    const arrayBuffer = await response.arrayBuffer()
-    return new Uint8Array(arrayBuffer)
+    return await response.text()
   }
 
-  async writeFile(path: string, data: string | Uint8Array): Promise<void> {
+  async writeFile(path: string, data: string): Promise<void> {
     const url = this.buildUrl(path)
     
-    // RemoteStorage 要求正确的 Content-Type
-    let contentType = 'application/json'
-    if (path.endsWith('.json')) {
-      contentType = 'application/json'
-    } else if (typeof data === 'string') {
-      contentType = 'text/plain; charset=utf-8'
-    } else {
-      contentType = 'application/octet-stream'
-    }
+    const contentType = path.endsWith('.json') ? 'application/json' : 'text/plain; charset=utf-8'
     
     const response = await this.makeRequest(url, {
       method: 'PUT',
-      body: data as BodyInit,
+      body: data,
       headers: {
         'Content-Type': contentType,
       },
@@ -135,7 +112,7 @@ export class RemoteStorageFileSystem implements SimpleFileSystem {
     
     if (!response.ok) {
       if (response.status === 404) {
-        return [] // 目录不存在，返回空数组
+        return []
       }
       throw new Error(`Failed to read directory: ${response.status}`)
     }
@@ -161,21 +138,17 @@ export class RemoteStorageFileSystem implements SimpleFileSystem {
     return []
   }
 
-  async mkdir(_path: string): Promise<void> {
-    // RemoteStorage 不需要显式创建目录，写入文件时自动创建
-  }
-
-  async rmdir(_path: string): Promise<void> {
-    // 空实现，RemoteStorage 会自动处理
+  async mkdir(_path: string, _options?: { recursive?: boolean }): Promise<void> {
+    // RemoteStorage 不需要显式创建目录
   }
 
   async rename(oldPath: string, newPath: string): Promise<void> {
-    const content = await this.readFile(oldPath)
+    const content = await this.readFile(oldPath, 'utf8')
     await this.writeFile(newPath, content)
     await this.unlink(oldPath)
   }
 
-  async stat(path: string): Promise<{ size: number; mtimeMs: number; isDirectory(): boolean; isFile(): boolean }> {
+  async stat(path: string): Promise<{ isFile(): boolean; isDirectory(): boolean; mtime: Date }> {
     const url = this.buildUrl(path)
     const response = await this.makeRequest(url, { method: 'HEAD' })
     
@@ -183,16 +156,13 @@ export class RemoteStorageFileSystem implements SimpleFileSystem {
       throw new Error(`Failed to stat: ${response.status}`)
     }
 
-    const contentLength = response.headers.get('content-length')
     const lastModified = response.headers.get('last-modified')
-    const size = contentLength ? parseInt(contentLength, 10) : 0
-    const mtime = lastModified ? new Date(lastModified).getTime() : Date.now()
+    const mtime = lastModified ? new Date(lastModified) : new Date()
 
     return {
-      size,
-      mtimeMs: mtime,
       isDirectory: () => false,
       isFile: () => true,
+      mtime,
     }
   }
 
