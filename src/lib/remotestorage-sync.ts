@@ -15,12 +15,10 @@ let currentFs: RemoteStorageFileSystem | null = null
  * RemoteStorage 连接配置
  */
 export interface RemoteStorageConnectionConfig {
-  /** RemoteStorage 服务器 URL */
+  /** RemoteStorage 存储地址，如 https://storage.5apps.com/weijia/ */
   href: string
   /** Bearer token */
   token: string
-  /** 基础路径，如 '/public/' 或 '/username/' */
-  basePath?: string
   /** 请求超时（毫秒） */
   timeout?: number
 }
@@ -48,7 +46,6 @@ export async function configureRemoteStorage(config: RemoteStorageConnectionConf
   const rsConfig: RemoteStorageConfig = {
     href: config.href,
     token: config.token,
-    basePath: config.basePath || '/public/',
     timeout: config.timeout || 30000,
   }
 
@@ -59,6 +56,10 @@ export async function configureRemoteStorage(config: RemoteStorageConnectionConf
 
 /**
  * 将 PouchDB 同步到 RemoteStorage
+ * 
+ * @param db PouchDB 数据库实例
+ * @param config RemoteStorage 连接配置
+ * @param options 同步选项
  */
 export async function syncToRemoteStorage(
   db: PouchDB.Database,
@@ -79,8 +80,10 @@ export async function syncToRemoteStorage(
       throw new Error('文件系统未初始化')
     }
 
-    // 执行同步 - 使用 RemoteStorageFileSystem 作为 fs 参数
-    await sync(db, currentFs as any, '/remotestorage', {
+    // basePath 使用模块名 'onenav'
+    // universal-sync-v2 会生成路径: /onenav/data/2026/05/manifest.json
+    // RemoteStorageFileSystem 会转换为: https://storage.5apps.com/weijia/onenav/data/2026/05/manifest.json
+    await sync(db, currentFs as any, '/onenav', {
       maxFileSize: options.maxFileSize ?? 500 * 1024,
       mergeThreshold: options.mergeThreshold ?? 50 * 1024,
       autoMerge: options.autoMerge ?? true,
@@ -105,7 +108,7 @@ export async function createSyncEngine(
   }
 
   const engine = new SyncEngine(db, currentFs as any, {
-    basePath: '/remotestorage',
+    basePath: '/onenav',
     maxFileSize: options.maxFileSize ?? 500 * 1024,
     mergeThreshold: options.mergeThreshold ?? 50 * 1024,
     autoMerge: options.autoMerge ?? true,

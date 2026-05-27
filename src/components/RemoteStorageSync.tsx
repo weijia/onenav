@@ -84,7 +84,6 @@ export default function RemoteStorageSync({ db }: RemoteStorageSyncProps) {
       const config: RemoteStorageConnectionConfig = {
         href: credentials.href,
         token: credentials.token,
-        basePath: '/public/onenav/',
       }
       await syncToRemoteStorage(db, config, {
         maxFileSize: 500 * 1024,
