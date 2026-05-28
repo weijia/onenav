@@ -148,11 +148,12 @@ export async function loadAppConfigFromPouchDB(): Promise<AppConfig | null> {
   if (!doc) return null
   
   console.log('[Config] loadAppConfigFromPouchDB: 加载配置', doc)
+  console.log('[Config] loadAppConfigFromPouchDB: tags 详情:', doc.tags.map((t: any) => ({ id: t.id, name: t.name, icon: t.icon, hasIcon: 'icon' in t })))
   
   // 转换回 AppConfig 格式
   return {
     version: 1,
-    tags: doc.tags.map(t => ({ 
+    tags: doc.tags.map((t: any) => ({ 
       id: t.id || t.name, 
       label: t.displayName, 
       tag: t.name, 
