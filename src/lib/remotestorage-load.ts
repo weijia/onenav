@@ -13,8 +13,6 @@ async function getSyncModule(): Promise<any> {
 
 /**
  * 从 RemoteStorage 加载数据到 PouchDB
- * 
- * 直接调用 pull()，SyncEngine 会自动检查远程是否有数据并加载
  */
 export async function loadFromRemoteStorage(
   db: PouchDB.Database,
@@ -23,6 +21,10 @@ export async function loadFromRemoteStorage(
   const errors: string[] = []
 
   try {
+    // 记录 pull 前 PouchDB 状态
+    const infoBefore = await db.info()
+    console.log('[RS Load] PouchDB pull 前:', { doc_count: infoBefore.doc_count, update_seq: infoBefore.update_seq })
+
     console.log('[RS Load] 创建 SyncEngine...')
     const fs = new RemoteStorageFileSystem(config)
     const { SyncEngine } = await getSyncModule()
@@ -35,8 +37,16 @@ export async function loadFromRemoteStorage(
     console.log('[RS Load] 初始化...')
     await engine.initialize()
     
-    console.log('[RS Load] 执行 pull (检查并加载远程数据)...')
+    console.log('[RS Load] 执行 pull...')
     await engine.pull()
+
+    // 记录 pull 后 PouchDB 状态
+    const infoAfter = await db.info()
+    console.log('[RS Load] PouchDB pull 后:', { doc_count: infoAfter.doc_count, update_seq: infoAfter.update_seq })
+    
+    // 列出所有文档
+    const allDocs = await db.allDocs({ include_docs: false, limit: 20 })
+    console.log('[RS Load] PouchDB 文档列表 (前20):', allDocs.rows.map(r => r.id))
 
     console.log('[RS Load] 完成')
     return { errors }
@@ -54,8 +64,6 @@ export async function hasRemoteStorageData(
   _db: PouchDB.Database,
   _config: RemoteStorageConfig
 ): Promise<boolean> {
-  // 直接返回 true，让 pull() 内部处理
-  // SyncEngine 会自动检查远程是否有数据
   console.log('[RS Check] 直接返回 true，由 pull() 判断')
   return true
 }
