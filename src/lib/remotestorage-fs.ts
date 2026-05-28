@@ -67,7 +67,7 @@ export class RemoteStorageFileSystem implements IFileSystem {
     }
   }
 
-  async readFile(path: string, encoding: string): Promise<string> {
+  async readFile(path: string, _encoding: string): Promise<string> {
     const url = this.buildUrl(path)
     const response = await this.makeRequest(url, { method: 'GET' })
     if (!response.ok) {
