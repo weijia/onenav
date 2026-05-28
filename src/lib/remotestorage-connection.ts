@@ -11,6 +11,9 @@
 
 import RemoteStorage from 'remotestoragejs'
 
+// localStorage key for persisting connection info across page reloads
+const RS_CREDENTIALS_KEY = 'onenav:rs-credentials'
+
 // 单例
 let rsInstance: RemoteStorage | null = null
 
@@ -32,12 +35,66 @@ function notifyListeners(info: RSConnectionInfo) {
   listeners.forEach(cb => cb(info))
 }
 
+function saveCredentials(userAddress: string, href: string, token: string): void {
+  try {
+    localStorage.setItem(RS_CREDENTIALS_KEY, JSON.stringify({ userAddress, href, token }))
+  } catch {
+    // ignore
+  }
+}
+
+function loadCredentials(): { userAddress: string; href: string; token: string } | null {
+  try {
+    const raw = localStorage.getItem(RS_CREDENTIALS_KEY)
+    if (!raw) return null
+    return JSON.parse(raw)
+  } catch {
+    return null
+  }
+}
+
+function clearCredentials(): void {
+  try {
+    localStorage.removeItem(RS_CREDENTIALS_KEY)
+  } catch {
+    // ignore
+  }
+}
+
 /**
  * 获取或创建 RemoteStorage 实例
+ * 如果之前有保存的凭证，自动恢复连接
  */
 export function getRemoteStorage(): RemoteStorage {
   if (!rsInstance) {
     rsInstance = new RemoteStorage({ logging: false, cache: true })
+    
+    // 尝试自动恢复连接
+    const saved = loadCredentials()
+    if (saved) {
+      console.log('[RS Connection] 发现保存的凭证，尝试恢复连接:', saved.userAddress)
+      // remotestoragejs 会从自己的 localStorage 恢复 connected 状态
+      // 如果已经 connected，不需要额外操作
+      if (!rsInstance.connected) {
+        // 使用 connectWithToken 恢复
+        rsInstance.on('connected', () => {
+          console.log('[RS Connection] 连接恢复成功')
+          notifyListeners({
+            status: 'connected',
+            userAddress: saved.userAddress,
+            storageHref: saved.href,
+            token: saved.token,
+          })
+        })
+        rsInstance.on('error', (err: any) => {
+          console.error('[RS Connection] 连接恢复失败:', err)
+          clearCredentials()
+        })
+        rsInstance.connect(saved.userAddress, saved.token)
+      } else {
+        console.log('[RS Connection] remotestoragejs 已自动恢复连接')
+      }
+    }
   }
   return rsInstance
 }
@@ -90,6 +147,10 @@ export function connectWithUserAddress(userAddress: string): void {
 
   rs.on('connected', () => {
     const remote = rs.remote as any
+    // 保存凭证以便页面刷新后自动恢复
+    if (remote?.href && remote?.token && (rs as any).userAddress) {
+      saveCredentials((rs as any).userAddress, remote.href, remote.token)
+    }
     notifyListeners({
       status: 'connected',
       userAddress: (rs as any).userAddress,
@@ -117,6 +178,10 @@ export function connectWithToken(userAddress: string, token: string): void {
 
   rs.on('connected', () => {
     const remote = rs.remote as any
+    // 保存凭证
+    if (remote?.href && remote?.token) {
+      saveCredentials(userAddress, remote.href, remote.token)
+    }
     notifyListeners({
       status: 'connected',
       userAddress: (rs as any).userAddress,
@@ -142,6 +207,7 @@ export function connectWithToken(userAddress: string, token: string): void {
 export function disconnect(): void {
   const rs = getRemoteStorage()
   rs.disconnect()
+  clearCredentials()
   notifyListeners({ status: 'disconnected' })
 }
 
