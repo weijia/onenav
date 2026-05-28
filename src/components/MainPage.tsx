@@ -86,6 +86,7 @@ export default function MainPage() {
 
   const processBookmarks = useCallback((store: BookmarksStore, config: AppConfig) => {
     console.log('[MainPage] processBookmarks: 开始处理书签', { storeKeys: Object.keys(store.data).length, configTags: config.tags.length })
+    console.log('[MainPage] processBookmarks: 当前 pinnedUrls:', pinnedUrls.length, pinnedUrls)
     if (config.tags.length === 0) {
       console.log('[MainPage] processBookmarks: 没有标签，清空书签')
       setAllBookmarks([])
@@ -121,7 +122,8 @@ export default function MainPage() {
       }))
     }
 
-    console.log('[MainPage] processBookmarks: 处理结果数量:', result.length)
+    const pinnedCount = result.filter(b => b.isPinned).length
+    console.log('[MainPage] processBookmarks: 处理结果数量:', result.length, '其中固定:', pinnedCount)
 
     // 按固定状态排序：固定的在前
     result.sort((a, b) => {

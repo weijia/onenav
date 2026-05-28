@@ -141,29 +141,44 @@ const PINNED_KEY = 'onenavPinnedBookmarks'
 export function loadPinnedBookmarks(): string[] {
   try {
     const raw = localStorage.getItem(PINNED_KEY)
-    if (!raw) return []
-    return JSON.parse(raw) as string[]
-  } catch {
+    console.log('[Stats] loadPinnedBookmarks: localStorage raw:', raw)
+    if (!raw) {
+      console.log('[Stats] loadPinnedBookmarks: localStorage 为空')
+      return []
+    }
+    const parsed = JSON.parse(raw) as string[]
+    console.log('[Stats] loadPinnedBookmarks: 加载到', parsed.length, '条固定书签:', parsed)
+    return parsed
+  } catch (err) {
+    console.error('[Stats] loadPinnedBookmarks: 解析失败:', err)
     return []
   }
 }
 
 export async function loadPinnedBookmarksAsync(): Promise<string[]> {
+  console.log('[Stats] loadPinnedBookmarksAsync: 开始加载')
   // 优先从 localStorage 加载
   const local = loadPinnedBookmarks()
-  if (local.length > 0) return local
+  if (local.length > 0) {
+    console.log('[Stats] loadPinnedBookmarksAsync: 从 localStorage 加载到', local.length, '条')
+    return local
+  }
   
   // localStorage 为空时，尝试从 PouchDB 加载
+  console.log('[Stats] loadPinnedBookmarksAsync: localStorage 为空，尝试从 PouchDB 加载')
   try {
     const pouch = await loadPinnedFromPouch()
+    console.log('[Stats] loadPinnedBookmarksAsync: PouchDB 返回:', pouch)
     if (pouch && pouch.length > 0) {
       // 同步回 localStorage
       localStorage.setItem(PINNED_KEY, JSON.stringify(pouch))
+      console.log('[Stats] loadPinnedBookmarksAsync: 从 PouchDB 加载到', pouch.length, '条:', pouch)
       return pouch
     }
   } catch (err) {
-    console.error('[Stats] 从 PouchDB 加载固定书签失败:', err)
+    console.error('[Stats] loadPinnedBookmarksAsync: 从 PouchDB 加载失败:', err)
   }
+  console.log('[Stats] loadPinnedBookmarksAsync: 没有找到固定书签')
   return []
 }
 
