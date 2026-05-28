@@ -5,6 +5,7 @@ import { filterByTag, getMostVisitedBookmarks, isDeleted, getFaviconUrl, stringT
 import { recordClick, loadClickStatsFromWebDAV, togglePinnedBookmark, loadPinnedBookmarks, savePinnedBookmarks } from '@/lib/stats'
 import { getStorageCredentials } from '@/lib/remotestorage-connection'
 import { getPouchDB } from '@/lib/pouchdb'
+import { checkIndexedDB } from '@/lib/indexeddb-check'
 import Sidebar from '@/components/Sidebar'
 import BookmarkGrid from '@/components/BookmarkGrid'
 import SettingsDialog from '@/components/SettingsDialog'
@@ -155,6 +156,10 @@ export default function MainPage() {
     const init = async () => {
       try {
         console.log('[Init] 开始初始化...')
+        
+        // 直接检查 IndexedDB
+        await checkIndexedDB()
+        
         const wdav = loadWebDAVConfig()
         console.log('[Init] WebDAV config:', wdav)
         if (wdav) {
