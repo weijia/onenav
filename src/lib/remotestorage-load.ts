@@ -1,7 +1,7 @@
 /**
  * 从 RemoteStorage 加载数据到 PouchDB
  * 
- * 使用 universal-sync-v2 的 SyncEngine 方法
+ * 使用 universal-sync-v2 的 SyncEngine
  */
 
 import { RemoteStorageFileSystem, type RemoteStorageConfig } from './remotestorage-fs'
@@ -13,15 +13,17 @@ async function getSyncModule(): Promise<any> {
 
 /**
  * 从 RemoteStorage 加载数据到 PouchDB
+ * 
+ * 直接调用 pull()，SyncEngine 会自动检查远程是否有数据并加载
  */
 export async function loadFromRemoteStorage(
   db: PouchDB.Database,
   config: RemoteStorageConfig
-): Promise<{ count: number; errors: string[] }> {
+): Promise<{ errors: string[] }> {
   const errors: string[] = []
 
   try {
-    console.log('[RS Load] 开始加载...')
+    console.log('[RS Load] 创建 SyncEngine...')
     const fs = new RemoteStorageFileSystem(config)
     const { SyncEngine } = await getSyncModule()
     
@@ -30,46 +32,30 @@ export async function loadFromRemoteStorage(
       maxFileSize: 500 * 1024,
     })
 
-    console.log('[RS Load] 初始化 SyncEngine...')
+    console.log('[RS Load] 初始化...')
     await engine.initialize()
     
-    console.log('[RS Load] 执行 pull...')
+    console.log('[RS Load] 执行 pull (检查并加载远程数据)...')
     await engine.pull()
 
-    console.log('[RS Load] 加载完成')
-    return { count: 0, errors }
+    console.log('[RS Load] 完成')
+    return { errors }
   } catch (err) {
-    console.error('[RS Load] 加载失败:', err)
+    console.error('[RS Load] 失败:', err)
     errors.push(`加载失败: ${err}`)
-    return { count: 0, errors }
+    return { errors }
   }
 }
 
 /**
  * 检查 RemoteStorage 是否有数据
- * 
- * 使用 SyncEngine.getLastSequence() 检查远程是否有数据
  */
 export async function hasRemoteStorageData(
-  db: PouchDB.Database,
-  config: RemoteStorageConfig
+  _db: PouchDB.Database,
+  _config: RemoteStorageConfig
 ): Promise<boolean> {
-  try {
-    const fs = new RemoteStorageFileSystem(config)
-    const { SyncEngine } = await getSyncModule()
-    
-    const engine = new SyncEngine(db, fs, {
-      basePath: '/onenav',
-      maxFileSize: 500 * 1024,
-    })
-
-    await engine.initialize()
-    const lastSeq = await engine.getLastSequence()
-    
-    console.log('[RS Check] 远程 lastSequence:', lastSeq)
-    return lastSeq > 0
-  } catch (err) {
-    console.log('[RS Check] 检查失败:', err)
-    return false
-  }
+  // 直接返回 true，让 pull() 内部处理
+  // SyncEngine 会自动检查远程是否有数据
+  console.log('[RS Check] 直接返回 true，由 pull() 判断')
+  return true
 }
