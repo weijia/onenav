@@ -219,7 +219,7 @@ export interface AppConfigDoc {
   _id: string
   _rev?: string
   type: 'app-config'
-  tags: Array<{ name: string; displayName: string; order: number }>
+  tags: Array<{ id: string; name: string; displayName: string; icon: string; order: number }>
   display: {
     showFavicons: boolean
     cardStyle: 'compact' | 'comfortable'

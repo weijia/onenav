@@ -45,7 +45,7 @@ export function loadAppConfig(): AppConfig | null {
 export function saveAppConfig(config: AppConfig): void {
   localStorage.setItem(APP_CONFIG_KEY, JSON.stringify(config))
   saveAppConfigToPouch({
-    tags: config.tags.map(t => ({ name: t.tag, displayName: t.label, order: t.order })),
+    tags: config.tags.map(t => ({ id: t.id, name: t.tag, displayName: t.label, icon: t.icon, order: t.order })),
     display: {
       showFavicons: true,
       cardStyle: 'comfortable',
@@ -147,10 +147,18 @@ export async function loadAppConfigFromPouchDB(): Promise<AppConfig | null> {
   const doc = await loadAppConfigFromPouch()
   if (!doc) return null
   
+  console.log('[Config] loadAppConfigFromPouchDB: 加载配置', doc)
+  
   // 转换回 AppConfig 格式
   return {
     version: 1,
-    tags: doc.tags.map(t => ({ id: t.name, label: t.displayName, tag: t.name, icon: 'LayoutGrid', order: t.order })),
+    tags: doc.tags.map(t => ({ 
+      id: t.id || t.name, 
+      label: t.displayName, 
+      tag: t.name, 
+      icon: t.icon || 'LayoutGrid', 
+      order: t.order 
+    })),
     bookmarkPath: 'app_data/utags/bookmarks.json',
     display: {
       iconSize: 60,
