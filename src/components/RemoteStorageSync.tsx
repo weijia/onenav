@@ -81,17 +81,22 @@ export default function RemoteStorageSync({ db }: RemoteStorageSyncProps) {
     setLastResult(null)
 
     try {
+      console.log('[RS Sync] 开始同步...')
       const config: RemoteStorageConnectionConfig = {
         href: credentials.href,
         token: credentials.token,
       }
+      console.log('[RS Sync] config:', { href: credentials.href, hasToken: !!credentials.token })
       await syncToRemoteStorage(db, config, {
         maxFileSize: 500 * 1024,
         autoMerge: true,
       })
+      console.log('[RS Sync] 同步成功')
       setLastResult({ success: true, message: '同步成功！数据已保存到 RemoteStorage' })
     } catch (error) {
-      const message = error instanceof Error ? error.message : '同步失败'
+      console.error('[RS Sync] 同步失败:', error)
+      const message = error instanceof Error ? error.message : String(error)
+      console.error('[RS Sync] 错误详情:', message)
       setLastResult({ success: false, message })
     } finally {
       setSyncing(false)
