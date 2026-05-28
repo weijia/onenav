@@ -10,8 +10,8 @@ let SyncEngine: any = null
 
 async function getSyncEngine(): Promise<any> {
   if (!SyncEngine) {
-    // 动态导入以避免 SSR 问题
-    const module = await import('universal-sync-v2')
+    // 动态导入 universal-sync-v2 浏览器版本
+    const module = await import('universal-sync-v2/browser')
     SyncEngine = module.SyncEngine
   }
   return SyncEngine

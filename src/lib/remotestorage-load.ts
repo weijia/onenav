@@ -6,9 +6,9 @@
 
 import { RemoteStorageFileSystem, type RemoteStorageConfig } from './remotestorage-fs'
 
-// 动态导入 universal-sync-v2
+// 动态导入 universal-sync-v2 浏览器版本
 async function getSyncModule(): Promise<any> {
-  const module = await import('universal-sync-v2')
+  const module = await import('universal-sync-v2/browser')
   return module
 }
 
