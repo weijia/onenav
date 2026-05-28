@@ -110,6 +110,7 @@ export function stringToColor(str: string): string {
 
 /**
  * 获取最常访问的书签（用于 'onenav' 标签页）
+ * 如果没有点击记录，返回所有书签（按添加时间倒序）
  */
 export function getMostVisitedBookmarks(store: BookmarksStore, limit: number = 30): DisplayBookmark[] {
   const stats = loadClickStats()
@@ -121,26 +122,46 @@ export function getMostVisitedBookmarks(store: BookmarksStore, limit: number = 3
     .slice(0, limit)
 
   const results: DisplayBookmark[] = []
-  for (const record of records) {
-    // 从 store 中查找完整的书签信息（用 key 匹配 URL）
-    const entry = Object.entries(store.data).find(([key, e]) => {
-      return key === record.url && !isDeleted(e)
-    })
+  
+  // 如果有点击记录，按点击排序
+  if (records.length > 0) {
+    for (const record of records) {
+      const entry = Object.entries(store.data).find(([key, e]) => {
+        return key === record.url && !isDeleted(e)
+      })
 
-    if (entry) {
-      const [url, e] = entry
-      const title = e.meta.shortTitle || e.meta.title || url
-      results.push({
+      if (entry) {
+        const [url, e] = entry
+        const title = e.meta.shortTitle || e.meta.title || url
+        results.push({
+          url,
+          title,
+          description: e.meta.description || '',
+          favicon: e.meta.favicon || getFaviconUrl(url),
+          color: stringToColor(new URL(url).hostname),
+          tags: e.tags,
+          isPinned: false,
+        })
+      }
+    }
+  }
+  
+  // 如果没有点击记录或结果不足，补充其他书签
+  if (results.length === 0) {
+    console.log('[Bookmarks] 没有点击记录，显示所有书签')
+    const allBookmarks = Object.entries(store.data)
+      .filter(([_, e]) => !isDeleted(e))
+      .map(([url, e]) => ({
         url,
-        title,
+        title: e.meta.shortTitle || e.meta.title || url,
         description: e.meta.description || '',
         favicon: e.meta.favicon || getFaviconUrl(url),
         color: stringToColor(new URL(url).hostname),
         tags: e.tags,
         isPinned: false,
-      })
-    }
-    // 如果书签已从 utags 删除，跳过不显示
+      }))
+    
+    return allBookmarks.slice(0, limit)
   }
 
   return results
