@@ -168,6 +168,48 @@ export default function MainPage() {
     )
   }, [bookmarks, allBookmarks, searchQuery, activeTag])
 
+  // 从 RemoteStorage 同步数据到 PouchDB 并刷新页面
+  const syncFromRemoteStorage = useCallback(async () => {
+    try {
+      const localConfig = loadAppConfig()
+      if (localConfig) {
+        console.log('[Sync] 将 localStorage 配置写入 PouchDB')
+        await saveAppConfig(localConfig)
+      }
+      
+      const db = await getPouchDB()
+      const credentials = getStorageCredentials()
+      if (!credentials) {
+        console.warn('[Sync] 没有 RemoteStorage 凭证，跳过同步')
+        return
+      }
+      
+      const { syncToRemoteStorage } = await import('@/lib/remotestorage-sync')
+      await syncToRemoteStorage(db, credentials, {
+        maxFileSize: 500 * 1024,
+        autoMerge: true,
+      })
+      console.log('[Sync] 同步完成，刷新数据')
+      
+      // 同步完成后重新从 PouchDB 加载数据
+      const updatedConfig = await loadAppConfigFromPouchDB()
+      const updatedStore = await loadBookmarksFromPouchDB()
+      const updatedPinned = await loadPinnedBookmarksAsync()
+      
+      if (updatedConfig) {
+        setAppConfig(updatedConfig)
+      }
+      if (updatedStore) {
+        processBookmarksRef.current?.(updatedStore, updatedConfig || appConfig || getDefaultAppConfig())
+      }
+      if (updatedPinned.length > 0) {
+        setPinnedUrls(updatedPinned)
+      }
+    } catch (err) {
+      console.error('[Sync] 同步失败:', err)
+    }
+  }, [appConfig])
+
   useEffect(() => {
     console.log('[MainPage] mounted, loading:', loading, 'initialized:', initialized)
     
@@ -217,38 +259,21 @@ export default function MainPage() {
           const credentials = getStorageCredentials()
           if (credentials) {
             console.log('[Init] 开始后台同步 RemoteStorage...')
-            try {
-              // 同步前先把 localStorage 中的正确配置写入 PouchDB
-              // 这样 sync() 时会把正确的数据推送到 RemoteStorage
-              const localConfig = loadAppConfig()
-              if (localConfig) {
-                console.log('[Init] 将 localStorage 配置写入 PouchDB，确保数据完整')
-                await saveAppConfig(localConfig)
+            await syncFromRemoteStorage()
+          } else {
+            // OAuth 回调后 connected 事件可能稍后触发，监听 connected 事件
+            console.log('[Init] RemoteStorage 未连接，监听 connected 事件...')
+            const { onStatusChange } = await import('@/lib/remotestorage-connection')
+            const unlisten = onStatusChange(async (info) => {
+              if (info.status === 'connected') {
+                console.log('[Init] RemoteStorage 已连接，开始同步')
+                unlisten()
+                const creds = getStorageCredentials()
+                if (creds) {
+                  await syncFromRemoteStorage()
+                }
               }
-              
-              const db = await getPouchDB()
-              // 使用 sync()（push + pull）而不是 pull()
-              // 这样本地完整的数据会推送到远程，同时拉取远程的新数据
-              const { syncToRemoteStorage } = await import('@/lib/remotestorage-sync')
-              await syncToRemoteStorage(db, credentials, {
-                maxFileSize: 500 * 1024,
-                autoMerge: true,
-              })
-              console.log('[Init] 后台同步完成，刷新数据')
-              
-              // 同步完成后重新从 PouchDB 加载数据
-              const updatedConfig = await loadAppConfigFromPouchDB()
-              const updatedStore = await loadBookmarksFromPouchDB()
-              
-              if (updatedConfig) {
-                setAppConfig(updatedConfig)
-              }
-              if (updatedStore) {
-                processBookmarksRef.current?.(updatedStore, updatedConfig || cachedConfig || getDefaultAppConfig())
-              }
-            } catch (err) {
-              console.error('[Init] 后台同步失败:', err)
-            }
+            })
           }
         }
       } catch (err) {
