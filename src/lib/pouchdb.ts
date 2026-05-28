@@ -258,7 +258,10 @@ export async function loadAppConfigFromPouch(): Promise<AppConfigDoc | null> {
   try {
     const database = await getDb()
     const doc = await database.get(PREFIX.CONFIG + 'app')
-    console.log('[PouchDB] loadAppConfigFromPouch: 原始文档:', doc)
+    console.log('[PouchDB] loadAppConfigFromPouch: 原始文档完整内容:', JSON.stringify(doc, null, 2))
+    console.log('[PouchDB] loadAppConfigFromPouch: tags 字段:', JSON.stringify(doc.tags, null, 2))
+    console.log('[PouchDB] loadAppConfigFromPouch: tags[0]:', doc.tags?.[0])
+    console.log('[PouchDB] loadAppConfigFromPouch: tags[0] 的所有属性:', doc.tags?.[0] ? Object.keys(doc.tags[0]) : 'no tags')
     return doc
   } catch {
     return null
