@@ -42,9 +42,9 @@ export function loadAppConfig(): AppConfig | null {
   }
 }
 
-export function saveAppConfig(config: AppConfig): void {
+export async function saveAppConfig(config: AppConfig): Promise<void> {
   localStorage.setItem(APP_CONFIG_KEY, JSON.stringify(config))
-  saveAppConfigToPouch({
+  await saveAppConfigToPouch({
     tags: config.tags.map(t => ({ id: t.id, name: t.tag, displayName: t.label, icon: t.icon, order: t.order })),
     display: {
       showFavicons: true,
@@ -53,14 +53,15 @@ export function saveAppConfig(config: AppConfig): void {
     },
     pinnedBookmarks: [],
     updatedAt: Date.now(),
-  }) // 同步到 PouchDB
+  })
+  console.log('[Config] saveAppConfig: 配置已保存到 localStorage 和 PouchDB')
 }
 
 export async function fetchAppConfig(wdav: WebDAVConfig): Promise<AppConfig | null> {
   try {
     const raw = await getFileContents(wdav, 'app_data/onenav/config.json')
     const config = JSON.parse(raw) as AppConfig
-    saveAppConfig(config) // 同时写入 localStorage 和 PouchDB
+    await saveAppConfig(config)
     return config
   } catch {
     return null
@@ -71,7 +72,7 @@ export async function saveAppConfigToWebDAV(wdav: WebDAVConfig, config: AppConfi
   await createDirectory(wdav, 'app_data')
   await createDirectory(wdav, 'app_data/onenav')
   await putFileContents(wdav, 'app_data/onenav/config.json', JSON.stringify(config, null, 2))
-  saveAppConfig(config) // 同时写入 localStorage 和 PouchDB
+  await saveAppConfig(config)
 }
 
 // ==================== 书签数据 ====================

@@ -200,7 +200,7 @@ export default function MainPage() {
               const localConfig = loadAppConfig()
               if (localConfig) {
                 console.log('[Init] 将 localStorage 配置写入 PouchDB，确保数据完整')
-                saveAppConfig(localConfig)
+                await saveAppConfig(localConfig)
               }
               
               const db = await getPouchDB()
@@ -257,9 +257,9 @@ export default function MainPage() {
     setRefreshing(false)
   }
 
-  const handleConfigSave = (config: AppConfig) => {
+  const handleConfigSave = async (config: AppConfig) => {
     setAppConfig(config)
-    saveAppConfig(config)
+    await saveAppConfig(config)
   }
 
   const handleTagSelect = (tag: string | null) => {
@@ -268,7 +268,7 @@ export default function MainPage() {
     window.location.hash = tag || ''
   }
 
-  const handleTogglePin = (url: string) => {
+  const handleTogglePin = async (url: string) => {
     togglePinnedBookmark(url)
     const newPinned = loadPinnedBookmarks()
     setPinnedUrls(newPinned)
@@ -276,7 +276,7 @@ export default function MainPage() {
     // 同步到配置文件（localStorage + WebDAV）
     const updatedConfig = { ...appConfig, pinnedBookmarks: newPinned }
     setAppConfig(updatedConfig)
-    saveAppConfig(updatedConfig)
+    await saveAppConfig(updatedConfig)
     if (webdavConfig) {
       saveAppConfigToWebDAV(webdavConfig, updatedConfig).catch(() => {
         // WebDAV 保存失败不影响本地使用
