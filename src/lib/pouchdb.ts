@@ -1,37 +1,71 @@
 const DB_NAME = 'onenav'
 let db: any = null
-let dbInitError = false
+let dbNeedsReset = false
+
+/**
+ * 删除损坏的 PouchDB 数据库
+ */
+async function destroyAndRecreate(): Promise<any> {
+  console.log('[PouchDB] 正在删除损坏的数据库...')
+  try {
+    if (db) {
+      await db.destroy()
+      db = null
+    }
+  } catch (e) {
+    console.warn('[PouchDB] destroy 失败，尝试直接删除 IndexedDB:', e)
+  }
+  // 也直接删除 IndexedDB
+  await new Promise<void>((resolve) => {
+    const req = indexedDB.deleteDatabase('_pouch_' + DB_NAME)
+    req.onsuccess = () => console.log('[PouchDB] IndexedDB 删除成功')
+    req.onerror = () => console.warn('[PouchDB] IndexedDB 删除失败')
+    req.onblocked = () => console.warn('[PouchDB] IndexedDB 删除被阻塞')
+    // 无论成功失败都 resolve
+    req.addEventListener('success', () => resolve())
+    req.addEventListener('error', () => resolve())
+    req.addEventListener('blocked', () => resolve())
+    setTimeout(resolve, 1000) // 最多等1秒
+  })
+  
+  const PouchDB = (await import('pouchdb-browser')).default
+  db = new PouchDB(DB_NAME)
+  dbNeedsReset = false
+  console.log('[PouchDB] 数据库重新创建完成')
+  return db
+}
 
 async function getDb(): Promise<any> {
-  if (!db || dbInitError) {
-    const PouchDB = (await import('pouchdb-browser')).default
-    try {
-      db = new PouchDB(DB_NAME)
-      // 测试数据库是否正常工作
-      await db.info()
-      dbInitError = false
-      console.log('[PouchDB] 数据库初始化成功')
-    } catch (err) {
-      console.error('[PouchDB] 数据库初始化失败，尝试重置:', err)
-      dbInitError = true
-      // 删除损坏的数据库
-      await new Promise<void>((resolve) => {
-        const req = indexedDB.deleteDatabase('_pouch_' + DB_NAME)
-        req.onsuccess = () => {
-          console.log('[PouchDB] 损坏的数据库已删除')
-          resolve()
-        }
-        req.onerror = () => {
-          console.error('[PouchDB] 删除数据库失败')
-          resolve()
-        }
-      })
-      // 重新创建
-      db = new PouchDB(DB_NAME)
-      console.log('[PouchDB] 数据库重新创建成功')
+  if (dbNeedsReset || !db) {
+    if (dbNeedsReset && db) {
+      return destroyAndRecreate()
     }
+    const PouchDB = (await import('pouchdb-browser')).default
+    db = new PouchDB(DB_NAME)
+    console.log('[PouchDB] 数据库初始化成功')
   }
   return db
+}
+
+/**
+ * 包装 PouchDB 操作，遇到 IndexedDB 损坏错误时自动重置
+ */
+async function withAutoReset<T>(fn: (database: any) => Promise<T>): Promise<T> {
+  const database = await getDb()
+  try {
+    return await fn(database)
+  } catch (err: any) {
+    const msg = err?.message || String(err)
+    if (msg.includes('object store was not found') || 
+        msg.includes('indexed_db_went_bad') ||
+        msg.includes('specified object store') ||
+        msg.includes('onupgradeneeded')) {
+      console.error('[PouchDB] 检测到数据库损坏，自动重置:', msg)
+      const newDb = await destroyAndRecreate()
+      return await fn(newDb)
+    }
+    throw err
+  }
 }
 
 /**
@@ -100,47 +134,42 @@ export async function saveBookmark(bookmark: Omit<BookmarkDoc, '_id' | 'type'> &
 
 export async function saveBookmarks(bookmarks: Array<Omit<BookmarkDoc, '_id' | 'type'>>): Promise<void> {
   console.log('[PouchDB] saveBookmarks: 开始保存', bookmarks.length, '条书签到 PouchDB')
-  const database = await getDb()
-  console.log('[PouchDB] saveBookmarks: 获取到数据库实例')
-  const docs: BookmarkDoc[] = []
   
-  for (const bm of bookmarks) {
-    const id = PREFIX.BOOKMARK + bm.url
-    console.log('[PouchDB] saveBookmarks: 检查现有文档:', id)
-    let existing = null
-    try {
-      existing = await database.get(id)
-    } catch (err: any) {
-      // 404 表示文档不存在，这是正常的
-      if (err.status !== 404) {
-        console.error('[PouchDB] saveBookmarks: 检查文档时出错:', err)
+  return withAutoReset(async (database) => {
+    console.log('[PouchDB] saveBookmarks: 获取到数据库实例')
+    const docs: BookmarkDoc[] = []
+    
+    for (const bm of bookmarks) {
+      const id = PREFIX.BOOKMARK + bm.url
+      let existing = null
+      try {
+        existing = await database.get(id)
+      } catch (err: any) {
+        if (err.status !== 404) {
+          console.error('[PouchDB] saveBookmarks: 检查文档时出错:', err)
+        }
       }
+      
+      docs.push({
+        _id: id,
+        type: 'bookmark',
+        url: bm.url,
+        title: bm.title,
+        tags: bm.tags || [],
+        description: bm.description,
+        icon: bm.icon,
+        clicks: bm.clicks || 0,
+        lastClickedAt: bm.lastClickedAt,
+        createdAt: existing?.createdAt || Date.now(),
+        updatedAt: Date.now(),
+        deleted: bm.deleted || false,
+      })
     }
     
-    docs.push({
-      _id: id,
-      type: 'bookmark',
-      url: bm.url,
-      title: bm.title,
-      tags: bm.tags || [],
-      description: bm.description,
-      icon: bm.icon,
-      clicks: bm.clicks || 0,
-      lastClickedAt: bm.lastClickedAt,
-      createdAt: existing?.createdAt || Date.now(),
-      updatedAt: Date.now(),
-      deleted: bm.deleted || false,
-    })
-  }
-  
-  console.log('[PouchDB] saveBookmarks: 准备 bulkDocs，文档数量:', docs.length)
-  try {
+    console.log('[PouchDB] saveBookmarks: 准备 bulkDocs，文档数量:', docs.length)
     const result = await database.bulkDocs(docs)
-    console.log('[PouchDB] saveBookmarks: bulkDocs 完成，结果:', result)
-  } catch (err) {
-    console.error('[PouchDB] saveBookmarks error:', err)
-    throw err
-  }
+    console.log('[PouchDB] saveBookmarks: bulkDocs 完成')
+  })
 }
 
 export async function getBookmark(url: string): Promise<BookmarkDoc | null> {
@@ -154,18 +183,18 @@ export async function getBookmark(url: string): Promise<BookmarkDoc | null> {
 
 export async function getAllBookmarks(): Promise<BookmarkDoc[]> {
   try {
-    const database = await getDb()
-    console.log('[PouchDB] getAllBookmarks: 查询所有书签...')
-    const result = await database.allDocs({
-      startkey: PREFIX.BOOKMARK,
-      endkey: PREFIX.BOOKMARK + '\uffff',
-      include_docs: true,
+    return withAutoReset(async (database) => {
+      console.log('[PouchDB] getAllBookmarks: 查询所有书签...')
+      const result = await database.allDocs({
+        startkey: PREFIX.BOOKMARK,
+        endkey: PREFIX.BOOKMARK + '\uffff',
+        include_docs: true,
+      })
+      console.log('[PouchDB] getAllBookmarks: 查询结果 rows 数量:', result.rows.length)
+      const docs = result.rows.map((row: any) => row.doc).filter((doc: BookmarkDoc) => !doc.deleted)
+      console.log('[PouchDB] getAllBookmarks: 过滤后文档数量:', docs.length)
+      return docs
     })
-    console.log('[PouchDB] getAllBookmarks: 查询结果 rows 数量:', result.rows.length)
-    console.log('[PouchDB] getAllBookmarks: 原始 rows:', result.rows.map((r: any) => ({ id: r.id, doc: r.doc })))
-    const docs = result.rows.map((row: any) => row.doc).filter((doc: BookmarkDoc) => !doc.deleted)
-    console.log('[PouchDB] getAllBookmarks: 过滤后文档数量:', docs.length)
-    return docs
   } catch (err) {
     console.error('[PouchDB] getAllBookmarks error:', err)
     return []
@@ -269,8 +298,7 @@ export interface AppConfigDoc {
 }
 
 export async function saveAppConfigToPouch(config: Omit<AppConfigDoc, '_id' | 'type'>): Promise<void> {
-  try {
-    const database = await getDb()
+  return withAutoReset(async (database) => {
     const id = PREFIX.CONFIG + 'app'
     const existing = await database.get(id).catch(() => null)
     
@@ -288,25 +316,16 @@ export async function saveAppConfigToPouch(config: Omit<AppConfigDoc, '_id' | 't
     } else {
       await database.put(doc)
     }
-  } catch (err) {
-    console.error('[PouchDB] saveAppConfigToPouch error:', err)
-  }
+  })
 }
 
 export async function loadAppConfigFromPouch(): Promise<AppConfigDoc | null> {
   try {
-    const database = await getDb()
-    console.log('[PouchDB] loadAppConfigFromPouch: 数据库名称:', DB_NAME)
-    console.log('[PouchDB] loadAppConfigFromPouch: 查询文档 ID:', PREFIX.CONFIG + 'app')
-    
-    // 先列出所有文档看看
-    const allDocs = await database.allDocs({ include_docs: true })
-    console.log('[PouchDB] loadAppConfigFromPouch: 所有文档 IDs:', allDocs.rows.map((r: any) => r.id))
-    console.log('[PouchDB] loadAppConfigFromPouch: cfg: 开头的文档:', allDocs.rows.filter((r: any) => r.id.startsWith('cfg:')).map((r: any) => ({ id: r.id, doc: r.doc })))
-    
-    const doc = await database.get(PREFIX.CONFIG + 'app')
-    console.log('[PouchDB] loadAppConfigFromPouch: 原始文档完整内容:', JSON.stringify(doc, null, 2))
-    return doc
+    return withAutoReset(async (database) => {
+      const doc = await database.get(PREFIX.CONFIG + 'app')
+      console.log('[PouchDB] loadAppConfigFromPouch: 原始文档完整内容:', JSON.stringify(doc, null, 2))
+      return doc
+    })
   } catch (err) {
     console.error('[PouchDB] loadAppConfigFromPouch: 读取失败:', err)
     return null
