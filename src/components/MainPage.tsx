@@ -137,6 +137,24 @@ export default function MainPage() {
   // 保持 ref 与最新 processBookmarks 同步
   processBookmarksRef.current = processBookmarks
 
+  // 当固定书签变化时，重新处理书签排序
+  useEffect(() => {
+    if (!initialized) return
+    // 从 PouchDB 或 WebDAV 重新加载书签并处理
+    const reprocess = async () => {
+      let store: BookmarksStore | null = null
+      if (webdavConfig) {
+        store = await fetchBookmarks(webdavConfig, appConfig.bookmarkPath)
+      } else {
+        store = await loadBookmarksFromPouchDB()
+      }
+      if (store) {
+        processBookmarksRef.current?.(store, appConfig)
+      }
+    }
+    reprocess()
+  }, [pinnedUrls, initialized, webdavConfig, appConfig])
+
   // Filter bookmarks based on search query
   const filteredBookmarks = useMemo(() => {
     if (!searchQuery.trim()) {
