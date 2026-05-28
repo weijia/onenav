@@ -237,11 +237,19 @@ export default function MainPage() {
   }, [loadAllData])
 
   // Re-process bookmarks when active tag changes
+  // 当 activeTag 改变时，重新处理书签（支持 WebDAV 和 PouchDB 模式）
   useEffect(() => {
-    if (!webdavConfig) return
-
     const loadAndFilter = async () => {
-      const store = await fetchBookmarks(webdavConfig, appConfig.bookmarkPath)
+      let store: BookmarksStore | null = null
+      
+      if (webdavConfig) {
+        // WebDAV 模式
+        store = await fetchBookmarks(webdavConfig, appConfig.bookmarkPath)
+      } else {
+        // PouchDB 模式
+        store = await loadBookmarksFromPouchDB()
+      }
+      
       if (store) {
         processBookmarks(store, appConfig)
       }
