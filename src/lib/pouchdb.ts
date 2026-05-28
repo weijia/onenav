@@ -116,12 +116,17 @@ export async function getBookmark(url: string): Promise<BookmarkDoc | null> {
 export async function getAllBookmarks(): Promise<BookmarkDoc[]> {
   try {
     const database = await getDb()
+    console.log('[PouchDB] getAllBookmarks: 查询所有书签...')
     const result = await database.allDocs({
       startkey: PREFIX.BOOKMARK,
       endkey: PREFIX.BOOKMARK + '\uffff',
       include_docs: true,
     })
-    return result.rows.map((row: any) => row.doc).filter((doc: BookmarkDoc) => !doc.deleted)
+    console.log('[PouchDB] getAllBookmarks: 查询结果 rows 数量:', result.rows.length)
+    console.log('[PouchDB] getAllBookmarks: 原始 rows:', result.rows.map((r: any) => ({ id: r.id, doc: r.doc })))
+    const docs = result.rows.map((row: any) => row.doc).filter((doc: BookmarkDoc) => !doc.deleted)
+    console.log('[PouchDB] getAllBookmarks: 过滤后文档数量:', docs.length)
+    return docs
   } catch (err) {
     console.error('[PouchDB] getAllBookmarks error:', err)
     return []

@@ -85,7 +85,9 @@ export default function MainPage() {
   }, [])
 
   const processBookmarks = useCallback((store: BookmarksStore, config: AppConfig) => {
+    console.log('[MainPage] processBookmarks: 开始处理书签', { storeKeys: Object.keys(store.data).length, configTags: config.tags.length })
     if (config.tags.length === 0) {
+      console.log('[MainPage] processBookmarks: 没有标签，清空书签')
       setAllBookmarks([])
       setBookmarks([])
       return
@@ -93,11 +95,13 @@ export default function MainPage() {
 
     let result: DisplayBookmark[]
     if (activeTag === 'onenav') {
+      console.log('[MainPage] processBookmarks: 常用标签模式')
       result = getMostVisitedBookmarks(store, 100).map(b => ({
         ...b,
         isPinned: pinnedUrls.includes(b.url),
       }))
     } else if (activeTag === '._all_' || activeTag === null) {
+      console.log('[MainPage] processBookmarks: 全部标签模式，数据条目:', Object.keys(store.data).length)
       result = Object.entries(store.data)
         .filter(([_, e]) => !isDeleted(e))
         .map(([url, e]) => ({
@@ -110,11 +114,14 @@ export default function MainPage() {
           isPinned: pinnedUrls.includes(url),
         }))
     } else {
+      console.log('[MainPage] processBookmarks: 特定标签模式:', activeTag)
       result = filterByTag(store, activeTag).map(b => ({
         ...b,
         isPinned: pinnedUrls.includes(b.url),
       }))
     }
+
+    console.log('[MainPage] processBookmarks: 处理结果数量:', result.length)
 
     // 按固定状态排序：固定的在前
     result.sort((a, b) => {
@@ -161,14 +168,23 @@ export default function MainPage() {
           console.log('[Init] RemoteStorage 模式，先加载缓存再同步')
           
           // 1. 先从 PouchDB/localStorage 加载缓存（快速显示）
+          console.log('[Init] 开始加载配置...')
           const cachedConfig = loadAppConfig() || await loadAppConfigFromPouchDB()
+          console.log('[Init] cachedConfig:', cachedConfig)
+          
+          console.log('[Init] 开始加载书签...')
           const cachedStore = loadBookmarksCache() || await loadBookmarksFromPouchDB()
+          console.log('[Init] cachedStore:', cachedStore ? { keys: Object.keys(cachedStore.data).length } : null)
           
           if (cachedConfig) {
+            console.log('[Init] 设置配置')
             setAppConfig(cachedConfig)
           }
           if (cachedStore) {
+            console.log('[Init] 处理书签数据')
             processBookmarksRef.current?.(cachedStore, cachedConfig || getDefaultAppConfig())
+          } else {
+            console.log('[Init] 没有书签数据')
           }
           
           setInitialized(true)

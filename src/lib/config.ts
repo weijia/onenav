@@ -180,14 +180,24 @@ export async function loadAppConfigFromPouchDB(): Promise<AppConfig | null> {
 }
 
 export async function loadBookmarksFromPouchDB(): Promise<BookmarksStore | null> {
+  console.log('[Config] loadBookmarksFromPouchDB: 开始加载...')
   const docs = await getAllBookmarks()
-  if (docs.length === 0) return null
+  console.log('[Config] loadBookmarksFromPouchDB: 获取到', docs.length, '条文档')
+  console.log('[Config] loadBookmarksFromPouchDB: 文档示例:', docs.slice(0, 2))
+  
+  if (docs.length === 0) {
+    console.log('[Config] loadBookmarksFromPouchDB: 没有文档，返回 null')
+    return null
+  }
   
   // 转换回 BookmarksStore 格式
   const data: Record<string, BookmarkEntry> = {}
   for (const doc of docs) {
+    console.log('[Config] loadBookmarksFromPouchDB: 转换文档:', doc._id, doc.url)
     data[doc.url] = docToBookmarkEntry(doc)
   }
+  
+  console.log('[Config] loadBookmarksFromPouchDB: 转换完成，共', Object.keys(data).length, '条书签')
   
   return {
     data,
