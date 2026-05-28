@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import type { AppConfig, DisplayBookmark, WebDAVConfig, BookmarksStore } from '@/types'
 import { loadWebDAVConfig, loadAppConfig, fetchAppConfig, fetchBookmarks, getDefaultAppConfig, saveAppConfig, saveAppConfigToWebDAV, loadBookmarksCache, loadAppConfigFromPouchDB, loadBookmarksFromPouchDB } from '@/lib/config'
 import { filterByTag, getMostVisitedBookmarks, isDeleted, getFaviconUrl, stringToColor } from '@/lib/bookmarks'
-import { recordClick, loadClickStatsFromWebDAV, togglePinnedBookmark, loadPinnedBookmarks, savePinnedBookmarks } from '@/lib/stats'
+import { recordClick, loadClickStatsFromWebDAV, togglePinnedBookmark, loadPinnedBookmarks, loadPinnedBookmarksAsync, savePinnedBookmarks } from '@/lib/stats'
 import { getStorageCredentials } from '@/lib/remotestorage-connection'
 import { getPouchDB } from '@/lib/pouchdb'
 
@@ -26,7 +26,7 @@ export default function MainPage() {
   const [refreshing, setRefreshing] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [allBookmarks, setAllBookmarks] = useState<DisplayBookmark[]>([])
-  const [pinnedUrls, setPinnedUrls] = useState<string[]>(loadPinnedBookmarks())
+  const [pinnedUrls, setPinnedUrls] = useState<string[]>([])
   const [initialized, setInitialized] = useState(false)
   const cachedStoreRef = useRef(false)
   const processBookmarksRef = useRef<((store: BookmarksStore, config: AppConfig) => void) | undefined>(undefined)
@@ -175,6 +175,11 @@ export default function MainPage() {
           console.log('[Init] 开始加载书签...')
           const cachedStore = loadBookmarksCache() || await loadBookmarksFromPouchDB()
           console.log('[Init] cachedStore:', cachedStore ? { keys: Object.keys(cachedStore.data).length } : null)
+          
+          console.log('[Init] 开始加载固定书签...')
+          const pinned = await loadPinnedBookmarksAsync()
+          console.log('[Init] 固定书签数量:', pinned.length)
+          setPinnedUrls(pinned)
           
           if (cachedConfig) {
             console.log('[Init] 设置配置')

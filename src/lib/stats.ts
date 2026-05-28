@@ -1,6 +1,6 @@
 import type { DisplayBookmark, WebDAVConfig } from '@/types'
 import { getFileContents, putFileContents } from './webdav'
-import { recordClickToPouch, savePinnedToPouch } from './pouchdb'
+import { recordClickToPouch, savePinnedToPouch, loadPinnedFromPouch } from './pouchdb'
 
 interface ClickRecord {
   url: string
@@ -146,6 +146,25 @@ export function loadPinnedBookmarks(): string[] {
   } catch {
     return []
   }
+}
+
+export async function loadPinnedBookmarksAsync(): Promise<string[]> {
+  // 优先从 localStorage 加载
+  const local = loadPinnedBookmarks()
+  if (local.length > 0) return local
+  
+  // localStorage 为空时，尝试从 PouchDB 加载
+  try {
+    const pouch = await loadPinnedFromPouch()
+    if (pouch && pouch.length > 0) {
+      // 同步回 localStorage
+      localStorage.setItem(PINNED_KEY, JSON.stringify(pouch))
+      return pouch
+    }
+  } catch (err) {
+    console.error('[Stats] 从 PouchDB 加载固定书签失败:', err)
+  }
+  return []
 }
 
 export function savePinnedBookmarks(urls: string[]): void {
