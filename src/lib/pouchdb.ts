@@ -167,7 +167,7 @@ export async function saveBookmarks(bookmarks: Array<Omit<BookmarkDoc, '_id' | '
     }
     
     console.log('[PouchDB] saveBookmarks: 准备 bulkDocs，文档数量:', docs.length)
-    const result = await database.bulkDocs(docs)
+    await database.bulkDocs(docs)
     console.log('[PouchDB] saveBookmarks: bulkDocs 完成')
   })
 }
