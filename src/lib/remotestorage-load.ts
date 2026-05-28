@@ -1,7 +1,7 @@
 /**
  * 从 RemoteStorage 加载数据到 PouchDB
  * 
- * 使用 universal-sync-v2 的 SyncEngine.pull() 方法
+ * 使用 universal-sync-v2 的 SyncEngine 方法
  */
 
 import { RemoteStorageFileSystem, type RemoteStorageConfig } from './remotestorage-fs'
@@ -47,25 +47,29 @@ export async function loadFromRemoteStorage(
 
 /**
  * 检查 RemoteStorage 是否有数据
+ * 
+ * 使用 SyncEngine.getLastSequence() 检查远程是否有数据
  */
 export async function hasRemoteStorageData(
+  db: PouchDB.Database,
   config: RemoteStorageConfig
 ): Promise<boolean> {
-  const fs = new RemoteStorageFileSystem(config)
-
   try {
-    await fs.exists('/onenav/manifest-index.json')
-    return true
-  } catch {
-    // ignore
-  }
+    const fs = new RemoteStorageFileSystem(config)
+    const { SyncEngine } = await getSyncModule()
+    
+    const engine = new SyncEngine(db, fs, {
+      basePath: '/onenav',
+      maxFileSize: 500 * 1024,
+    })
 
-  try {
-    await fs.exists('/onenav/manifest.json')
-    return true
-  } catch {
-    // ignore
+    await engine.initialize()
+    const lastSeq = await engine.getLastSequence()
+    
+    console.log('[RS Check] 远程 lastSequence:', lastSeq)
+    return lastSeq > 0
+  } catch (err) {
+    console.log('[RS Check] 检查失败:', err)
+    return false
   }
-
-  return false
 }

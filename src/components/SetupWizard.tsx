@@ -60,7 +60,7 @@ export default function SetupWizard({ onWebDAVSetup, onRemoteStorageSetup }: Set
           const db = await getPouchDB()
           
           // 检查 RemoteStorage 是否有数据
-          const rsHasData = await hasRemoteStorageData(credentials)
+          const rsHasData = await hasRemoteStorageData(db, credentials)
           
           if (rsHasData) {
             // 从 RemoteStorage 加载数据到 PouchDB
