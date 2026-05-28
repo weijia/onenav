@@ -356,18 +356,28 @@ export default function MainPage() {
   }, [loadAllData])
 
   // 向导回调：RemoteStorage 配置完成
-  const handleRemoteStorageSetup = useCallback((_credentials: { href: string; token: string }) => {
-    // RemoteStorage 数据已通过 PouchDB 同步，直接使用缓存数据
-    setInitialized(true)
-    // 使用默认配置（RemoteStorage 模式下配置存储在 PouchDB 中）
-    const cachedConfig = loadAppConfig() || getDefaultAppConfig()
+  const handleRemoteStorageSetup = useCallback(async (_credentials: { href: string; token: string }) => {
+    console.log('[MainPage] handleRemoteStorageSetup: RemoteStorage 配置完成，从 PouchDB 加载数据')
+    // RemoteStorage 数据已通过 SetupWizard 同步到 PouchDB，从 PouchDB 加载
+    const cachedConfig = loadAppConfig() || await loadAppConfigFromPouchDB() || getDefaultAppConfig()
     setAppConfig(cachedConfig)
-    // 从 PouchDB 加载书签
-    loadBookmarksFromPouchDB().then(store => {
-      if (store) {
-        processBookmarksRef.current?.(store, cachedConfig)
-      }
-    })
+    
+    const cachedStore = await loadBookmarksFromPouchDB()
+    if (cachedStore) {
+      console.log('[MainPage] handleRemoteStorageSetup: 加载到书签:', Object.keys(cachedStore.data).length)
+      processBookmarksRef.current?.(cachedStore, cachedConfig)
+    } else {
+      console.warn('[MainPage] handleRemoteStorageSetup: PouchDB 中没有书签数据')
+    }
+    
+    const pinned = await loadPinnedBookmarksAsync()
+    if (pinned.length > 0) {
+      console.log('[MainPage] handleRemoteStorageSetup: 加载到固定书签:', pinned.length)
+      setPinnedUrls(pinned)
+    }
+    
+    setInitialized(true)
+    setLoading(false)
   }, [])
 
   // Render background
