@@ -107,7 +107,15 @@ export async function saveBookmarks(bookmarks: Array<Omit<BookmarkDoc, '_id' | '
   for (const bm of bookmarks) {
     const id = PREFIX.BOOKMARK + bm.url
     console.log('[PouchDB] saveBookmarks: 检查现有文档:', id)
-    const existing = await database.get(id).catch(() => null)
+    let existing = null
+    try {
+      existing = await database.get(id)
+    } catch (err: any) {
+      // 404 表示文档不存在，这是正常的
+      if (err.status !== 404) {
+        console.error('[PouchDB] saveBookmarks: 检查文档时出错:', err)
+      }
+    }
     
     docs.push({
       _id: id,
@@ -131,6 +139,7 @@ export async function saveBookmarks(bookmarks: Array<Omit<BookmarkDoc, '_id' | '
     console.log('[PouchDB] saveBookmarks: bulkDocs 完成，结果:', result)
   } catch (err) {
     console.error('[PouchDB] saveBookmarks error:', err)
+    throw err
   }
 }
 
