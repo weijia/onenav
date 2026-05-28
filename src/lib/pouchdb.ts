@@ -257,7 +257,9 @@ export async function saveAppConfigToPouch(config: Omit<AppConfigDoc, '_id' | 't
 export async function loadAppConfigFromPouch(): Promise<AppConfigDoc | null> {
   try {
     const database = await getDb()
-    return await database.get(PREFIX.CONFIG + 'app')
+    const doc = await database.get(PREFIX.CONFIG + 'app')
+    console.log('[PouchDB] loadAppConfigFromPouch: 原始文档:', doc)
+    return doc
   } catch {
     return null
   }
