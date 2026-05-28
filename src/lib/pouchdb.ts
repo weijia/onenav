@@ -1,10 +1,35 @@
 const DB_NAME = 'onenav'
 let db: any = null
+let dbInitError = false
 
 async function getDb(): Promise<any> {
-  if (!db) {
+  if (!db || dbInitError) {
     const PouchDB = (await import('pouchdb-browser')).default
-    db = new PouchDB(DB_NAME)
+    try {
+      db = new PouchDB(DB_NAME)
+      // 测试数据库是否正常工作
+      await db.info()
+      dbInitError = false
+      console.log('[PouchDB] 数据库初始化成功')
+    } catch (err) {
+      console.error('[PouchDB] 数据库初始化失败，尝试重置:', err)
+      dbInitError = true
+      // 删除损坏的数据库
+      await new Promise<void>((resolve) => {
+        const req = indexedDB.deleteDatabase('_pouch_' + DB_NAME)
+        req.onsuccess = () => {
+          console.log('[PouchDB] 损坏的数据库已删除')
+          resolve()
+        }
+        req.onerror = () => {
+          console.error('[PouchDB] 删除数据库失败')
+          resolve()
+        }
+      })
+      // 重新创建
+      db = new PouchDB(DB_NAME)
+      console.log('[PouchDB] 数据库重新创建成功')
+    }
   }
   return db
 }
