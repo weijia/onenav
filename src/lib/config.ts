@@ -107,18 +107,24 @@ function bookmarkEntryToDoc(url: string, entry: BookmarkEntry): Omit<BookmarkDoc
 
 export async function fetchBookmarks(wdav: WebDAVConfig, path: string): Promise<BookmarksStore | null> {
   try {
+    console.log('[Config] fetchBookmarks: 开始从 WebDAV 获取书签:', path)
     const raw = await getFileContents(wdav, path)
     const store = JSON.parse(raw) as BookmarksStore
+    console.log('[Config] fetchBookmarks: 获取到书签数量:', Object.keys(store.data).length)
     
     // 将书签保存到 PouchDB（每条一个文档）
     const bookmarks = Object.entries(store.data).map(([url, entry]) => bookmarkEntryToDoc(url, entry))
+    console.log('[Config] fetchBookmarks: 准备保存到 PouchDB，书签数量:', bookmarks.length)
     await saveBookmarks(bookmarks)
+    console.log('[Config] fetchBookmarks: PouchDB 保存完成')
     
     // 同时保存到 localStorage 缓存
     saveBookmarksCache(store)
+    console.log('[Config] fetchBookmarks: localStorage 缓存完成')
     
     return store
-  } catch {
+  } catch (err) {
+    console.error('[Config] fetchBookmarks: 失败:', err)
     return null
   }
 }

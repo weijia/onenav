@@ -74,11 +74,14 @@ export async function saveBookmark(bookmark: Omit<BookmarkDoc, '_id' | 'type'> &
 }
 
 export async function saveBookmarks(bookmarks: Array<Omit<BookmarkDoc, '_id' | 'type'>>): Promise<void> {
+  console.log('[PouchDB] saveBookmarks: 开始保存', bookmarks.length, '条书签到 PouchDB')
   const database = await getDb()
+  console.log('[PouchDB] saveBookmarks: 获取到数据库实例')
   const docs: BookmarkDoc[] = []
   
   for (const bm of bookmarks) {
     const id = PREFIX.BOOKMARK + bm.url
+    console.log('[PouchDB] saveBookmarks: 检查现有文档:', id)
     const existing = await database.get(id).catch(() => null)
     
     docs.push({
@@ -97,8 +100,10 @@ export async function saveBookmarks(bookmarks: Array<Omit<BookmarkDoc, '_id' | '
     })
   }
   
+  console.log('[PouchDB] saveBookmarks: 准备 bulkDocs，文档数量:', docs.length)
   try {
-    await database.bulkDocs(docs)
+    const result = await database.bulkDocs(docs)
+    console.log('[PouchDB] saveBookmarks: bulkDocs 完成，结果:', result)
   } catch (err) {
     console.error('[PouchDB] saveBookmarks error:', err)
   }
