@@ -3,6 +3,9 @@ import type { AppConfig, DisplayBookmark, WebDAVConfig, BookmarksStore } from '@
 import { loadWebDAVConfig, loadAppConfig, fetchAppConfig, fetchBookmarks, getDefaultAppConfig, saveAppConfig, saveAppConfigToWebDAV, loadBookmarksCache, loadAppConfigFromPouchDB, loadBookmarksFromPouchDB } from '@/lib/config'
 import { filterByTag, getMostVisitedBookmarks, isDeleted, getFaviconUrl, stringToColor } from '@/lib/bookmarks'
 import { recordClick, loadClickStatsFromWebDAV, togglePinnedBookmark, loadPinnedBookmarks, savePinnedBookmarks } from '@/lib/stats'
+import { loadFromRemoteStorage } from '@/lib/remotestorage-load'
+import { getStorageCredentials } from '@/lib/remotestorage-connection'
+import { getPouchDB } from '@/lib/pouchdb'
 import Sidebar from '@/components/Sidebar'
 import BookmarkGrid from '@/components/BookmarkGrid'
 import SettingsDialog from '@/components/SettingsDialog'
@@ -154,8 +157,10 @@ export default function MainPage() {
           setInitialized(true)
           loadAllData(wdav)
         } else {
-          // 没有 WebDAV 配置，尝试从 PouchDB 加载缓存数据（RemoteStorage 模式）
-          console.log('[Init] 无 WebDAV 配置，尝试从 PouchDB 加载')
+          // 没有 WebDAV 配置，RemoteStorage 模式
+          console.log('[Init] RemoteStorage 模式，先加载缓存再同步')
+          
+          // 1. 先从 PouchDB/localStorage 加载缓存（快速显示）
           const cachedConfig = loadAppConfig() || await loadAppConfigFromPouchDB()
           const cachedStore = loadBookmarksCache() || await loadBookmarksFromPouchDB()
           
@@ -168,6 +173,30 @@ export default function MainPage() {
           
           setInitialized(true)
           setLoading(false)
+          
+          // 2. 后台从 RemoteStorage 同步最新数据
+          const credentials = getStorageCredentials()
+          if (credentials) {
+            console.log('[Init] 开始后台同步 RemoteStorage...')
+            try {
+              const db = await getPouchDB()
+              await loadFromRemoteStorage(db, credentials)
+              console.log('[Init] 后台同步完成，刷新数据')
+              
+              // 同步完成后重新从 PouchDB 加载数据
+              const updatedConfig = await loadAppConfigFromPouchDB()
+              const updatedStore = await loadBookmarksFromPouchDB()
+              
+              if (updatedConfig) {
+                setAppConfig(updatedConfig)
+              }
+              if (updatedStore) {
+                processBookmarksRef.current?.(updatedStore, updatedConfig || cachedConfig || getDefaultAppConfig())
+              }
+            } catch (err) {
+              console.error('[Init] 后台同步失败:', err)
+            }
+          }
         }
       } catch (err) {
         console.error('[Init] 初始化错误:', err)
