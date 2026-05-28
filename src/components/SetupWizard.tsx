@@ -65,7 +65,7 @@ export default function SetupWizard({ onWebDAVSetup, onRemoteStorageSetup }: Set
           if (rsHasData) {
             // 从 RemoteStorage 加载数据到 PouchDB
             const result = await loadFromRemoteStorage(db, credentials)
-            console.log(`从 RemoteStorage 加载了 ${result.count} 条数据`, result.errors)
+            console.log('从 RemoteStorage 加载完成', result.errors.length > 0 ? result.errors : '')
           } else {
             // RemoteStorage 没有数据，将本地 PouchDB 数据同步上去
             console.log('RemoteStorage 没有数据，执行首次同步...')
