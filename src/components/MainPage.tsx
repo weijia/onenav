@@ -3,8 +3,9 @@ import type { AppConfig, DisplayBookmark, WebDAVConfig, BookmarksStore } from '@
 import { loadWebDAVConfig, loadAppConfig, fetchAppConfig, fetchBookmarks, getDefaultAppConfig, saveAppConfig, saveAppConfigToWebDAV, loadBookmarksCache, loadAppConfigFromPouchDB, loadBookmarksFromPouchDB } from '@/lib/config'
 import { filterByTag, getMostVisitedBookmarks, isDeleted, getFaviconUrl, stringToColor } from '@/lib/bookmarks'
 import { recordClick, loadClickStatsFromWebDAV, togglePinnedBookmark, loadPinnedBookmarks, loadPinnedBookmarksAsync, savePinnedBookmarks } from '@/lib/stats'
-import { getStorageCredentials } from '@/lib/remotestorage-connection'
+import { getStorageCredentials, onStatusChange } from '@/lib/remotestorage-connection'
 import { getPouchDB } from '@/lib/pouchdb'
+import { syncToRemoteStorage } from '@/lib/remotestorage-sync'
 
 import Sidebar from '@/components/Sidebar'
 import BookmarkGrid from '@/components/BookmarkGrid'
@@ -186,7 +187,6 @@ export default function MainPage() {
         return
       }
       
-      const { syncToRemoteStorage } = await import('@/lib/remotestorage-sync')
       await syncToRemoteStorage(db, credentials, {
         maxFileSize: 500 * 1024,
         autoMerge: true,
@@ -265,7 +265,6 @@ export default function MainPage() {
           } else {
             // OAuth 回调后 connected 事件可能稍后触发，监听 connected 事件
             console.log('[Init] RemoteStorage 未连接，监听 connected 事件...')
-            const { onStatusChange } = await import('@/lib/remotestorage-connection')
             const unlisten = onStatusChange(async (info) => {
               if (info.status === 'connected') {
                 console.log('[Init] RemoteStorage 已连接，开始同步')
