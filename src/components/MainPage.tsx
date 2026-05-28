@@ -3,7 +3,6 @@ import type { AppConfig, DisplayBookmark, WebDAVConfig, BookmarksStore } from '@
 import { loadWebDAVConfig, loadAppConfig, fetchAppConfig, fetchBookmarks, getDefaultAppConfig, saveAppConfig, saveAppConfigToWebDAV, loadBookmarksCache, loadAppConfigFromPouchDB, loadBookmarksFromPouchDB } from '@/lib/config'
 import { filterByTag, getMostVisitedBookmarks, isDeleted, getFaviconUrl, stringToColor } from '@/lib/bookmarks'
 import { recordClick, loadClickStatsFromWebDAV, togglePinnedBookmark, loadPinnedBookmarks, savePinnedBookmarks } from '@/lib/stats'
-import { loadFromRemoteStorage } from '@/lib/remotestorage-load'
 import { getStorageCredentials } from '@/lib/remotestorage-connection'
 import { getPouchDB } from '@/lib/pouchdb'
 import Sidebar from '@/components/Sidebar'
@@ -195,8 +194,22 @@ export default function MainPage() {
           if (credentials) {
             console.log('[Init] 开始后台同步 RemoteStorage...')
             try {
+              // 同步前先把 localStorage 中的正确配置写入 PouchDB
+              // 这样 sync() 时会把正确的数据推送到 RemoteStorage
+              const localConfig = loadAppConfig()
+              if (localConfig) {
+                console.log('[Init] 将 localStorage 配置写入 PouchDB，确保数据完整')
+                saveAppConfig(localConfig)
+              }
+              
               const db = await getPouchDB()
-              await loadFromRemoteStorage(db, credentials)
+              // 使用 sync()（push + pull）而不是 pull()
+              // 这样本地完整的数据会推送到远程，同时拉取远程的新数据
+              const { syncToRemoteStorage } = await import('@/lib/remotestorage-sync')
+              await syncToRemoteStorage(db, credentials, {
+                maxFileSize: 500 * 1024,
+                autoMerge: true,
+              })
               console.log('[Init] 后台同步完成，刷新数据')
               
               // 同步完成后重新从 PouchDB 加载数据
