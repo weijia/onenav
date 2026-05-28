@@ -257,13 +257,19 @@ export async function saveAppConfigToPouch(config: Omit<AppConfigDoc, '_id' | 't
 export async function loadAppConfigFromPouch(): Promise<AppConfigDoc | null> {
   try {
     const database = await getDb()
+    console.log('[PouchDB] loadAppConfigFromPouch: 数据库名称:', DB_NAME)
+    console.log('[PouchDB] loadAppConfigFromPouch: 查询文档 ID:', PREFIX.CONFIG + 'app')
+    
+    // 先列出所有文档看看
+    const allDocs = await database.allDocs({ include_docs: true })
+    console.log('[PouchDB] loadAppConfigFromPouch: 所有文档 IDs:', allDocs.rows.map((r: any) => r.id))
+    console.log('[PouchDB] loadAppConfigFromPouch: cfg: 开头的文档:', allDocs.rows.filter((r: any) => r.id.startsWith('cfg:')).map((r: any) => ({ id: r.id, doc: r.doc })))
+    
     const doc = await database.get(PREFIX.CONFIG + 'app')
     console.log('[PouchDB] loadAppConfigFromPouch: 原始文档完整内容:', JSON.stringify(doc, null, 2))
-    console.log('[PouchDB] loadAppConfigFromPouch: tags 字段:', JSON.stringify(doc.tags, null, 2))
-    console.log('[PouchDB] loadAppConfigFromPouch: tags[0]:', doc.tags?.[0])
-    console.log('[PouchDB] loadAppConfigFromPouch: tags[0] 的所有属性:', doc.tags?.[0] ? Object.keys(doc.tags[0]) : 'no tags')
     return doc
-  } catch {
+  } catch (err) {
+    console.error('[PouchDB] loadAppConfigFromPouch: 读取失败:', err)
     return null
   }
 }
