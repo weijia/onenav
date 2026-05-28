@@ -10,8 +10,12 @@ interface SidebarProps {
 }
 
 function getIconComponent(iconName: string) {
+  console.log('[Sidebar] 加载图标:', iconName)
   const icons = LucideIcons as unknown as Record<string, React.ComponentType<{ className?: string }>>
   const Icon = icons[iconName]
+  if (!Icon) {
+    console.log('[Sidebar] 图标未找到:', iconName, '可用图标:', Object.keys(icons).slice(0, 20))
+  }
   return Icon || LayoutGrid
 }
 
