@@ -8,6 +8,7 @@ import {
   loadAppConfigFromPouch,
   type BookmarkDoc,
 } from '@/lib/pouchdb'
+import { loadPinnedBookmarks } from '@/lib/stats'
 
 const WEBDAV_CONFIG_KEY = 'webDAVConfig'
 const APP_CONFIG_KEY = 'onenavConfig'
@@ -44,6 +45,8 @@ export function loadAppConfig(): AppConfig | null {
 
 export async function saveAppConfig(config: AppConfig): Promise<void> {
   localStorage.setItem(APP_CONFIG_KEY, JSON.stringify(config))
+  // 从 localStorage 读取固定书签（固定书签独立存储）
+  const pinned = loadPinnedBookmarks()
   await saveAppConfigToPouch({
     tags: config.tags.map(t => ({ id: t.id, name: t.tag, displayName: t.label, icon: t.icon, order: t.order })),
     display: {
@@ -51,10 +54,10 @@ export async function saveAppConfig(config: AppConfig): Promise<void> {
       cardStyle: 'comfortable',
       showDescriptions: true,
     },
-    pinnedBookmarks: [],
+    pinnedBookmarks: pinned,
     updatedAt: Date.now(),
   })
-  console.log('[Config] saveAppConfig: 配置已保存到 localStorage 和 PouchDB')
+  console.log('[Config] saveAppConfig: 配置已保存到 localStorage 和 PouchDB, 固定书签:', pinned.length)
 }
 
 export async function fetchAppConfig(wdav: WebDAVConfig): Promise<AppConfig | null> {
