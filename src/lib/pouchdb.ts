@@ -298,9 +298,12 @@ export interface AppConfigDoc {
 }
 
 export async function saveAppConfigToPouch(config: Omit<AppConfigDoc, '_id' | 'type'>): Promise<void> {
+  console.log('[PouchDB] saveAppConfigToPouch: 开始保存配置到 PouchDB, tags:', config.tags.length)
   return withAutoReset(async (database) => {
     const id = PREFIX.CONFIG + 'app'
+    console.log('[PouchDB] saveAppConfigToPouch: 检查现有文档:', id)
     const existing = await database.get(id).catch(() => null)
+    console.log('[PouchDB] saveAppConfigToPouch: 现有文档:', existing ? '存在' : '不存在')
     
     const doc: AppConfigDoc = {
       _id: id,
@@ -313,8 +316,10 @@ export async function saveAppConfigToPouch(config: Omit<AppConfigDoc, '_id' | 't
     
     if (existing) {
       await database.put({ ...doc, _rev: existing._rev })
+      console.log('[PouchDB] saveAppConfigToPouch: 配置已更新')
     } else {
       await database.put(doc)
+      console.log('[PouchDB] saveAppConfigToPouch: 配置已创建')
     }
   })
 }
