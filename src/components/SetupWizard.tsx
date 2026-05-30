@@ -5,6 +5,7 @@ import {
   connectWithToken,
   onStatusChange,
   getStorageCredentials,
+  getConnectionInfo,
   claimAccess,
   type RSConnectionInfo,
 } from '@/lib/remotestorage-connection'
@@ -40,6 +41,29 @@ export default function SetupWizard({ onWebDAVSetup, onRemoteStorageSetup }: Set
     claimAccess('onenav', 'rw')
     return onStatusChange(setRsConnectionInfo)
   }, [])
+
+  // 检测 OAuth 回调（URL 中有 access_token）或已保存的凭证，自动开始监听
+  useEffect(() => {
+    const hasCallback = window.location.hash.includes('access_token')
+    const savedCreds = localStorage.getItem('onenav:rs-credentials')
+    if (hasCallback || savedCreds) {
+      console.log('[SetupWizard] 检测到 OAuth 回调或已保存凭证，自动开始监听')
+      startRSMonitor()
+      if (hasCallback) {
+        setMode('remotestorage')
+      }
+      // remotestoragejs 处理 OAuth 回调是异步的，延迟检查连接状态
+      const timer = setTimeout(() => {
+        console.log('[SetupWizard] 延迟检查连接状态...')
+        const info = getConnectionInfo()
+        console.log('[SetupWizard] 延迟检查结果:', info)
+        if (info.status === 'connected') {
+          setRsConnectionInfo(info)
+        }
+      }, 2000)
+      return () => clearTimeout(timer)
+    }
+  }, [startRSMonitor])
 
   // 监听 RemoteStorage 连接状态，自动进入应用
   useEffect(() => {
