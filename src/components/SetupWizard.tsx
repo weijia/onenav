@@ -381,6 +381,10 @@ export default function SetupWizard({ onWebDAVSetup, onRemoteStorageSetup }: Set
             )}
           </div>
         )}
+        {/* 版本信息 */}
+        <div className="text-center mt-6">
+          <p className="text-white/20 text-xs">v{__APP_VERSION__} · {new Date().getFullYear()}</p>
+        </div>
       </div>
     </div>
   )

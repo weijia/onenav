@@ -2,6 +2,7 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
+import pkg from './package.json'
 
 // 获取东八区时间字符串
 function getChinaTime() {
@@ -21,5 +22,6 @@ export default defineConfig({
   },
   define: {
     'import.meta.env.VITE_APP_BUILD_TIME': JSON.stringify(getChinaTime()),
+    '__APP_VERSION__': JSON.stringify(pkg.version),
   },
 })
