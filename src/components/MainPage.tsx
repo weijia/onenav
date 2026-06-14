@@ -11,7 +11,7 @@ import Sidebar from '@/components/Sidebar'
 import BookmarkGrid from '@/components/BookmarkGrid'
 import SettingsDialog from '@/components/SettingsDialog'
 import SetupWizard from '@/components/SetupWizard'
-import { RefreshCw, Loader2, LayoutGrid, Search } from 'lucide-react'
+import { RefreshCw, Loader2, LayoutGrid, Search, Menu, X } from 'lucide-react'
 import { versionDisplay, buildTimeDisplay } from '@/lib/version'
 
 export default function MainPage() {
@@ -26,6 +26,7 @@ export default function MainPage() {
   const [error, setError] = useState('')
   const [refreshing, setRefreshing] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const [sidebarOpen, setSidebarOpen] = useState(false)
   const [allBookmarks, setAllBookmarks] = useState<DisplayBookmark[]>([])
   const [pinnedUrls, setPinnedUrls] = useState<string[]>([])
   const [initialized, setInitialized] = useState(false)
@@ -318,10 +319,27 @@ export default function MainPage() {
   }, [activeTag, webdavConfig, appConfig, processBookmarks])
 
   const handleRefresh = async () => {
-    if (!webdavConfig || refreshing) return
+    if (refreshing) return
     setRefreshing(true)
-    await loadAllData(webdavConfig, false)
-    setRefreshing(false)
+    try {
+      if (webdavConfig) {
+        await loadAllData(webdavConfig, false)
+      } else {
+        // RemoteStorage / PouchDB 模式：从 PouchDB 重新加载
+        const updatedConfig = await loadAppConfigFromPouchDB() || loadAppConfig() || getDefaultAppConfig()
+        setAppConfig(updatedConfig)
+        const store = await loadBookmarksFromPouchDB()
+        if (store) {
+          processBookmarksRef.current?.(store, updatedConfig)
+        }
+        const pinned = await loadPinnedBookmarksAsync()
+        if (pinned.length > 0) {
+          setPinnedUrls(pinned)
+        }
+      }
+    } finally {
+      setRefreshing(false)
+    }
   }
 
   // 自动刷新定时器
@@ -480,13 +498,22 @@ export default function MainPage() {
         activeTag={activeTag}
         onTagSelect={handleTagSelect}
         onSettingsClick={() => setSettingsOpen(true)}
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
       />
 
       {/* Main content */}
-      <main className="relative z-10 min-h-screen flex flex-col overflow-x-hidden" style={{ marginLeft: '60px', width: 'calc(100% - 60px)' }}>
+      <main className="relative z-10 min-h-screen flex flex-col overflow-x-hidden transition-all duration-200" style={{ marginLeft: sidebarOpen ? '60px' : '0', width: sidebarOpen ? 'calc(100% - 60px)' : '100%' }}>
         {/* Top bar */}
-        <div className="flex items-center justify-between px-6 py-3">
+        <div className="flex items-center justify-between px-4 sm:px-6 py-3">
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              className="w-8 h-8 rounded-lg flex items-center justify-center text-white/40 hover:text-white/70 hover:bg-white/10 transition-all"
+              title="Toggle Sidebar"
+            >
+              {sidebarOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
+            </button>
             <LayoutGrid className="w-5 h-5 text-white/60" />
             <span className="text-white/60 text-sm">OneNav</span>
           </div>
