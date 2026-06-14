@@ -111,14 +111,14 @@ export default function BookmarkItem({
             width: `${iconSize}px`,
             height: `${iconSize}px`,
             borderRadius: `${borderRadius}px`,
-            backgroundColor: bookmark.color,
+            backgroundColor: bookmark.favicon && !imgError ? 'transparent' : bookmark.color,
           }}
         >
           {bookmark.favicon && !imgError ? (
             <img
               src={bookmark.favicon}
               alt=""
-              className="object-contain w-3/5 h-3/5 transition-opacity duration-200"
+              className="object-contain w-full h-full transition-opacity duration-200"
               style={{ opacity: imgLoaded ? 1 : 0 }}
               onLoad={() => setImgLoaded(true)}
               onError={() => setImgError(true)}
