@@ -49,6 +49,7 @@ export interface AppConfig {
   background: BackgroundConfig
   widgets: WidgetsConfig
   pinnedBookmarks?: string[] // 固定的书签 URL 列表
+  autoRefreshInterval?: number // 自动刷新间隔（分钟），0 表示禁用，默认 60
 }
 
 // utags bookmark types (simplified)

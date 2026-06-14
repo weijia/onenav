@@ -195,6 +195,7 @@ export async function loadAppConfigFromPouchDB(): Promise<AppConfig | null> {
       fontSize: 70,
       fontColor: '#ffffff',
     },
+    autoRefreshInterval: 60,
   }
 }
 

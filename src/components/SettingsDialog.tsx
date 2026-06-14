@@ -585,6 +585,29 @@ export default function SettingsDialog({ open, onOpenChange, config, onConfigSav
                 <p className="text-xs text-white/40">Path to the utags-bookmarks.json file on WebDAV</p>
               </div>
 
+              <div className="space-y-2">
+                <div className="flex justify-between">
+                  <Label className="text-white/80">Auto Refresh Interval</Label>
+                  <span className="text-white/60 text-sm">
+                    {localConfig.autoRefreshInterval ?? 60} min
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="240"
+                  step="5"
+                  value={localConfig.autoRefreshInterval ?? 60}
+                  onChange={(e) => updateConfig({ autoRefreshInterval: Number(e.target.value) })}
+                  className="w-full accent-white"
+                />
+                <p className="text-xs text-white/40">
+                  {localConfig.autoRefreshInterval === 0
+                    ? 'Auto refresh disabled'
+                    : `Automatically refresh data every ${localConfig.autoRefreshInterval ?? 60} minutes`}
+                </p>
+              </div>
+
               <div className="pt-4 border-t border-white/10">
                 <Button
                   onClick={resetToDefaults}

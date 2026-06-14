@@ -327,6 +327,21 @@ export default function MainPage() {
     setRefreshing(false)
   }
 
+  // 自动刷新定时器
+  useEffect(() => {
+    const interval = appConfig.autoRefreshInterval
+    if (!interval || interval <= 0 || !webdavConfig) return
+
+    const ms = interval * 60 * 1000
+    console.log('[MainPage] 自动刷新间隔:', interval, '分钟')
+    const timer = setInterval(() => {
+      console.log('[MainPage] 自动刷新...')
+      loadAllData(webdavConfig, false)
+    }, ms)
+
+    return () => clearInterval(timer)
+  }, [appConfig.autoRefreshInterval, webdavConfig, loadAllData])
+
   const handleConfigSave = async (config: AppConfig) => {
     setAppConfig(config)
     await saveAppConfig(config)
