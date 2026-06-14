@@ -199,6 +199,14 @@ export default function MainPage() {
       const updatedPinned = await loadPinnedBookmarksAsync()
       
       if (updatedConfig) {
+        // 检查当前 activeTag 是否在新配置的标签列表中
+        const tagIds = updatedConfig.tags.map((t: { id: string }) => t.id)
+        const currentTag = activeTag || 'onenav'
+        if (!tagIds.includes(currentTag) && currentTag !== '._all_' && currentTag !== 'onenav') {
+          console.log('[Sync] activeTag', currentTag, '不在新配置中，重置为 onenav')
+          setActiveTag('onenav')
+          window.location.hash = 'onenav'
+        }
         setAppConfig(updatedConfig)
       }
       if (updatedStore) {
@@ -219,15 +227,20 @@ export default function MainPage() {
       try {
         console.log('[Init] 开始初始化...')
         const wdav = loadWebDAVConfig()
-        console.log('[Init] WebDAV config:', wdav)
-        if (wdav) {
+        const hasRSToken = window.location.hash.includes('access_token')
+        console.log('[Init] WebDAV config:', wdav, 'hasRSToken:', hasRSToken)
+        if (wdav && !hasRSToken) {
           console.log('[Init] 使用 WebDAV 配置')
           setWebdavConfig(wdav)
           setInitialized(true)
           loadAllData(wdav)
         } else {
-          // 没有 WebDAV 配置，RemoteStorage 模式
-          console.log('[Init] RemoteStorage 模式，先加载缓存再同步')
+          // 没有 WebDAV 配置，或正在添加 RemoteStorage（URL 中有 access_token）
+          if (hasRSToken) {
+            console.log('[Init] 检测到 RemoteStorage OAuth 回调，切换到 RemoteStorage 模式')
+          } else {
+            console.log('[Init] RemoteStorage 模式，先加载缓存再同步')
+          }
           
           // 1. 先从 PouchDB/localStorage 加载缓存（快速显示）
           console.log('[Init] 开始加载配置...')
