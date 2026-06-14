@@ -248,7 +248,10 @@ export default function MainPage() {
           console.log('[Init] cachedConfig:', cachedConfig)
           
           console.log('[Init] 开始加载书签...')
-          const cachedStore = loadBookmarksCache() || await loadBookmarksFromPouchDB()
+          // OAuth 回调时优先从 PouchDB 加载（RemoteStorage 数据已同步到 PouchDB），不用 localStorage 缓存
+          const cachedStore = hasRSToken
+            ? await loadBookmarksFromPouchDB()
+            : (loadBookmarksCache() || await loadBookmarksFromPouchDB())
           console.log('[Init] cachedStore:', cachedStore ? { keys: Object.keys(cachedStore.data).length } : null)
           
           console.log('[Init] 开始加载固定书签...')
