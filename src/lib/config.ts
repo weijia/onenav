@@ -172,7 +172,7 @@ export async function loadAppConfigFromPouchDB(): Promise<AppConfig | null> {
     })),
     bookmarkPath: 'app_data/utags/bookmarks.json',
     display: {
-      iconSize: 60,
+      iconSize: 48,
       iconBorderRadius: 16,
       iconSpacing: 27,
       showName: true,
