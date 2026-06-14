@@ -90,7 +90,7 @@ export default defineConfig({
     },
   },
   define: {
-    'import.meta.env.VITE_APP_BUILD_TIME': JSON.stringify(getChinaTime()),
+    '__APP_BUILD_TIME__': JSON.stringify(getChinaTime()),
     '__APP_VERSION__': JSON.stringify(pkg.version),
   },
 })

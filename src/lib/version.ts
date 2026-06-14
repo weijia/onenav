@@ -1,8 +1,11 @@
-export const VERSION = import.meta.env.VITE_APP_VERSION || 'dev'
-export const BUILD_TIME = import.meta.env.VITE_APP_BUILD_TIME || new Date().toISOString()
-export const COMMIT_SHA = import.meta.env.VITE_APP_COMMIT_SHA || 'unknown'
+export const VERSION = __APP_VERSION__ || 'dev'
 
-export const versionDisplay = `${VERSION} (${COMMIT_SHA})`
+// 构建时间通过 Vite define 注入，但 vite.config.ts 可能被缓存
+// 使用 __APP_BUILD_TIME__ 替代 import.meta.env，确保每次构建更新
+// eslint-disable-next-line
+export const BUILD_TIME = (typeof __APP_BUILD_TIME__ !== 'undefined' ? __APP_BUILD_TIME__ : new Date().toISOString()) as string
+
+export const versionDisplay = VERSION
 export const buildTimeDisplay = new Date(BUILD_TIME).toLocaleString('zh-CN', {
   timeZone: 'Asia/Shanghai',
   year: 'numeric',
