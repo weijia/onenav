@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import type { AppConfig, DisplayBookmark, WebDAVConfig, BookmarksStore } from '@/types'
-import { loadWebDAVConfig, loadAppConfig, fetchAppConfig, fetchBookmarks, getDefaultAppConfig, saveAppConfig, saveAppConfigToWebDAV, loadBookmarksCache, loadAppConfigFromPouchDB, loadBookmarksFromPouchDB } from '@/lib/config'
+import { loadWebDAVConfig, loadAppConfig, fetchAppConfig, fetchBookmarks, getDefaultAppConfig, saveAppConfig, saveAppConfigToWebDAV, loadAppConfigFromPouchDB, loadBookmarksFromPouchDB } from '@/lib/config'
 import { filterByTag, getMostVisitedBookmarks, isDeleted, getFaviconUrl, stringToColor } from '@/lib/bookmarks'
 import { recordClick, loadClickStatsFromWebDAV, togglePinnedBookmark, loadPinnedBookmarks, loadPinnedBookmarksAsync, savePinnedBookmarks } from '@/lib/stats'
 import { getStorageCredentials, onStatusChange } from '@/lib/remotestorage-connection'
@@ -59,11 +59,8 @@ export default function MainPage() {
         savePinnedBookmarks(config.pinnedBookmarks)
       }
 
-      // 先从 PouchDB 或 localStorage 加载，立即显示
-      let cachedStore = await loadBookmarksFromPouchDB()
-      if (!cachedStore) {
-        cachedStore = loadBookmarksCache()
-      }
+      // 从 PouchDB 加载，立即显示
+      const cachedStore = await loadBookmarksFromPouchDB()
       if (cachedStore) {
         cachedStoreRef.current = true
         processBookmarksRef.current?.(cachedStore, config)
@@ -248,10 +245,7 @@ export default function MainPage() {
           console.log('[Init] cachedConfig:', cachedConfig)
           
           console.log('[Init] 开始加载书签...')
-          // OAuth 回调时优先从 PouchDB 加载（RemoteStorage 数据已同步到 PouchDB），不用 localStorage 缓存
-          const cachedStore = hasRSToken
-            ? await loadBookmarksFromPouchDB()
-            : (loadBookmarksCache() || await loadBookmarksFromPouchDB())
+          const cachedStore = await loadBookmarksFromPouchDB()
           console.log('[Init] cachedStore:', cachedStore ? { keys: Object.keys(cachedStore.data).length } : null)
           
           console.log('[Init] 开始加载固定书签...')
