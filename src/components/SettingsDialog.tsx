@@ -155,12 +155,12 @@ export default function SettingsDialog({ open, onOpenChange, config, onConfigSav
         </DialogHeader>
 
         {/* Tab bar */}
-        <div className="flex gap-1 border-b border-white/10 pb-0">
+        <div className="flex gap-1 border-b border-white/10 pb-0 overflow-x-auto scrollbar-hide -mx-1 px-1">
           {tabs.map((tab) => (
             <button
               key={tab.key}
               onClick={() => setActiveTab(tab.key)}
-              className={`px-3 py-2 text-sm transition-colors border-b-2 ${
+              className={`px-3 py-2 text-sm whitespace-nowrap transition-colors border-b-2 shrink-0 ${
                 activeTab === tab.key
                   ? 'border-white text-white'
                   : 'border-transparent text-white/50 hover:text-white/70'
