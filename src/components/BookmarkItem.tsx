@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react'
 import type { DisplayBookmark } from '@/types'
-import { Pin } from 'lucide-react'
+import { Pin, Globe } from 'lucide-react'
 
 interface BookmarkItemProps {
   bookmark: DisplayBookmark
@@ -125,12 +125,15 @@ export default function BookmarkItem({
               loading="lazy"
             />
           ) : (
-            <span
-              className="font-semibold text-white/90 select-none"
-              style={{ fontSize: `${iconSize * 0.4}px` }}
-            >
-              {firstLetter}
-            </span>
+            <div className="flex flex-col items-center justify-center gap-0.5">
+              <Globe className="text-white/80" style={{ width: `${iconSize * 0.45}px`, height: `${iconSize * 0.45}px` }} />
+              <span
+                className="font-semibold text-white/90 select-none leading-none"
+                style={{ fontSize: `${iconSize * 0.28}px` }}
+              >
+                {firstLetter}
+              </span>
+            </div>
           )}
         </div>
         {showName && (
