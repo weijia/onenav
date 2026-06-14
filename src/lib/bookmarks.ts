@@ -95,8 +95,8 @@ export function getAllTags(store: BookmarksStore): string[] {
 
 export function getFaviconUrl(url: string): string {
   try {
-    const domain = new URL(url).hostname
-    return `https://www.google.com/s2/favicons?domain=${domain}&sz=64`
+    const origin = new URL(url).origin
+    return `${origin}/favicon.ico`
   } catch {
     return ''
   }
