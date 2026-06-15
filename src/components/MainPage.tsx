@@ -325,12 +325,10 @@ export default function MainPage() {
       if (webdavConfig) {
         await loadAllData(webdavConfig, false)
       } else {
-        // RemoteStorage / PouchDB 模式：从 PouchDB 重新加载
-        const updatedConfig = await loadAppConfigFromPouchDB() || loadAppConfig() || getDefaultAppConfig()
-        setAppConfig(updatedConfig)
+        // RemoteStorage / PouchDB 模式：从 PouchDB 重新加载书签，但保留当前配置
         const store = await loadBookmarksFromPouchDB()
         if (store) {
-          processBookmarksRef.current?.(store, updatedConfig)
+          processBookmarksRef.current?.(store, appConfig)
         }
         const pinned = await loadPinnedBookmarksAsync()
         if (pinned.length > 0) {
