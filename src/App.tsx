@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { loadWebDAVConfig, saveWebDAVConfig } from '@/lib/config'
 import SetupWizard from '@/components/SetupWizard'
 import MainPage from '@/components/MainPage'
+import UpdateToast from '@/components/UpdateToast'
 
 const RS_CONFIGURED_KEY = 'rsConfigured'
 
@@ -50,5 +51,10 @@ export default function App() {
     )
   }
 
-  return <MainPage />
+  return (
+    <>
+      <MainPage />
+      <UpdateToast />
+    </>
+  )
 }
