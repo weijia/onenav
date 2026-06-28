@@ -25,7 +25,7 @@ export default defineConfig({
       srcDir: 'src',
       filename: 'sw.ts',
       injectManifest: {
-        injectionPoint: undefined,
+        injectionPoint: 'self.__WB_MANIFEST',
         globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
       },
       manifest: {
