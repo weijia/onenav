@@ -76,7 +76,7 @@ export async function getPouchDB(): Promise<PouchDB.Database> {
 }
 
 // ==================== 文档 ID 前缀 ====================
-const PREFIX = {
+export const PREFIX = {
   BOOKMARK: 'bm:',
   CLICK: 'clk:',
   CONFIG: 'cfg:',

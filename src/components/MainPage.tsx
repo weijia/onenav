@@ -6,6 +6,7 @@ import { recordClick, loadClickStatsFromWebDAV, togglePinnedBookmark, loadPinned
 import { getStorageCredentials, onStatusChange } from '@/lib/remotestorage-connection'
 import { getPouchDB } from '@/lib/pouchdb'
 import { syncToRemoteStorage } from '@/lib/remotestorage-sync'
+import { processInbox, createInboxFS, uploadPendingShares } from '@/lib/share-inbox'
 
 import Sidebar from '@/components/Sidebar'
 import BookmarkGrid from '@/components/BookmarkGrid'
@@ -273,6 +274,25 @@ export default function MainPage() {
           if (credentials) {
             console.log('[Init] 开始后台同步 RemoteStorage...')
             await syncFromRemoteStorage()
+
+            // 3. 处理分享收件箱 onenav-temp/
+            try {
+              const fs = createInboxFS(credentials)
+              // 先上传本地 pending 的分享
+              await uploadPendingShares(fs)
+              // 再从远程导入新书签
+              const { imported, ignored } = await processInbox(fs)
+              if (imported > 0 || ignored > 0) {
+                console.log(`[Init] 收件箱处理完成: ${imported} 条导入, ${ignored} 条忽略`)
+                // 重新加载书签以显示新导入的内容
+                const store = await loadBookmarksFromPouchDB()
+                if (store) {
+                  processBookmarksRef.current?.(store, cachedConfig || getDefaultAppConfig())
+                }
+              }
+            } catch (err) {
+              console.error('[Init] 处理分享收件箱失败:', err)
+            }
           } else {
             // OAuth 回调后 connected 事件可能稍后触发，监听 connected 事件
             console.log('[Init] RemoteStorage 未连接，监听 connected 事件...')
@@ -283,6 +303,22 @@ export default function MainPage() {
                 const creds = getStorageCredentials()
                 if (creds) {
                   await syncFromRemoteStorage()
+
+                  // 处理分享收件箱
+                  try {
+                    const fs = createInboxFS(creds)
+                    await uploadPendingShares(fs)
+                    const { imported, ignored } = await processInbox(fs)
+                    if (imported > 0 || ignored > 0) {
+                      console.log(`[Init] 收件箱处理完成: ${imported} 条导入, ${ignored} 条忽略`)
+                      const store = await loadBookmarksFromPouchDB()
+                      if (store) {
+                        processBookmarksRef.current?.(store, cachedConfig || getDefaultAppConfig())
+                      }
+                    }
+                  } catch (err) {
+                    console.error('[Init] 处理分享收件箱失败:', err)
+                  }
                 }
               }
             })

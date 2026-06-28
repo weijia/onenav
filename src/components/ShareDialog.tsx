@@ -13,6 +13,8 @@ import { BookmarkPlus, Tag, Globe, Loader2 } from 'lucide-react'
 import { saveBookmarks } from '@/lib/pouchdb'
 import { loadAppConfig } from '@/lib/config'
 import { stringToColor } from '@/lib/bookmarks'
+import { writeSharedLink, savePendingShare, createInboxFS } from '@/lib/share-inbox'
+import { getStorageCredentials } from '@/lib/remotestorage-connection'
 import type { AppConfig } from '@/types'
 
 interface ShareDialogProps {
@@ -52,10 +54,13 @@ export default function ShareDialog({ url, title, open, onClose }: ShareDialogPr
     setSaving(true)
     try {
       const now = Date.now()
+      const trimmedTitle = bookmarkTitle.trim()
+
+      // 1. 保存到本地 PouchDB
       await saveBookmarks([
         {
           url,
-          title: bookmarkTitle.trim(),
+          title: trimmedTitle,
           tags: selectedTags,
           description: '',
           icon: '',
@@ -64,6 +69,22 @@ export default function ShareDialog({ url, title, open, onClose }: ShareDialogPr
           updatedAt: now,
         },
       ])
+
+      // 2. 尝试写入 RemoteStorage onenav-temp/
+      const credentials = getStorageCredentials()
+      if (credentials) {
+        try {
+          const fs = createInboxFS(credentials)
+          await writeSharedLink(fs, url, trimmedTitle)
+        } catch (err) {
+          console.error('[ShareDialog] 写入 RemoteStorage 失败，降级到 pending:', err)
+          await savePendingShare(url, trimmedTitle)
+        }
+      } else {
+        // RemoteStorage 未配置，保存到 pending，后续同步
+        await savePendingShare(url, trimmedTitle)
+      }
+
       setSaved(true)
       setTimeout(() => {
         onClose()
