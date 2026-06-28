@@ -115,6 +115,59 @@ npm run build
 - [universal-sync-v2](https://github.com/weijia/universal-sync-v2) - PouchDB 文件系统同步引擎
 - [utags](https://github.com/weijia/utags) - 书签标签管理扩展
 
+## 需求文档
+
+### REQ-001: Web Share Target 分享收件箱（onenav-temp）
+
+**状态**：待实现  
+**优先级**：高
+
+#### 背景
+OneNav 已支持作为手机系统的 Web Share Target（PWA 分享目标）。用户在其他 App 中点击"分享"并选择 OneNav 后，URL 和标题会传入应用。当前流程需要用户手动确认保存，且仅保存到本地 PouchDB。需要扩展该功能，使其在 RemoteStorage 模式下能够将分享的链接自动同步到远程存储的临时目录，并在多端共享这些待处理的链接。
+
+#### 需求描述
+
+**1. 分享链接自动写入 `onenav-temp`**
+- 当用户通过手机系统分享功能发送链接到 OneNav 时，应用接收到 `?url=` 和 `?title=` 参数
+- 如果当前处于 **RemoteStorage 模式**（已配置 RemoteStorage 且连接正常），分享的链接应立即保存到 RemoteStorage 的 `onenav-temp/` 目录下
+- 保存格式：每个链接为一个独立的 JSON 文件，文件名使用 URL 的哈希或时间戳，避免冲突
+- 文件内容至少包含：`url`、`title`、`sharedAt`（分享时间戳）
+- 如果 RemoteStorage 未配置或连接失败，降级保存到本地 PouchDB，并在连接恢复后自动同步
+
+**2. 启动时自动加载 `onenav-temp`**
+- 每次打开 OneNav 页面（包括 PWA 启动和浏览器刷新）时，自动检查 RemoteStorage 的 `onenav-temp/` 目录
+- 如果目录中存在待处理的链接文件，读取并解析所有内容
+- 将读取到的链接合并到主书签列表中（PouchDB），合并规则：
+  - 如果 URL 已存在：**忽略**，不修改本地书签，保留用户已有的标签和点击统计
+  - 如果 URL 不存在：创建新书签，默认标签为 `[]`（无标签），`clicks: 0`
+- **`onenav-temp/` 中的文件不删除**，作为共享池供所有设备读取
+- 合并结果通过 UI Toast 提示用户（如"从远程导入了 3 条新书签，已忽略 2 条已存在的"）
+
+**3. 数据格式**
+
+`onenav-temp/` 下的单条文件格式：
+```json
+{
+  "url": "https://example.com/article",
+  "title": "文章标题",
+  "sharedAt": 1719993600000,
+  "source": "share-target"
+}
+```
+
+**4. 多端同步语义**
+- 手机 A 分享链接 → 写入 RemoteStorage `onenav-temp/`
+- 手机 B 打开 OneNav → 自动读取 `onenav-temp/` → 仅导入本地不存在的 URL
+- 电脑端打开 OneNav → 同样读取 `onenav-temp/`，导入本地不存在的 URL
+- 因此，`onenav-temp/` 充当一个"跨设备共享书签池"，任何设备打开时都能从中获取新链接，文件永久保留供多端共享
+
+**5. 边界情况**
+- `onenav-temp/` 目录不存在：自动创建
+- 文件解析失败：跳过该文件，记录错误日志，不阻塞其他文件处理
+- 网络中断时分享：先保存到本地 PouchDB 的临时队列（`cfg:pendingShares`），连接恢复后自动上传
+
+---
+
 ## 许可证
 
 MIT
