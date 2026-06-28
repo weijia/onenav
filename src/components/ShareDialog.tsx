@@ -12,7 +12,7 @@ import { Label } from '@/components/ui/label'
 import { BookmarkPlus, Tag, Globe, Loader2 } from 'lucide-react'
 import { saveBookmarks } from '@/lib/pouchdb'
 import { loadAppConfig } from '@/lib/config'
-import { stringToColor, getFaviconUrl } from '@/lib/bookmarks'
+import { stringToColor } from '@/lib/bookmarks'
 import type { AppConfig } from '@/types'
 
 interface ShareDialogProps {
