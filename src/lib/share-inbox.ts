@@ -33,14 +33,22 @@ export async function writeSharedLink(
   url: string,
   title: string
 ): Promise<void> {
-  const data = JSON.stringify({
-    url,
-    title: title || url,
-    sharedAt: Date.now(),
-  }, null, 2)
-  const filename = `${INBOX_DIR}/${inboxFilename(url)}`
-  await fs.writeFile(filename, data)
-  console.log('[ShareInbox] 已写入:', filename)
+  try {
+    const data = JSON.stringify({
+      url,
+      title: title || url,
+      sharedAt: Date.now(),
+    }, null, 2)
+    const filename = `${INBOX_DIR}/${inboxFilename(url)}`
+    await fs.writeFile(filename, data)
+    console.log('[ShareInbox] 已写入:', filename)
+  } catch (err: any) {
+    if (err?.message?.includes('401')) {
+      console.log('[ShareInbox] 写入跳过: 未授权')
+      throw new Error('Unauthorized')
+    }
+    throw err
+  }
 }
 
 /** 读取 onenav-temp/ 中的所有链接 */
@@ -69,8 +77,13 @@ export async function readAllSharedLinks(
     }
 
     return results
-  } catch (err) {
-    console.error('[ShareInbox] 读取收件箱失败:', err)
+  } catch (err: any) {
+    // 401 静默处理（token 过期），其他错误记录日志
+    if (err?.message?.includes('401')) {
+      console.log('[ShareInbox] 读取收件箱跳过: 未授权')
+    } else {
+      console.error('[ShareInbox] 读取收件箱失败:', err)
+    }
     return []
   }
 }
