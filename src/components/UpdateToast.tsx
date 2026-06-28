@@ -23,21 +23,47 @@ export default function UpdateToast() {
       })
     }
 
-    // 注册 Service Worker 并监听更新
-    navigator.serviceWorker.ready.then((reg) => {
-      handleUpdate(reg)
+    // 获取 Service Worker 注册并监听更新
+    const checkUpdate = async () => {
+      try {
+        const reg = await navigator.serviceWorker.ready
+        if (!reg || !reg.active) {
+          console.log('[PWA] Service Worker 未激活，跳过更新检查')
+          return
+        }
+        handleUpdate(reg)
 
-      // 页面加载后 3 秒检查更新
-      setTimeout(() => {
-        reg.update().catch((err) => console.error('[PWA] 检查更新失败:', err))
-      }, 3000)
-    })
+        // 页面加载后 3 秒检查更新
+        setTimeout(() => {
+          reg.update().catch((err) => {
+            // 忽略 "Failed to update" 错误（开发环境或 scope 不匹配时常见）
+            if (err?.message?.includes('Failed to update')) {
+              console.log('[PWA] 更新检查被跳过:', err.message)
+            } else {
+              console.error('[PWA] 检查更新失败:', err)
+            }
+          })
+        }, 3000)
+      } catch (err) {
+        console.log('[PWA] Service Worker 未就绪，跳过更新检查:', err)
+      }
+    }
+
+    checkUpdate()
 
     // 每 5 分钟检查一次更新
     const interval = setInterval(() => {
-      navigator.serviceWorker.ready.then((reg) => {
-        reg.update().catch((err) => console.error('[PWA] 检查更新失败:', err))
-      })
+      navigator.serviceWorker.ready
+        .then((reg) => {
+          if (reg?.active) return reg.update()
+        })
+        .catch((err) => {
+          if (err?.message?.includes('Failed to update')) {
+            console.log('[PWA] 更新检查被跳过:', err.message)
+          } else {
+            console.error('[PWA] 检查更新失败:', err)
+          }
+        })
     }, 5 * 60 * 1000)
 
     return () => {
