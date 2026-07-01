@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import type { AppConfig, TagConfig, WebDAVConfig } from '@/types'
-import { loadWebDAVConfig, saveAppConfigToWebDAV, getDefaultAppConfig } from '@/lib/config'
+import { loadWebDAVConfig, saveWebDAVConfig, saveAppConfigToWebDAV, getDefaultAppConfig } from '@/lib/config'
 import {
   Dialog,
   DialogContent,
@@ -551,8 +551,9 @@ export default function SettingsDialog({ open, onOpenChange, config, onConfigSav
                 <Label className="text-white/80">WebDAV URL</Label>
                 <Input
                   value={webdavInfo?.url || ''}
-                  readOnly
-                  className="bg-white/5 border-white/20 text-white/60 text-sm"
+                  onChange={(e) => setWebdavInfo(prev => prev ? { ...prev, url: e.target.value } : { url: e.target.value, username: '', password: '' })}
+                  placeholder="https://example.com/dav"
+                  className="bg-white/10 border-white/20 text-white text-sm"
                 />
               </div>
 
@@ -560,8 +561,9 @@ export default function SettingsDialog({ open, onOpenChange, config, onConfigSav
                 <Label className="text-white/80">Username</Label>
                 <Input
                   value={webdavInfo?.username || ''}
-                  readOnly
-                  className="bg-white/5 border-white/20 text-white/60 text-sm"
+                  onChange={(e) => setWebdavInfo(prev => prev ? { ...prev, username: e.target.value } : { url: '', username: e.target.value, password: '' })}
+                  placeholder="username"
+                  className="bg-white/10 border-white/20 text-white text-sm"
                 />
               </div>
 
@@ -569,9 +571,10 @@ export default function SettingsDialog({ open, onOpenChange, config, onConfigSav
                 <Label className="text-white/80">Password</Label>
                 <Input
                   type="password"
-                  value={webdavInfo ? '••••••••' : ''}
-                  readOnly
-                  className="bg-white/5 border-white/20 text-white/60 text-sm"
+                  value={webdavInfo?.password || ''}
+                  onChange={(e) => setWebdavInfo(prev => prev ? { ...prev, password: e.target.value } : { url: '', username: '', password: e.target.value })}
+                  placeholder="password"
+                  className="bg-white/10 border-white/20 text-white text-sm"
                 />
               </div>
 
@@ -608,7 +611,18 @@ export default function SettingsDialog({ open, onOpenChange, config, onConfigSav
                 </p>
               </div>
 
-              <div className="pt-4 border-t border-white/10">
+              <div className="pt-4 flex gap-2 border-t border-white/10">
+                <Button
+                  onClick={() => {
+                    if (webdavInfo) {
+                      saveWebDAVConfig(webdavInfo)
+                      alert('WebDAV 配置已保存')
+                    }
+                  }}
+                  className="bg-white/10 hover:bg-white/20 text-white border border-white/20"
+                >
+                  保存 WebDAV 配置
+                </Button>
                 <Button
                   onClick={resetToDefaults}
                   variant="outline"
