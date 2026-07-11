@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import type { AppConfig, DisplayBookmark, WebDAVConfig, BookmarksStore, BookmarkEntry } from '@/types'
 import { loadWebDAVConfig, loadAppConfig, fetchAppConfig, fetchBookmarks, getDefaultAppConfig, saveAppConfig, saveAppConfigToWebDAV, loadAppConfigFromPouchDB, loadBookmarksFromPouchDB } from '@/lib/config'
 import { loadFavoritesBookmarks, archiveFavorites, mergeFavoritesIntoStore, mergeFavoritesData, shouldAutoArchive } from '@/lib/favorites'
-import { loadFavoritesBookmarksFromRS, archiveFavoritesOnRS, isRemoteStorageFavoritesAvailable } from '@/lib/favorites-remotestorage'
+import { loadFavoritesBookmarksFromRS, archiveFavoritesOnRS } from '@/lib/favorites-remotestorage'
 import { filterByTag, getMostVisitedBookmarks, isDeleted, getFaviconUrl, stringToColor } from '@/lib/bookmarks'
 import { recordClick, loadClickStatsFromWebDAV, togglePinnedBookmark, loadPinnedBookmarks, loadPinnedBookmarksAsync, savePinnedBookmarks } from '@/lib/stats'
 import { getStorageCredentials, onStatusChange } from '@/lib/remotestorage-connection'
@@ -144,20 +144,7 @@ export default function MainPage() {
         }
       }
 
-      // 2.5 从原来的 RemoteStorage 收藏源加载并合并（复用已登录连接，路径 app_data/favorites）
-      if (isRemoteStorageFavoritesAvailable()) {
-        try {
-          if (shouldAutoArchive()) {
-            archiveFavoritesOnRS().catch((e) => console.error('[FavRS] 自动归档失败:', e))
-          }
-          const rsFav = await loadFavoritesBookmarksFromRS().catch(() => null)
-          if (rsFav) favoritesDataRef.current = mergeFavoritesData(favoritesDataRef.current, rsFav)
-        } catch (e) {
-          console.error('[FavRS] 加载失败:', e)
-        }
-      }
-
-      // 2.6 确保已加载的收藏合并进主列表渲染
+      // 2.6 确保已加载的收藏合并进主列表渲染（WebDAV 收藏源；RS 收藏源见第 3 块）
       if (favoritesDataRef.current && lastStore) {
         renderStore(lastStore, config)
       }
@@ -168,6 +155,17 @@ export default function MainPage() {
         try {
           const db = await getPouchDB()
           await loadFromRemoteStorage(db, credentials)
+
+          // 2.5 RemoteStorage 收藏源：与主 RS 同步同时机加载，避免连接未就绪的竞态（路径 app_data/favorites）
+          try {
+            if (shouldAutoArchive()) {
+              archiveFavoritesOnRS().catch((e) => console.error('[FavRS] 自动归档失败:', e))
+            }
+            const rsFav = await loadFavoritesBookmarksFromRS().catch(() => null)
+            if (rsFav) favoritesDataRef.current = mergeFavoritesData(favoritesDataRef.current, rsFav)
+          } catch (e) {
+            console.error('[FavRS] 加载失败:', e)
+          }
 
           // 重新加载以显示 RemoteStorage 的数据
           const rsConfig = await loadAppConfigFromPouchDB()
@@ -186,6 +184,9 @@ export default function MainPage() {
           if (rsStore) {
             renderStore(rsStore, config)
             lastStore = rsStore
+          } else if (favoritesDataRef.current && lastStore) {
+            // RS 无书签 store 但有 RS 收藏：用已有 store 触发合并渲染
+            renderStore(lastStore, config)
           }
 
           // 4. 处理分享收件箱
