@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import type { AppConfig, DisplayBookmark, WebDAVConfig, BookmarksStore, BookmarkEntry } from '@/types'
 import { loadWebDAVConfig, loadAppConfig, fetchAppConfig, fetchBookmarks, getDefaultAppConfig, saveAppConfig, saveAppConfigToWebDAV, loadAppConfigFromPouchDB, loadBookmarksFromPouchDB } from '@/lib/config'
-import { loadFavoritesBookmarks, archiveFavorites, mergeFavoritesIntoStore, shouldAutoArchive } from '@/lib/favorites'
+import { loadFavoritesBookmarks, archiveFavorites, mergeFavoritesIntoStore, mergeFavoritesData, shouldAutoArchive } from '@/lib/favorites'
+import { loadFavoritesBookmarksFromRS, archiveFavoritesOnRS, isRemoteStorageFavoritesAvailable } from '@/lib/favorites-remotestorage'
 import { filterByTag, getMostVisitedBookmarks, isDeleted, getFaviconUrl, stringToColor } from '@/lib/bookmarks'
 import { recordClick, loadClickStatsFromWebDAV, togglePinnedBookmark, loadPinnedBookmarks, loadPinnedBookmarksAsync, savePinnedBookmarks } from '@/lib/stats'
 import { getStorageCredentials, onStatusChange } from '@/lib/remotestorage-connection'
@@ -97,6 +98,7 @@ export default function MainPage() {
     try {
       const wdav = loadWebDAVConfig()
       setWebdavConfig(wdav)
+      let lastStore: BookmarksStore | null = null
 
       // 1. 先从本地加载缓存（快速显示）
       let config = loadAppConfig() || await loadAppConfigFromPouchDB() || getDefaultAppConfig()
@@ -107,6 +109,7 @@ export default function MainPage() {
       setPinnedUrls(pinned)
       if (localStore) {
         renderStore(localStore, config)
+        lastStore = localStore
       }
       setInitialized(true)
       if (showLoading) setLoading(false)
@@ -121,7 +124,7 @@ export default function MainPage() {
             archiveFavorites(wdav).catch((e) => console.error('[Fav] 自动归档失败:', e))
           }
           const fav = await loadFavoritesBookmarks(wdav).catch(() => null)
-          if (fav) favoritesDataRef.current = fav
+          if (fav) favoritesDataRef.current = mergeFavoritesData(favoritesDataRef.current, fav)
 
           const webdavConfig = await fetchAppConfig(wdav)
           if (webdavConfig) {
@@ -135,10 +138,28 @@ export default function MainPage() {
           const webdavStore = await fetchBookmarks(wdav, config.bookmarkPath)
           // 渲染：优先 webdav，否则回退本地（保证收藏合并生效）
           const storeToRender = webdavStore || (await loadBookmarksFromPouchDB())
-          if (storeToRender) renderStore(storeToRender, config)
+          if (storeToRender) { renderStore(storeToRender, config); lastStore = storeToRender }
         } catch (err) {
           console.error('[Sync] WebDAV 加载失败:', err)
         }
+      }
+
+      // 2.5 从原来的 RemoteStorage 收藏源加载并合并（复用已登录连接，路径 app_data/favorites）
+      if (isRemoteStorageFavoritesAvailable()) {
+        try {
+          if (shouldAutoArchive()) {
+            archiveFavoritesOnRS().catch((e) => console.error('[FavRS] 自动归档失败:', e))
+          }
+          const rsFav = await loadFavoritesBookmarksFromRS().catch(() => null)
+          if (rsFav) favoritesDataRef.current = mergeFavoritesData(favoritesDataRef.current, rsFav)
+        } catch (e) {
+          console.error('[FavRS] 加载失败:', e)
+        }
+      }
+
+      // 2.6 确保已加载的收藏合并进主列表渲染
+      if (favoritesDataRef.current && lastStore) {
+        renderStore(lastStore, config)
       }
 
       // 3. 从 RemoteStorage 加载并合并（pull only）
@@ -164,6 +185,7 @@ export default function MainPage() {
           }
           if (rsStore) {
             renderStore(rsStore, config)
+            lastStore = rsStore
           }
 
           // 4. 处理分享收件箱
@@ -173,7 +195,7 @@ export default function MainPage() {
             const { imported } = await processInbox(fs)
             if (imported > 0) {
               const store = await loadBookmarksFromPouchDB()
-              if (store) renderStore(store, config)
+              if (store) { renderStore(store, config); lastStore = store }
             }
           } catch (err) {
             console.error('[Sync] 收件箱处理失败:', err)

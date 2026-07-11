@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import type { AppConfig, TagConfig, WebDAVConfig, ArchiveResult } from '@/types'
 import { loadWebDAVConfig, saveWebDAVConfig, saveAppConfigToWebDAV, getDefaultAppConfig } from '@/lib/config'
 import { archiveFavorites } from '@/lib/favorites'
+import { archiveFavoritesOnRS, isRemoteStorageFavoritesAvailable } from '@/lib/favorites-remotestorage'
+import { getStorageCredentials, onStatusChange } from '@/lib/remotestorage-connection'
 import {
   Dialog,
   DialogContent,
@@ -25,6 +27,45 @@ function RemoteStorageSyncWrapper() {
   }, [])
   
   return <RemoteStorageSync db={db} />
+}
+
+// 归档结果日志视图（WebDAV / RemoteStorage 共用）
+function ArchiveLogView({ log }: { log: ArchiveResult }) {
+  if (!log) return null
+  return (
+    <div className="space-y-3 text-sm">
+      {log.archived.length > 0 && (
+        <div>
+          <p className="text-green-400 mb-1">已归档（{log.archived.length}）</p>
+          <div className="flex flex-wrap gap-1">
+            {log.archived.map((ym) => (
+              <span key={ym} className="px-2 py-0.5 rounded bg-green-500/15 text-green-300 text-xs">{ym}</span>
+            ))}
+          </div>
+        </div>
+      )}
+      {log.skipped.length > 0 && (
+        <div>
+          <p className="text-white/40 mb-1">已跳过（{log.skipped.length}）</p>
+          <div className="flex flex-wrap gap-1">
+            {log.skipped.map((ym) => (
+              <span key={ym} className="px-2 py-0.5 rounded bg-white/10 text-white/50 text-xs">{ym}</span>
+            ))}
+          </div>
+        </div>
+      )}
+      {log.errors.length > 0 && (
+        <div>
+          <p className="text-red-400 mb-1">失败（{log.errors.length}）</p>
+          <div className="space-y-1">
+            {log.errors.map((e, i) => (
+              <p key={i} className="text-red-300 text-xs">{e.ym}: {e.message}</p>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }
 
 interface SettingsDialogProps {
@@ -60,13 +101,25 @@ export default function SettingsDialog({ open, onOpenChange, config, onConfigSav
   const [webdavInfo, setWebdavInfo] = useState<WebDAVConfig | null>(null)
   const [archiving, setArchiving] = useState(false)
   const [archiveLog, setArchiveLog] = useState<ArchiveResult | null>(null)
+  const [rsConnected, setRsConnected] = useState(false)
+  const [rsArchiving, setRsArchiving] = useState(false)
+  const [rsArchiveLog, setRsArchiveLog] = useState<ArchiveResult | null>(null)
 
   useEffect(() => {
     if (open) {
       setLocalConfig(config)
       setWebdavInfo(loadWebDAVConfig())
+      setRsConnected(isRemoteStorageFavoritesAvailable())
     }
   }, [open, config])
+
+  // 订阅 RemoteStorage 连接状态变化
+  useEffect(() => {
+    const unsubscribe = onStatusChange((info) => {
+      setRsConnected(info.status === 'connected' && !!getStorageCredentials())
+    })
+    return unsubscribe
+  }, [])
 
   const handleSave = async () => {
     setSaving(true)
@@ -688,40 +741,53 @@ export default function SettingsDialog({ open, onOpenChange, config, onConfigSav
                 </Button>
               </div>
 
-              {archiveLog && (
-                <div className="space-y-3 text-sm">
-                  {archiveLog.archived.length > 0 && (
-                    <div>
-                      <p className="text-green-400 mb-1">已归档（{archiveLog.archived.length}）</p>
-                      <div className="flex flex-wrap gap-1">
-                        {archiveLog.archived.map((ym) => (
-                          <span key={ym} className="px-2 py-0.5 rounded bg-green-500/15 text-green-300 text-xs">{ym}</span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  {archiveLog.skipped.length > 0 && (
-                    <div>
-                      <p className="text-white/40 mb-1">已跳过（{archiveLog.skipped.length}）</p>
-                      <div className="flex flex-wrap gap-1">
-                        {archiveLog.skipped.map((ym) => (
-                          <span key={ym} className="px-2 py-0.5 rounded bg-white/10 text-white/50 text-xs">{ym}</span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  {archiveLog.errors.length > 0 && (
-                    <div>
-                      <p className="text-red-400 mb-1">失败（{archiveLog.errors.length}）</p>
-                      <div className="space-y-1">
-                        {archiveLog.errors.map((e, i) => (
-                          <p key={i} className="text-red-300 text-xs">{e.ym}: {e.message}</p>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
+              {archiveLog && <ArchiveLogView log={archiveLog} />}
+
+              <hr className="border-white/10" />
+
+              <div className="space-y-3 pt-1">
+                <p className="text-sm font-medium text-white/80">RemoteStorage 收藏源</p>
+                <p className="text-sm text-white/60">
+                  复用上方「RemoteStorage」标签页已登录的连接（同一个存储账号），
+                  书签同样位于 <code className="text-white/80">app_data/favorites/...</code>，无需单独配置地址与 Token。
+                </p>
+
+                {rsConnected ? (
+                  <div className="flex items-center gap-2">
+                    <Button
+                      onClick={async () => {
+                        setRsArchiving(true)
+                        setRsArchiveLog(null)
+                        try {
+                          const res = await archiveFavoritesOnRS()
+                          setRsArchiveLog(res)
+                        } catch (e) {
+                          setRsArchiveLog({ archived: [], skipped: [], errors: [{ ym: '-', message: e instanceof Error ? e.message : String(e) }] })
+                        } finally {
+                          setRsArchiving(false)
+                        }
+                      }}
+                      disabled={rsArchiving}
+                      className="bg-white/10 hover:bg-white/20 text-white border border-white/20"
+                    >
+                      {rsArchiving ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin mr-1" />
+                          归档中...
+                        </>
+                      ) : (
+                        '运行归档（RemoteStorage）'
+                      )}
+                    </Button>
+                  </div>
+                ) : (
+                  <p className="text-sm text-yellow-300/80">
+                    尚未连接 RemoteStorage。请先在「RemoteStorage」标签页完成登录，即可使用收藏归档功能。
+                  </p>
+                )}
+
+                {rsArchiveLog && <ArchiveLogView log={rsArchiveLog} />}
+              </div>
             </div>
           )}
         </div>
