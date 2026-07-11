@@ -2,11 +2,11 @@ import type { BookmarkEntry, ArchiveResult } from '@/types'
 import { RemoteStorageFileSystem } from '@/lib/remotestorage-fs'
 import { getStorageCredentials } from '@/lib/remotestorage-connection'
 import {
-  FavoritesFs,
   listFavoritesMonthsGeneric,
   loadFavoritesBookmarksGeneric,
   archiveFavoritesGeneric,
 } from '@/lib/favorites'
+import type { FavoritesFs } from '@/lib/favorites'
 
 /**
  * RemoteStorage 收藏源适配器。

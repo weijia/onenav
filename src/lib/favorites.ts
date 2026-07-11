@@ -190,7 +190,7 @@ function webdavFavoritesFs(config: WebDAVConfig): FavoritesFs {
     readFile: (p) => getFileContents(config, p),
     writeFile: (p, c) => putFileContents(config, p, c),
     listDir: async (p) => (await listDirectory(config, p)).map((d) => ({ name: d.name, isDir: d.isCollection })),
-    exists: (p) => stat(config, p),
+    exists: async (p) => (await stat(config, p)) !== null,
   }
 }
 
