@@ -1,7 +1,19 @@
 /**
- * RemoteStorage 文件系统实现
- * 完全兼容 universal-sync-v2 的 IFileSystem 接口
+ * RemoteStorage 文件系统实现（onenav 侧适配层）
+ *
+ * 底层使用 `zen-fs-remotestoragejs` 包（直连 RemoteStorage 的 zen-fs 后端），
+ * 并通过 `zen-fs-cache` 的 `CachedFileSystem` 包一层"按时间戳重校验"的缓存
+ * （ETag / Last-Modified / 304），缓存持久化到 IndexedDB。
+ *
+ * 对外仍暴露与 universal-sync-v2 `IFileSystem` 完全兼容的接口，因此
+ * sync / load / favorites 三处调用方无需改动。
  */
+
+import {
+  RemoteStorageFileSystem as ZenRsFileSystem,
+  adaptFileSystem,
+} from 'zen-fs-remotestoragejs'
+import { CachedFileSystem, IdbCacheStore } from 'zen-fs-cache'
 
 export interface RemoteStorageConfig {
   /** RemoteStorage 存储地址，如 https://storage.5apps.com/weijia/ */
@@ -16,162 +28,71 @@ export interface RemoteStorageConfig {
  * IFileSystem 接口（来自 universal-sync-v2）
  */
 export interface IFileSystem {
-  readFile(path: string, encoding: string): Promise<string>;
-  writeFile(path: string, data: string): Promise<void>;
-  readdir(path: string): Promise<string[]>;
-  mkdir(path: string, options?: { recursive?: boolean }): Promise<void>;
-  stat(path: string): Promise<{ isFile(): boolean; isDirectory(): boolean; mtime: Date }>;
-  unlink(path: string): Promise<void>;
-  rename(oldPath: string, newPath: string): Promise<void>;
-  exists(path: string): Promise<boolean>;
+  readFile(path: string, encoding: string): Promise<string>
+  writeFile(path: string, data: string): Promise<void>
+  readdir(path: string): Promise<string[]>
+  mkdir(path: string, options?: { recursive?: boolean }): Promise<void>
+  stat(path: string): Promise<{ isFile(): boolean; isDirectory(): boolean; mtime: Date }>
+  unlink(path: string): Promise<void>
+  rename(oldPath: string, newPath: string): Promise<void>
+  exists(path: string): Promise<boolean>
 }
 
+/**
+ * onenav 使用的 RemoteStorage 文件系统：包 + 缓存 的组合。
+ *
+ * 缓存键前缀 `onenav-rs:` 用于隔离 IndexedDB 中的不同数据源。
+ */
 export class RemoteStorageFileSystem implements IFileSystem {
-  private baseUrl: string
-  private token: string
-  private timeout: number
+  private adapter: IFileSystem
 
   constructor(config: RemoteStorageConfig) {
-    // 确保 baseUrl 不以 / 结尾
-    this.baseUrl = config.href.endsWith('/') ? config.href.slice(0, -1) : config.href
-    this.token = config.token
-    this.timeout = config.timeout || 30000
-  }
-
-  /**
-   * 构建完整 URL
-   */
-  private buildUrl(path: string): string {
-    const normalizedPath = path.startsWith('/') ? path.slice(1) : path
-    return this.baseUrl + '/' + normalizedPath
-  }
-
-  private async makeRequest(url: string, options: RequestInit = {}): Promise<Response> {
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), this.timeout)
-    
-    try {
-      const response = await fetch(url, {
-        ...options,
-        headers: {
-          'Authorization': `Bearer ${this.token}`,
-          ...options.headers,
-        },
-        signal: controller.signal,
-      })
-      clearTimeout(timeoutId)
-      return response
-    } catch (error) {
-      clearTimeout(timeoutId)
-      throw error
-    }
-  }
-
-  async readFile(path: string, _encoding: string): Promise<string> {
-    const url = this.buildUrl(path)
-    const response = await this.makeRequest(url, { method: 'GET' })
-    if (!response.ok) {
-      throw new Error(`Failed to read file: ${response.status} ${response.statusText}`)
-    }
-    return await response.text()
-  }
-
-  async writeFile(path: string, data: string): Promise<void> {
-    const url = this.buildUrl(path)
-    
-    const contentType = path.endsWith('.json') ? 'application/json' : 'text/plain; charset=utf-8'
-    
-    const response = await this.makeRequest(url, {
-      method: 'PUT',
-      body: data,
-      headers: {
-        'Content-Type': contentType,
-      },
+    const rsfs = new ZenRsFileSystem({
+      href: config.href,
+      token: config.token,
+      timeout: config.timeout || 30000,
     })
-    
-    if (!response.ok) {
-      const errorText = await response.text()
-      throw new Error(`Failed to write file: ${response.status} ${response.statusText} - ${errorText}`)
-    }
-  }
 
-  async unlink(path: string): Promise<void> {
-    const url = this.buildUrl(path)
-    const response = await this.makeRequest(url, { method: 'DELETE' })
-    if (!response.ok && response.status !== 404) {
-      throw new Error(`Failed to delete file: ${response.status}`)
-    }
-  }
-
-  async readdir(path: string): Promise<string[]> {
-    const url = this.buildUrl(path)
-    const response = await this.makeRequest(url, {
-      method: 'GET',
-      headers: { 'Accept': 'application/ld+json' },
+    // 缓存层：每次读取都带条件请求做时间戳重校验；
+    // ttlMs 设为 2 分钟——2 分钟内直接命中 IndexedDB 缓存零网络往返，
+    // 超时后再发一次条件请求（未变更则廉价 304），写操作会立即失效对应键，
+    // 因此多端写入的可见延迟 ≈ 2 分钟，对书签同步完全可接受。
+    const cached = new CachedFileSystem(rsfs, new IdbCacheStore('onenav-rs:'), {
+      ttlMs: 2 * 60 * 1000,
     })
-    
-    if (!response.ok) {
-      if (response.status === 404) {
-        return []
-      }
-      throw new Error(`Failed to read directory: ${response.status}`)
-    }
 
-    const contentType = response.headers.get('content-type') || ''
-    if (contentType.includes('application/ld+json') || contentType.includes('application/json')) {
-      try {
-        const listing = await response.json()
-        const items: string[] = []
-        if (listing['@graph']) {
-          for (const item of listing['@graph']) {
-            if (item['@id'] && item['@id'] !== './') {
-              const name = item['@id'].replace(/\/$/, '')
-              if (name) items.push(name)
-            }
-          }
-        }
-        return items
-      } catch {
-        return []
-      }
-    }
-    return []
+    this.adapter = adaptFileSystem(cached) as unknown as IFileSystem
   }
 
-  async mkdir(_path: string, _options?: { recursive?: boolean }): Promise<void> {
-    // RemoteStorage 不需要显式创建目录
+  readFile(path: string, encoding: string): Promise<string> {
+    return this.adapter.readFile(path, encoding)
   }
 
-  async rename(oldPath: string, newPath: string): Promise<void> {
-    const content = await this.readFile(oldPath, 'utf8')
-    await this.writeFile(newPath, content)
-    await this.unlink(oldPath)
+  writeFile(path: string, data: string): Promise<void> {
+    return this.adapter.writeFile(path, data)
   }
 
-  async stat(path: string): Promise<{ isFile(): boolean; isDirectory(): boolean; mtime: Date }> {
-    const url = this.buildUrl(path)
-    const response = await this.makeRequest(url, { method: 'HEAD' })
-    
-    if (!response.ok) {
-      throw new Error(`Failed to stat: ${response.status}`)
-    }
-
-    const lastModified = response.headers.get('last-modified')
-    const mtime = lastModified ? new Date(lastModified) : new Date()
-
-    return {
-      isDirectory: () => false,
-      isFile: () => true,
-      mtime,
-    }
+  readdir(path: string): Promise<string[]> {
+    return this.adapter.readdir(path)
   }
 
-  async exists(path: string): Promise<boolean> {
-    try {
-      await this.stat(path)
-      return true
-    } catch {
-      return false
-    }
+  mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
+    return this.adapter.mkdir(path, options)
+  }
+
+  stat(path: string) {
+    return this.adapter.stat(path)
+  }
+
+  unlink(path: string): Promise<void> {
+    return this.adapter.unlink(path)
+  }
+
+  rename(oldPath: string, newPath: string): Promise<void> {
+    return this.adapter.rename(oldPath, newPath)
+  }
+
+  exists(path: string): Promise<boolean> {
+    return this.adapter.exists(path)
   }
 }
