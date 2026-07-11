@@ -121,3 +121,107 @@ export async function testConnection(config: WebDAVConfig): Promise<boolean> {
   // 200 OK 也表示连接成功
   return response.status === 207 || response.status === 200
 }
+
+export interface DirEntry {
+  /** 条目名称（最后一段路径），如 "2026" 或 "bm_xxx.json" */
+  name: string
+  /** 相对 WebDAV 根的路径（不含前导斜杠），可直接用于本模块其它方法 */
+  path: string
+  isCollection: boolean
+}
+
+/**
+ * 列举 WebDAV 目录内容（PROPFIND Depth:1）。
+ * 返回的每个 entry.path 都是相对路径（不含前导斜杠），
+ * 可直接用于 getFileContents / putFileContents / listDirectory。
+ * 目录不存在（404）时返回空数组。
+ */
+export async function listDirectory(config: WebDAVConfig, path: string): Promise<DirEntry[]> {
+  const baseUrl = normalizeUrl(config.url)
+  const fullPath = path.startsWith('/') ? path : `/${path}`
+  const url = `${baseUrl}${fullPath}`
+
+  const body = '<?xml version="1.0" encoding="utf-8"?>\n' +
+    '<D:propfind xmlns:D="DAV:"><D:allprop/></D:propfind>'
+
+  const response = await fetch(url, {
+    method: 'PROPFIND',
+    headers: {
+      'Authorization': getAuthHeader(config),
+      'Depth': '1',
+      'Content-Type': 'application/xml; charset=utf-8',
+    },
+    body,
+  })
+
+  // 目录不存在视为空
+  if (response.status === 404) return []
+  if (!response.ok) {
+    throw new Error(`Failed to list ${path}: ${response.status} ${response.statusText}`)
+  }
+
+  const text = await response.text()
+  return parseMultistatus(config, text, fullPath)
+}
+
+function parseMultistatus(config: WebDAVConfig, xml: string, requestedPath: string): DirEntry[] {
+  const base = normalizeUrl(config.url)
+  let basePath = ''
+  try {
+    basePath = new URL(base).pathname.replace(/^\/+/, '').replace(/\/+$/, '')
+  } catch {
+    basePath = ''
+  }
+
+  const reqNorm = requestedPath.replace(/^\/+/, '').replace(/\/+$/, '')
+
+  const doc = new DOMParser().parseFromString(xml, 'application/xml')
+  const responses = doc.getElementsByTagNameNS('*', 'response')
+  const entries: DirEntry[] = []
+
+  for (let i = 0; i < responses.length; i++) {
+    const resp = responses[i]
+    const hrefEl =
+      resp.getElementsByTagNameNS('*', 'href')[0] ||
+      resp.getElementsByTagName('href')[0]
+    if (!hrefEl || !hrefEl.textContent) continue
+
+    let rawHref = decodeURIComponent(hrefEl.textContent)
+    // 转为纯路径部分（兼容完整 URL 与纯路径两种 href 形式）
+    let pathPart: string
+    try {
+      pathPart = new URL(rawHref).pathname
+    } catch {
+      pathPart = rawHref
+    }
+    pathPart = pathPart.replace(/^\/+/, '').replace(/\/+$/, '')
+
+    // 去掉 WebDAV 根路径前缀
+    if (basePath && pathPart.startsWith(basePath + '/')) {
+      pathPart = pathPart.slice(basePath.length)
+    } else if (basePath && pathPart === basePath) {
+      pathPart = ''
+    }
+    pathPart = pathPart.replace(/^\/+/, '').replace(/\/+$/, '')
+
+    // 跳过自身（Depth:1 的第一个 response 通常是目录本身）
+    if (pathPart === reqNorm || pathPart === '') continue
+
+    const name = pathPart.split('/').pop() || pathPart
+
+    // 判断是否为集合（目录）
+    const rtEl =
+      resp.getElementsByTagNameNS('*', 'resourcetype')[0] ||
+      resp.getElementsByTagName('resourcetype')[0]
+    let isCollection = false
+    if (rtEl) {
+      isCollection =
+        !!rtEl.getElementsByTagNameNS('*', 'collection')[0] ||
+        !!rtEl.getElementsByTagName('collection')[0]
+    }
+
+    entries.push({ name, path: pathPart, isCollection })
+  }
+
+  return entries
+}

@@ -97,3 +97,27 @@ export interface DisplayBookmark {
   tags: string[]
   isPinned: boolean
 }
+
+// 收藏书签原始结构（app_data/favorites/YYYY/YYYY-MM/bm_*.json）
+// 字段与 PouchDB BookmarkDoc 基本一致
+export interface RawFavoritesBookmark {
+  _id?: string
+  type?: string
+  url: string
+  title?: string
+  tags?: string[]
+  description?: string
+  icon?: string
+  clicks?: number
+  lastClickedAt?: number
+  createdAt?: number
+  updatedAt?: number
+  deleted?: boolean
+}
+
+// 归档执行结果
+export interface ArchiveResult {
+  archived: string[] // 成功归档的 YYYY-MM
+  skipped: string[] // 跳过的 YYYY-MM（已存在 / 当月）
+  errors: { ym: string; message: string }[] // 失败月份
+}

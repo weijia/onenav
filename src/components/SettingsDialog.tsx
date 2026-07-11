@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
-import type { AppConfig, TagConfig, WebDAVConfig } from '@/types'
+import type { AppConfig, TagConfig, WebDAVConfig, ArchiveResult } from '@/types'
 import { loadWebDAVConfig, saveWebDAVConfig, saveAppConfigToWebDAV, getDefaultAppConfig } from '@/lib/config'
+import { archiveFavorites } from '@/lib/favorites'
 import {
   Dialog,
   DialogContent,
@@ -33,7 +34,7 @@ interface SettingsDialogProps {
   onConfigSave: (config: AppConfig) => void
 }
 
-type SettingsTab = 'tags' | 'display' | 'background' | 'widgets' | 'webdav' | 'remotestorage'
+type SettingsTab = 'tags' | 'display' | 'background' | 'widgets' | 'webdav' | 'remotestorage' | 'favorites'
 
 const ICON_NAMES = [
   'Globe', 'Code', 'BookOpen', 'Music', 'Video', 'Gamepad2',
@@ -57,6 +58,8 @@ export default function SettingsDialog({ open, onOpenChange, config, onConfigSav
   const [localConfig, setLocalConfig] = useState<AppConfig>(config)
   const [saving, setSaving] = useState(false)
   const [webdavInfo, setWebdavInfo] = useState<WebDAVConfig | null>(null)
+  const [archiving, setArchiving] = useState(false)
+  const [archiveLog, setArchiveLog] = useState<ArchiveResult | null>(null)
 
   useEffect(() => {
     if (open) {
@@ -144,6 +147,7 @@ export default function SettingsDialog({ open, onOpenChange, config, onConfigSav
     { key: 'widgets', label: 'Widgets' },
     { key: 'webdav', label: 'WebDAV' },
     { key: 'remotestorage', label: 'RemoteStorage' },
+    { key: 'favorites', label: '收藏归档' },
   ]
 
   return (
@@ -640,6 +644,84 @@ export default function SettingsDialog({ open, onOpenChange, config, onConfigSav
                 Sync your PouchDB data to RemoteStorage for distributed storage across cloud providers.
               </p>
               <RemoteStorageSyncWrapper />
+            </div>
+          )}
+
+          {activeTab === 'favorites' && (
+            <div className="space-y-4">
+              <p className="text-sm text-white/60">
+                收藏书签位于 WebDAV 的 <code className="text-white/80">app_data/favorites/YYYY/YYYY-MM/bm_*.json</code>。
+                归档会把历史月份的单文件合并为 <code className="text-white/80">archive-YYYY-MM.json</code> 快照（当前月永不归档）。
+                系统会在新月份第一天自动归档；也可在此手动触发。
+              </p>
+
+              <div className="flex items-center gap-2">
+                <Button
+                  onClick={async () => {
+                    const wdav = loadWebDAVConfig()
+                    if (!wdav) {
+                      alert('请先在 WebDAV 标签页配置连接')
+                      return
+                    }
+                    setArchiving(true)
+                    setArchiveLog(null)
+                    try {
+                      const res = await archiveFavorites(wdav)
+                      setArchiveLog(res)
+                    } catch (e) {
+                      setArchiveLog({ archived: [], skipped: [], errors: [{ ym: '-', message: e instanceof Error ? e.message : String(e) }] })
+                    } finally {
+                      setArchiving(false)
+                    }
+                  }}
+                  disabled={archiving}
+                  className="bg-white/10 hover:bg-white/20 text-white border border-white/20"
+                >
+                  {archiving ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin mr-1" />
+                      归档中...
+                    </>
+                  ) : (
+                    '运行归档'
+                  )}
+                </Button>
+              </div>
+
+              {archiveLog && (
+                <div className="space-y-3 text-sm">
+                  {archiveLog.archived.length > 0 && (
+                    <div>
+                      <p className="text-green-400 mb-1">已归档（{archiveLog.archived.length}）</p>
+                      <div className="flex flex-wrap gap-1">
+                        {archiveLog.archived.map((ym) => (
+                          <span key={ym} className="px-2 py-0.5 rounded bg-green-500/15 text-green-300 text-xs">{ym}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {archiveLog.skipped.length > 0 && (
+                    <div>
+                      <p className="text-white/40 mb-1">已跳过（{archiveLog.skipped.length}）</p>
+                      <div className="flex flex-wrap gap-1">
+                        {archiveLog.skipped.map((ym) => (
+                          <span key={ym} className="px-2 py-0.5 rounded bg-white/10 text-white/50 text-xs">{ym}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {archiveLog.errors.length > 0 && (
+                    <div>
+                      <p className="text-red-400 mb-1">失败（{archiveLog.errors.length}）</p>
+                      <div className="space-y-1">
+                        {archiveLog.errors.map((e, i) => (
+                          <p key={i} className="text-red-300 text-xs">{e.ym}: {e.message}</p>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import type { AppConfig, DisplayBookmark, WebDAVConfig, BookmarksStore } from '@/types'
+import type { AppConfig, DisplayBookmark, WebDAVConfig, BookmarksStore, BookmarkEntry } from '@/types'
 import { loadWebDAVConfig, loadAppConfig, fetchAppConfig, fetchBookmarks, getDefaultAppConfig, saveAppConfig, saveAppConfigToWebDAV, loadAppConfigFromPouchDB, loadBookmarksFromPouchDB } from '@/lib/config'
+import { loadFavoritesBookmarks, archiveFavorites, mergeFavoritesIntoStore, shouldAutoArchive } from '@/lib/favorites'
 import { filterByTag, getMostVisitedBookmarks, isDeleted, getFaviconUrl, stringToColor } from '@/lib/bookmarks'
 import { recordClick, loadClickStatsFromWebDAV, togglePinnedBookmark, loadPinnedBookmarks, loadPinnedBookmarksAsync, savePinnedBookmarks } from '@/lib/stats'
 import { getStorageCredentials, onStatusChange } from '@/lib/remotestorage-connection'
@@ -33,6 +34,16 @@ export default function MainPage() {
   const [pinnedUrls, setPinnedUrls] = useState<string[]>([])
   const [initialized, setInitialized] = useState(false)
   const processBookmarksRef = useRef<((store: BookmarksStore, config: AppConfig) => void) | undefined>(undefined)
+  const favoritesDataRef = useRef<Record<string, BookmarkEntry> | null>(null)
+
+  // 合并收藏书签后渲染（收藏数据来自 favoritesDataRef）
+  const renderStore = useCallback((store: BookmarksStore | null, config: AppConfig) => {
+    if (!store) return
+    const merged = favoritesDataRef.current
+      ? mergeFavoritesIntoStore(store, favoritesDataRef.current)
+      : store
+    processBookmarksRef.current?.(merged, config)
+  }, [])
 
   const processBookmarks = useCallback((store: BookmarksStore, config: AppConfig) => {
     if (config.tags.length === 0) {
@@ -95,7 +106,7 @@ export default function MainPage() {
       setAppConfig(config)
       setPinnedUrls(pinned)
       if (localStore) {
-        processBookmarksRef.current?.(localStore, config)
+        renderStore(localStore, config)
       }
       setInitialized(true)
       if (showLoading) setLoading(false)
@@ -104,6 +115,14 @@ export default function MainPage() {
       if (wdav) {
         try {
           await loadClickStatsFromWebDAV(wdav)
+
+          // 2.0 收藏书签：新月份第一天自动归档，随后加载
+          if (shouldAutoArchive()) {
+            archiveFavorites(wdav).catch((e) => console.error('[Fav] 自动归档失败:', e))
+          }
+          const fav = await loadFavoritesBookmarks(wdav).catch(() => null)
+          if (fav) favoritesDataRef.current = fav
+
           const webdavConfig = await fetchAppConfig(wdav)
           if (webdavConfig) {
             config = webdavConfig
@@ -114,9 +133,9 @@ export default function MainPage() {
             }
           }
           const webdavStore = await fetchBookmarks(wdav, config.bookmarkPath)
-          if (webdavStore) {
-            processBookmarksRef.current?.(webdavStore, config)
-          }
+          // 渲染：优先 webdav，否则回退本地（保证收藏合并生效）
+          const storeToRender = webdavStore || (await loadBookmarksFromPouchDB())
+          if (storeToRender) renderStore(storeToRender, config)
         } catch (err) {
           console.error('[Sync] WebDAV 加载失败:', err)
         }
@@ -144,7 +163,7 @@ export default function MainPage() {
             config = rsConfig
           }
           if (rsStore) {
-            processBookmarksRef.current?.(rsStore, config)
+            renderStore(rsStore, config)
           }
 
           // 4. 处理分享收件箱
@@ -154,7 +173,7 @@ export default function MainPage() {
             const { imported } = await processInbox(fs)
             if (imported > 0) {
               const store = await loadBookmarksFromPouchDB()
-              if (store) processBookmarksRef.current?.(store, config)
+              if (store) renderStore(store, config)
             }
           } catch (err) {
             console.error('[Sync] 收件箱处理失败:', err)
@@ -169,7 +188,7 @@ export default function MainPage() {
     } finally {
       setLoading(false)
     }
-  }, [activeTag])
+  }, [activeTag, renderStore])
 
   // 保存到所有配置的来源
   const saveToAllSources = useCallback(async (config: AppConfig) => {
@@ -215,10 +234,10 @@ export default function MainPage() {
   useEffect(() => {
     const loadAndFilter = async () => {
       const store = await loadBookmarksFromPouchDB()
-      if (store) processBookmarks(store, appConfig)
+      if (store) renderStore(store, appConfig)
     }
     loadAndFilter()
-  }, [activeTag, appConfig, processBookmarks])
+  }, [activeTag, appConfig, processBookmarks, renderStore])
 
   const handleRefresh = async () => {
     if (refreshing) return
