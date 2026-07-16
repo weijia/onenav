@@ -187,9 +187,9 @@ export default function MainPage() {
           const rsStore = await loadBookmarksFromPouchDB()
           if (rsConfig) {
             // 检查 activeTag 是否还存在
-            const tagIds = rsConfig.tags.map((t: { id: string }) => t.id)
+            const tagKeys = rsConfig.tags.flatMap((t: { id: string; tag: string }) => [t.id, t.tag])
             const currentTag = activeTag || 'onenav'
-            if (!tagIds.includes(currentTag) && currentTag !== '._all_' && currentTag !== 'onenav') {
+            if (!tagKeys.includes(currentTag) && currentTag !== '._all_' && currentTag !== 'onenav') {
               setActiveTag('onenav')
               window.location.hash = 'onenav'
             }
