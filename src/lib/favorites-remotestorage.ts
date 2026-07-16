@@ -25,10 +25,21 @@ function rsFavoritesFs(): FavoritesFs {
     throw new Error('RemoteStorage 未配置，无法访问收藏源')
   }
   const fs = new RemoteStorageFileSystem({ href: credentials.href, token: credentials.token })
-  const toEntries = (names: string[]) =>
+  const toEntries = (path: string, names: string[]) =>
     names.map((n) => {
       const name = n.replace(/^\.\//, '').replace(/\/$/, '')
-      return { name, isDir: n.endsWith('/') }
+      const normalizedPath = path.replace(/\/$/, '')
+      const isFavoritesRoot = normalizedPath === 'app_data/favorites'
+      const isYearDir = /^app_data\/favorites\/\d{4}$/.test(normalizedPath)
+
+      // zen-fs-remotestoragejs 的 readdir 会去掉条目末尾的 "/"，
+      // 因此需要按 favorites 的固定目录结构恢复目录类型。
+      const isDir =
+        n.endsWith('/') ||
+        (isFavoritesRoot && /^\d{4}$/.test(name)) ||
+        (isYearDir && /^\d{4}-\d{2}$/.test(name))
+
+      return { name, isDir }
     })
   return {
     readFile: (p) => fs.readFile(p, 'utf8'),
@@ -37,7 +48,7 @@ function rsFavoritesFs(): FavoritesFs {
       // 不同 RemoteStorage 服务器对文件夹列举的结尾斜杠要求不同：
       // 先按原样尝试，若为空（404 返回 []）再尝试带结尾斜杠，取非空结果。
       try {
-        const a = toEntries(await fs.readdir(p))
+        const a = toEntries(p, await fs.readdir(p))
         if (a.length > 0) return a
       } catch (e) {
         if (isRemoteStorageAuthError(e)) throw e
@@ -45,7 +56,7 @@ function rsFavoritesFs(): FavoritesFs {
       }
       if (!p.endsWith('/')) {
         try {
-          const b = toEntries(await fs.readdir(`${p}/`))
+          const b = toEntries(p, await fs.readdir(`${p}/`))
           if (b.length > 0) return b
         } catch (e) {
           if (isRemoteStorageAuthError(e)) throw e
