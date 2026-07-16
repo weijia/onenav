@@ -13,9 +13,24 @@ function getChinaTime() {
   return chinaTime.toISOString().replace('Z', '+08:00')
 }
 
+function silenceUniversalSyncDebug() {
+  return {
+    name: 'silence-universal-sync-debug',
+    enforce: 'pre' as const,
+    transform(code: string, id: string) {
+      if (!id.includes('universal-sync-v2')) return null
+      return code.replace(
+        /typeof process !== ['"]undefined['"] \? process\.env\.DEBUG === ['"]true['"] : true/g,
+        "typeof process !== 'undefined' ? process.env.DEBUG === 'true' : false",
+      )
+    },
+  }
+}
+
 export default defineConfig({
   base: './',
   plugins: [
+    silenceUniversalSyncDebug(),
     react(),
     tailwindcss(),
     VitePWA({
