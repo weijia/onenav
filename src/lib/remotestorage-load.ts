@@ -6,6 +6,7 @@
 
 import { RemoteStorageFileSystem, type RemoteStorageConfig } from './remotestorage-fs'
 import { isRemoteStorageAuthError } from './remotestorage-connection'
+import { resolveOneNavSyncConflict } from './bookmark-conflicts'
 
 // 动态导入 universal-sync-v2 浏览器版本
 async function getSyncModule(): Promise<any> {
@@ -34,6 +35,7 @@ export async function loadFromRemoteStorage(
     const engine = new SyncEngine(db, fs, {
       basePath: '/onenav',
       maxFileSize: 500 * 1024,
+      conflictResolver: resolveOneNavSyncConflict,
     })
 
     console.log('[RS Load] 初始化...')

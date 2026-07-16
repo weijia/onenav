@@ -89,6 +89,8 @@ function docToBookmarkEntry(doc: BookmarkDoc): BookmarkEntry {
       title: doc.title,
       description: doc.description,
       favicon: doc.icon,
+      created: doc.createdAt,
+      updated: doc.updatedAt,
     },
   }
 }
@@ -104,8 +106,8 @@ function bookmarkEntryToDoc(url: string, entry: BookmarkEntry): Omit<BookmarkDoc
     icon: entry.meta?.favicon,
     clicks: 0,
     lastClickedAt: undefined,
-    createdAt: now,
-    updatedAt: now,
+    createdAt: entry.meta?.created || now,
+    updatedAt: entry.meta?.updated || now,
   }
 }
 

@@ -5,6 +5,7 @@
  */
 
 import { RemoteStorageFileSystem, type RemoteStorageConfig } from './remotestorage-fs'
+import { resolveOneNavSyncConflict } from './bookmark-conflicts'
 
 let SyncEngine: any = null
 
@@ -85,6 +86,7 @@ export async function syncToRemoteStorage(
       maxFileSize: options.maxFileSize ?? 500 * 1024,
       mergeThreshold: options.mergeThreshold ?? 50 * 1024,
       autoMerge: options.autoMerge ?? true,
+      conflictResolver: resolveOneNavSyncConflict,
     })
 
     await engine.initialize()
@@ -115,6 +117,7 @@ export async function createSyncEngine(
     maxFileSize: options.maxFileSize ?? 500 * 1024,
     mergeThreshold: options.mergeThreshold ?? 50 * 1024,
     autoMerge: options.autoMerge ?? true,
+    conflictResolver: resolveOneNavSyncConflict,
   })
 
   await engine.initialize()

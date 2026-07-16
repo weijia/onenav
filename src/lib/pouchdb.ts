@@ -1,3 +1,6 @@
+import type { BookmarkEntry } from '@/types'
+import { getEntryUpdatedAt } from '@/lib/bookmark-conflicts'
+
 const DB_NAME = 'onenav'
 let db: any = null
 let dbNeedsReset = false
@@ -169,6 +172,59 @@ export async function saveBookmarks(bookmarks: Array<Omit<BookmarkDoc, '_id' | '
     console.log('[PouchDB] saveBookmarks: 准备 bulkDocs，文档数量:', docs.length)
     await database.bulkDocs(docs)
     console.log('[PouchDB] saveBookmarks: bulkDocs 完成')
+  })
+}
+
+export async function upsertBookmarkEntriesFromExternal(
+  entries: Record<string, BookmarkEntry>,
+  source: string,
+): Promise<number> {
+  const items = Object.entries(entries)
+  if (items.length === 0) return 0
+
+  return withAutoReset(async (database) => {
+    let changed = 0
+
+    for (const [url, entry] of items) {
+      const id = PREFIX.BOOKMARK + url
+      const existing = await database.get(id).catch(() => null)
+      const incomingUpdatedAt = getEntryUpdatedAt(entry)
+      const existingUpdatedAt = Number(existing?.updatedAt || 0)
+
+      if (existing && existingUpdatedAt >= incomingUpdatedAt) {
+        continue
+      }
+
+      const now = Date.now()
+      const tagSet = new Set<string>([...(existing?.tags || []), ...(entry.tags || [])])
+      const doc: BookmarkDoc = {
+        _id: id,
+        type: 'bookmark',
+        url,
+        title: entry.meta?.title || existing?.title || url,
+        tags: Array.from(tagSet),
+        description: entry.meta?.description ?? existing?.description,
+        icon: entry.meta?.favicon ?? existing?.icon,
+        clicks: Number(existing?.clicks || 0),
+        lastClickedAt: existing?.lastClickedAt,
+        createdAt: Number(existing?.createdAt || entry.meta?.created || now),
+        updatedAt: incomingUpdatedAt || now,
+        deleted: existing?.deleted || false,
+      }
+
+      if (existing) {
+        await database.put({ ...doc, _rev: existing._rev })
+      } else {
+        await database.put(doc)
+      }
+      changed++
+    }
+
+    if (changed > 0) {
+      console.log(`[PouchDB] ${source}: 已导入/更新 ${changed} 条外部书签`)
+    }
+
+    return changed
   })
 }
 

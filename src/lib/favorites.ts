@@ -27,6 +27,8 @@ function rawToBookmarkEntry(raw: RawFavoritesBookmark): BookmarkEntry | null {
       title: raw.title,
       description: raw.description,
       favicon: raw.icon,
+      created: raw.createdAt,
+      updated: raw.updatedAt,
     },
   }
 }

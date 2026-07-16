@@ -6,7 +6,7 @@ import { loadFavoritesBookmarksFromRS, archiveFavoritesOnRS } from '@/lib/favori
 import { filterByTag, getMostVisitedBookmarks, isDeleted, getFaviconUrl, stringToColor } from '@/lib/bookmarks'
 import { recordClick, loadClickStatsFromWebDAV, togglePinnedBookmark, loadPinnedBookmarks, loadPinnedBookmarksAsync, savePinnedBookmarks } from '@/lib/stats'
 import { clearRemoteStorageLogin, getSavedStorageCredentials, getStorageCredentials, isRemoteStorageAuthError, onStatusChange } from '@/lib/remotestorage-connection'
-import { getPouchDB } from '@/lib/pouchdb'
+import { getPouchDB, upsertBookmarkEntriesFromExternal } from '@/lib/pouchdb'
 import { loadFromRemoteStorage } from '@/lib/remotestorage-load'
 import { syncToRemoteStorage } from '@/lib/remotestorage-sync'
 
@@ -132,7 +132,10 @@ export default function MainPage() {
             archiveFavorites(wdav).catch((e) => console.error('[Fav] 自动归档失败:', e))
           }
           const fav = await loadFavoritesBookmarks(wdav).catch(() => null)
-          if (fav) favoritesDataRef.current = mergeFavoritesData(favoritesDataRef.current, fav)
+          if (fav) {
+            await upsertBookmarkEntriesFromExternal(fav, 'WebDAV favorites')
+            favoritesDataRef.current = mergeFavoritesData(favoritesDataRef.current, fav)
+          }
 
           const webdavConfig = await fetchAppConfig(wdav)
           if (webdavConfig) {
@@ -176,7 +179,10 @@ export default function MainPage() {
               if (isRemoteStorageAuthError(e)) throw e
               return null
             })
-            if (rsFav) favoritesDataRef.current = mergeFavoritesData(favoritesDataRef.current, rsFav)
+            if (rsFav) {
+              await upsertBookmarkEntriesFromExternal(rsFav, 'RemoteStorage favorites')
+              favoritesDataRef.current = mergeFavoritesData(favoritesDataRef.current, rsFav)
+            }
           } catch (e) {
             if (isRemoteStorageAuthError(e)) throw e
             console.error('[FavRS] 加载失败:', e)
