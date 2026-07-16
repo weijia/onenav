@@ -5,7 +5,7 @@ import { loadFavoritesBookmarks, archiveFavorites, mergeFavoritesIntoStore, merg
 import { loadFavoritesBookmarksFromRS, archiveFavoritesOnRS } from '@/lib/favorites-remotestorage'
 import { filterByTag, getMostVisitedBookmarks, isDeleted, getFaviconUrl, stringToColor } from '@/lib/bookmarks'
 import { recordClick, loadClickStatsFromWebDAV, togglePinnedBookmark, loadPinnedBookmarks, loadPinnedBookmarksAsync, savePinnedBookmarks } from '@/lib/stats'
-import { getSavedStorageCredentials, getStorageCredentials, onStatusChange } from '@/lib/remotestorage-connection'
+import { clearRemoteStorageLogin, getSavedStorageCredentials, getStorageCredentials, isRemoteStorageAuthError, onStatusChange } from '@/lib/remotestorage-connection'
 import { getPouchDB } from '@/lib/pouchdb'
 import { loadFromRemoteStorage } from '@/lib/remotestorage-load'
 import { syncToRemoteStorage } from '@/lib/remotestorage-sync'
@@ -33,6 +33,7 @@ export default function MainPage() {
   const [allBookmarks, setAllBookmarks] = useState<DisplayBookmark[]>([])
   const [pinnedUrls, setPinnedUrls] = useState<string[]>([])
   const [initialized, setInitialized] = useState(false)
+  const [remoteStorageNeedsLogin, setRemoteStorageNeedsLogin] = useState(false)
   const processBookmarksRef = useRef<((store: BookmarksStore, config: AppConfig) => void) | undefined>(undefined)
   const favoritesDataRef = useRef<Record<string, BookmarkEntry> | null>(null)
 
@@ -88,6 +89,14 @@ export default function MainPage() {
   }, [activeTag, pinnedUrls])
 
   processBookmarksRef.current = processBookmarks
+
+  const handleRemoteStorageAuthExpired = useCallback(() => {
+    console.warn('[Sync] RemoteStorage 授权已失效，需要重新登录')
+    clearRemoteStorageLogin()
+    setRemoteStorageNeedsLogin(true)
+    setError('')
+    setLoading(false)
+  }, [])
 
   // 从所有来源加载数据并合并到 PouchDB
   const loadAllSources = useCallback(async (showLoading = true) => {
@@ -158,11 +167,18 @@ export default function MainPage() {
           // 2.5 RemoteStorage 收藏源：与主 RS 同步同时机加载，避免连接未就绪的竞态（路径 app_data/favorites）
           try {
             if (shouldAutoArchive()) {
-              archiveFavoritesOnRS().catch((e) => console.error('[FavRS] 自动归档失败:', e))
+              await archiveFavoritesOnRS().catch((e) => {
+                if (isRemoteStorageAuthError(e)) throw e
+                console.error('[FavRS] 自动归档失败:', e)
+              })
             }
-            const rsFav = await loadFavoritesBookmarksFromRS().catch(() => null)
+            const rsFav = await loadFavoritesBookmarksFromRS().catch((e) => {
+              if (isRemoteStorageAuthError(e)) throw e
+              return null
+            })
             if (rsFav) favoritesDataRef.current = mergeFavoritesData(favoritesDataRef.current, rsFav)
           } catch (e) {
+            if (isRemoteStorageAuthError(e)) throw e
             console.error('[FavRS] 加载失败:', e)
           }
 
@@ -190,6 +206,10 @@ export default function MainPage() {
 
           // 4. onenav-temp 共享收件箱暂时停用，启动时不再访问该目录。
         } catch (err) {
+          if (isRemoteStorageAuthError(err)) {
+            handleRemoteStorageAuthExpired()
+            return
+          }
           console.error('[Sync] RemoteStorage 加载失败:', err)
         }
       }
@@ -199,7 +219,7 @@ export default function MainPage() {
     } finally {
       setLoading(false)
     }
-  }, [activeTag, renderStore])
+  }, [activeTag, handleRemoteStorageAuthExpired, renderStore])
 
   // 保存到所有配置的来源
   const saveToAllSources = useCallback(async (config: AppConfig) => {
@@ -221,10 +241,14 @@ export default function MainPage() {
           autoMerge: true,
         })
       } catch (err) {
+        if (isRemoteStorageAuthError(err)) {
+          handleRemoteStorageAuthExpired()
+          return
+        }
         console.error('[Sync] RemoteStorage push 失败:', err)
       }
     }
-  }, [webdavConfig])
+  }, [handleRemoteStorageAuthExpired, webdavConfig])
 
   // 初始化
   useEffect(() => {
@@ -233,13 +257,16 @@ export default function MainPage() {
     // 监听 RemoteStorage 连接事件
     const unlisten = onStatusChange(async (info) => {
       if (info.status === 'connected') {
+        setRemoteStorageNeedsLogin(false)
         console.log('[MainPage] RemoteStorage 已连接，重新加载')
         await loadAllSources(false)
+      } else if (info.status === 'error' && isRemoteStorageAuthError(info.error)) {
+        handleRemoteStorageAuthExpired()
       }
     })
 
     return () => unlisten()
-  }, [loadAllSources])
+  }, [handleRemoteStorageAuthExpired, loadAllSources])
 
   // activeTag 变化时重新过滤
   useEffect(() => {
@@ -300,6 +327,7 @@ export default function MainPage() {
   }, [loadAllSources])
 
   const handleRemoteStorageSetup = useCallback(async () => {
+    setRemoteStorageNeedsLogin(false)
     await loadAllSources()
   }, [loadAllSources])
 
@@ -337,6 +365,17 @@ export default function MainPage() {
           <p className="text-white/60">Loading...</p>
         </div>
       </div>
+    )
+  }
+
+  if (remoteStorageNeedsLogin) {
+    return (
+      <SetupWizard
+        initialMode="remotestorage"
+        message="RemoteStorage 登录已失效或无权访问服务器内容，请重新登录 RemoteStorage。"
+        onWebDAVSetup={handleWebDAVSetup}
+        onRemoteStorageSetup={handleRemoteStorageSetup}
+      />
     )
   }
 

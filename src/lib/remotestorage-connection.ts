@@ -70,6 +70,53 @@ function clearCredentials(): void {
   }
 }
 
+export function isRemoteStorageAuthError(error: unknown): boolean {
+  const seen = new Set<unknown>()
+  const authPattern = /\b(401|403)\b|unauthori[sz]ed|forbidden|invalid token|expired token|access denied/i
+
+  const check = (value: unknown): boolean => {
+    if (value == null) return false
+    if (typeof value === 'string') return authPattern.test(value)
+    if (typeof value === 'number') return value === 401 || value === 403
+    if (typeof value !== 'object') return false
+    if (seen.has(value)) return false
+    seen.add(value)
+
+    const err = value as Record<string, unknown>
+    return (
+      check(err.status) ||
+      check(err.statusCode) ||
+      check(err.code) ||
+      check(err.message) ||
+      check(err.name) ||
+      check(err.error) ||
+      check(err.cause) ||
+      check((err.response as Record<string, unknown> | undefined)?.status) ||
+      check((err.response as Record<string, unknown> | undefined)?.statusText)
+    )
+  }
+
+  return check(error)
+}
+
+export function clearRemoteStorageLogin(): void {
+  try {
+    if (rsInstance?.connected) {
+      rsInstance.disconnect()
+    }
+  } catch {
+    // ignore
+  }
+  clearCredentials()
+  try {
+    localStorage.removeItem('rsConfigured')
+  } catch {
+    // ignore
+  }
+  rsInstance = null
+  notifyListeners({ status: 'disconnected' })
+}
+
 /**
  * 获取或创建 RemoteStorage 实例
  * 如果之前有保存的凭证，自动恢复连接
@@ -97,7 +144,9 @@ export function getRemoteStorage(): RemoteStorage {
         })
         rsInstance.on('error', (err: any) => {
           console.error('[RS Connection] 连接恢复失败:', err)
-          clearCredentials()
+          if (isRemoteStorageAuthError(err)) {
+            clearRemoteStorageLogin()
+          }
         })
         rsInstance.connect(saved.userAddress, saved.token)
       } else {

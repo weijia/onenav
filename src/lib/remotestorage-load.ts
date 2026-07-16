@@ -5,6 +5,7 @@
  */
 
 import { RemoteStorageFileSystem, type RemoteStorageConfig } from './remotestorage-fs'
+import { isRemoteStorageAuthError } from './remotestorage-connection'
 
 // 动态导入 universal-sync-v2 浏览器版本
 async function getSyncModule(): Promise<any> {
@@ -52,6 +53,9 @@ export async function loadFromRemoteStorage(
     console.log('[RS Load] 完成')
     return { errors }
   } catch (err) {
+    if (isRemoteStorageAuthError(err)) {
+      throw err
+    }
     console.error('[RS Load] 失败:', err)
     errors.push(`加载失败: ${err}`)
     return { errors }

@@ -1,6 +1,6 @@
 import type { BookmarkEntry, ArchiveResult } from '@/types'
 import { RemoteStorageFileSystem } from '@/lib/remotestorage-fs'
-import { getSavedStorageCredentials, getStorageCredentials } from '@/lib/remotestorage-connection'
+import { getSavedStorageCredentials, getStorageCredentials, isRemoteStorageAuthError } from '@/lib/remotestorage-connection'
 import {
   listFavoritesMonthsGeneric,
   loadFavoritesBookmarksGeneric,
@@ -39,14 +39,16 @@ function rsFavoritesFs(): FavoritesFs {
       try {
         const a = toEntries(await fs.readdir(p))
         if (a.length > 0) return a
-      } catch {
+      } catch (e) {
+        if (isRemoteStorageAuthError(e)) throw e
         // 忽略，尝试带斜杠
       }
       if (!p.endsWith('/')) {
         try {
           const b = toEntries(await fs.readdir(`${p}/`))
           if (b.length > 0) return b
-        } catch {
+        } catch (e) {
+          if (isRemoteStorageAuthError(e)) throw e
           // 忽略
         }
       }

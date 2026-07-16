@@ -1,5 +1,6 @@
 import type { WebDAVConfig, BookmarkEntry, BookmarksStore, RawFavoritesBookmark, ArchiveResult } from '@/types'
 import { getFileContents, putFileContents, listDirectory, stat } from '@/lib/webdav'
+import { isRemoteStorageAuthError } from '@/lib/remotestorage-connection'
 
 const FAVORITES_ROOT = 'app_data/favorites'
 const BM_FILE_RE = /^bm_.*\.json$/
@@ -54,7 +55,8 @@ export async function listFavoritesMonthsGeneric(fs: FavoritesFs): Promise<Month
   let years: { name: string; isDir: boolean }[]
   try {
     years = await fs.listDir(FAVORITES_ROOT)
-  } catch {
+  } catch (e) {
+    if (isRemoteStorageAuthError(e)) throw e
     return []
   }
   const yearDirs = years.filter((c) => c.isDir && /^\d{4}$/.test(c.name))
@@ -66,7 +68,8 @@ export async function listFavoritesMonthsGeneric(fs: FavoritesFs): Promise<Month
     let months
     try {
       months = await fs.listDir(yearPath)
-    } catch {
+    } catch (e) {
+      if (isRemoteStorageAuthError(e)) throw e
       continue
     }
     const monthDirs = months.filter((c) => c.isDir && /^\d{4}-\d{2}$/.test(c.name))
@@ -99,7 +102,8 @@ export async function loadFavoritesBookmarksGeneric(fs: FavoritesFs): Promise<Re
         const raw = await fs.readFile(`${m.dirPath}/archive-${m.ym}.json`)
         const parsed = JSON.parse(raw)
         if (Array.isArray(parsed)) raws = parsed as RawFavoritesBookmark[]
-      } catch {
+      } catch (e) {
+        if (isRemoteStorageAuthError(e)) throw e
         raws = [] // 归档缺失，回退扫描单文件
       }
     }
@@ -115,11 +119,13 @@ export async function loadFavoritesBookmarksGeneric(fs: FavoritesFs): Promise<Re
             const parsed = JSON.parse(raw)
             if (Array.isArray(parsed)) raws.push(...(parsed as RawFavoritesBookmark[]))
             else if (parsed && typeof parsed === 'object') raws.push(parsed as RawFavoritesBookmark)
-          } catch {
+          } catch (e) {
+            if (isRemoteStorageAuthError(e)) throw e
             // 单个文件失败不影响其余
           }
         }
-      } catch {
+      } catch (e) {
+        if (isRemoteStorageAuthError(e)) throw e
         // 目录不可读，跳过该月
       }
     }
@@ -156,7 +162,8 @@ export async function archiveFavoritesGeneric(fs: FavoritesFs): Promise<ArchiveR
         result.skipped.push(m.ym)
         continue
       }
-    } catch {
+    } catch (e) {
+      if (isRemoteStorageAuthError(e)) throw e
       // 视为不存在，继续归档
     }
 
@@ -170,7 +177,8 @@ export async function archiveFavoritesGeneric(fs: FavoritesFs): Promise<ArchiveR
           const parsed = JSON.parse(raw)
           if (Array.isArray(parsed)) bookmarks.push(...(parsed as RawFavoritesBookmark[]))
           else if (parsed && typeof parsed === 'object') bookmarks.push(parsed as RawFavoritesBookmark)
-        } catch {
+        } catch (e) {
+          if (isRemoteStorageAuthError(e)) throw e
           // 忽略单个文件错误
         }
       }

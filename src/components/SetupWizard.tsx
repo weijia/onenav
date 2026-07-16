@@ -19,10 +19,12 @@ type RSLoginMode = 'widget' | 'manual'
 interface SetupWizardProps {
   onWebDAVSetup: (config: { url: string; username: string; password: string }) => void
   onRemoteStorageSetup: (credentials: { href: string; token: string }) => void
+  initialMode?: SetupMode
+  message?: string
 }
 
-export default function SetupWizard({ onWebDAVSetup, onRemoteStorageSetup }: SetupWizardProps) {
-  const [mode, setMode] = useState<SetupMode>('choose')
+export default function SetupWizard({ onWebDAVSetup, onRemoteStorageSetup, initialMode = 'choose', message }: SetupWizardProps) {
+  const [mode, setMode] = useState<SetupMode>(initialMode)
   const [rsConnectionInfo, setRsConnectionInfo] = useState<RSConnectionInfo>({ status: 'disconnected' })
   const [rsLoginMode, setRsLoginMode] = useState<RSLoginMode>('widget')
   const [rsUserAddress, setRsUserAddress] = useState('')
@@ -41,6 +43,12 @@ export default function SetupWizard({ onWebDAVSetup, onRemoteStorageSetup }: Set
     claimAccess('onenav', 'rw')
     return onStatusChange(setRsConnectionInfo)
   }, [])
+
+  useEffect(() => {
+    if (initialMode === 'remotestorage') {
+      return startRSMonitor()
+    }
+  }, [initialMode, startRSMonitor])
 
   // 检测 OAuth 回调（URL 中有 access_token）或已保存的凭证，自动开始监听
   useEffect(() => {
@@ -155,6 +163,12 @@ export default function SetupWizard({ onWebDAVSetup, onRemoteStorageSetup }: Set
           <h1 className="text-2xl font-bold text-white">OneNav</h1>
           <p className="text-white/50 text-sm mt-1">选择数据源来初始化</p>
         </div>
+
+        {message && (
+          <div className="mb-4 rounded-xl bg-yellow-500/10 border border-yellow-500/30 px-4 py-3 text-sm text-yellow-100">
+            {message}
+          </div>
+        )}
 
         {/* 选择模式 */}
         {mode === 'choose' && (
