@@ -53,6 +53,15 @@ function loadCredentials(): { userAddress: string; href: string; token: string }
   }
 }
 
+/**
+ * 获取已保存的 RemoteStorage 凭据。
+ * 这个方法不要求 remotestoragejs 当前处于 connected 状态，
+ * 用于启动阶段直接访问文件系统，减少等待连接状态恢复的时间。
+ */
+export function getSavedStorageCredentials(): { userAddress: string; href: string; token: string } | null {
+  return loadCredentials()
+}
+
 function clearCredentials(): void {
   try {
     localStorage.removeItem(RS_CREDENTIALS_KEY)

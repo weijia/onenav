@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { loadWebDAVConfig, saveWebDAVConfig } from '@/lib/config'
+import { getSavedStorageCredentials } from '@/lib/remotestorage-connection'
 import SetupWizard from '@/components/SetupWizard'
 import MainPage from '@/components/MainPage'
 import UpdateToast from '@/components/UpdateToast'
@@ -8,7 +9,7 @@ import ShareDialog from '@/components/ShareDialog'
 const RS_CONFIGURED_KEY = 'rsConfigured'
 
 function isRSConfigured(): boolean {
-  return localStorage.getItem(RS_CONFIGURED_KEY) === 'true'
+  return localStorage.getItem(RS_CONFIGURED_KEY) === 'true' || getSavedStorageCredentials() !== null
 }
 
 function setRSConfigured(val: boolean): void {

@@ -5,11 +5,10 @@ import { loadFavoritesBookmarks, archiveFavorites, mergeFavoritesIntoStore, merg
 import { loadFavoritesBookmarksFromRS, archiveFavoritesOnRS } from '@/lib/favorites-remotestorage'
 import { filterByTag, getMostVisitedBookmarks, isDeleted, getFaviconUrl, stringToColor } from '@/lib/bookmarks'
 import { recordClick, loadClickStatsFromWebDAV, togglePinnedBookmark, loadPinnedBookmarks, loadPinnedBookmarksAsync, savePinnedBookmarks } from '@/lib/stats'
-import { getStorageCredentials, onStatusChange } from '@/lib/remotestorage-connection'
+import { getSavedStorageCredentials, getStorageCredentials, onStatusChange } from '@/lib/remotestorage-connection'
 import { getPouchDB } from '@/lib/pouchdb'
 import { loadFromRemoteStorage } from '@/lib/remotestorage-load'
 import { syncToRemoteStorage } from '@/lib/remotestorage-sync'
-import { processInbox, createInboxFS, uploadPendingShares } from '@/lib/share-inbox'
 
 import Sidebar from '@/components/Sidebar'
 import BookmarkGrid from '@/components/BookmarkGrid'
@@ -150,7 +149,7 @@ export default function MainPage() {
       }
 
       // 3. 从 RemoteStorage 加载并合并（pull only）
-      const credentials = getStorageCredentials()
+      const credentials = getStorageCredentials() || getSavedStorageCredentials()
       if (credentials) {
         try {
           const db = await getPouchDB()
@@ -189,18 +188,7 @@ export default function MainPage() {
             renderStore(lastStore, config)
           }
 
-          // 4. 处理分享收件箱
-          try {
-            const fs = createInboxFS(credentials)
-            await uploadPendingShares(fs)
-            const { imported } = await processInbox(fs)
-            if (imported > 0) {
-              const store = await loadBookmarksFromPouchDB()
-              if (store) { renderStore(store, config); lastStore = store }
-            }
-          } catch (err) {
-            console.error('[Sync] 收件箱处理失败:', err)
-          }
+          // 4. onenav-temp 共享收件箱暂时停用，启动时不再访问该目录。
         } catch (err) {
           console.error('[Sync] RemoteStorage 加载失败:', err)
         }

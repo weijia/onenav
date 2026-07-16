@@ -1,6 +1,6 @@
 import type { BookmarkEntry, ArchiveResult } from '@/types'
 import { RemoteStorageFileSystem } from '@/lib/remotestorage-fs'
-import { getStorageCredentials } from '@/lib/remotestorage-connection'
+import { getSavedStorageCredentials, getStorageCredentials } from '@/lib/remotestorage-connection'
 import {
   listFavoritesMonthsGeneric,
   loadFavoritesBookmarksGeneric,
@@ -16,13 +16,13 @@ import type { FavoritesFs } from '@/lib/favorites'
 
 /** RS 收藏功能是否可用：要求已连接 RemoteStorage 且拿到凭据 */
 export function isRemoteStorageFavoritesAvailable(): boolean {
-  return getStorageCredentials() !== null
+  return getStorageCredentials() !== null || getSavedStorageCredentials() !== null
 }
 
 function rsFavoritesFs(): FavoritesFs {
-  const credentials = getStorageCredentials()
+  const credentials = getStorageCredentials() || getSavedStorageCredentials()
   if (!credentials) {
-    throw new Error('RemoteStorage 未连接，无法访问收藏源')
+    throw new Error('RemoteStorage 未配置，无法访问收藏源')
   }
   const fs = new RemoteStorageFileSystem({ href: credentials.href, token: credentials.token })
   const toEntries = (names: string[]) =>
