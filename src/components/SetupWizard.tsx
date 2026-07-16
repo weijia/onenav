@@ -6,7 +6,7 @@ import {
   onStatusChange,
   getStorageCredentials,
   getConnectionInfo,
-  claimAccess,
+  claimDefaultAccess,
   type RSConnectionInfo,
 } from '@/lib/remotestorage-connection'
 import { syncToRemoteStorage } from '@/lib/remotestorage-sync'
@@ -40,7 +40,7 @@ export default function SetupWizard({ onWebDAVSetup, onRemoteStorageSetup, initi
 
   // RemoteStorage 连接状态监听
   const startRSMonitor = useCallback(() => {
-    claimAccess('onenav', 'rw')
+    claimDefaultAccess()
     return onStatusChange(setRsConnectionInfo)
   }, [])
 

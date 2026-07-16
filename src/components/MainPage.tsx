@@ -372,7 +372,7 @@ export default function MainPage() {
     return (
       <SetupWizard
         initialMode="remotestorage"
-        message="RemoteStorage 登录已失效或无权访问服务器内容，请重新登录 RemoteStorage。"
+        message="RemoteStorage 登录已失效，或当前 token 没有 app_data/favorites 访问权限。请重新登录 RemoteStorage 以授权 app_data。"
         onWebDAVSetup={handleWebDAVSetup}
         onRemoteStorageSetup={handleRemoteStorageSetup}
       />

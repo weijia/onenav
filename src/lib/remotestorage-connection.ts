@@ -188,10 +188,21 @@ export function claimAccess(moduleName: string, mode: string = 'rw'): void {
 }
 
 /**
+ * OneNav 默认需要的 RemoteStorage 权限。
+ * - onenav: 主应用数据，同步 PouchDB 数据
+ * - app_data: 读取 app_data/favorites 收藏书签目录
+ */
+export function claimDefaultAccess(): void {
+  claimAccess('onenav', 'rw')
+  claimAccess('app_data', 'rw')
+}
+
+/**
  * 使用 user@host 地址连接（完整 OAuth 流程）
  */
 export function connectWithUserAddress(userAddress: string): void {
   const rs = getRemoteStorage()
+  claimDefaultAccess()
 
   notifyListeners({ status: 'connecting', userAddress })
 
@@ -233,6 +244,7 @@ export function connectWithUserAddress(userAddress: string): void {
  */
 export function connectWithToken(userAddress: string, token: string): void {
   const rs = getRemoteStorage()
+  claimDefaultAccess()
 
   rs.on('connected', () => {
     const remote = rs.remote as any

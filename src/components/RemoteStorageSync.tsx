@@ -16,7 +16,7 @@ import {
   disconnect,
   onStatusChange,
   getStorageCredentials,
-  claimAccess,
+  claimDefaultAccess,
   type RSConnectionInfo,
 } from '@/lib/remotestorage-connection'
 import { syncToRemoteStorage, type RemoteStorageConnectionConfig } from '@/lib/remotestorage-sync'
@@ -38,7 +38,7 @@ export default function RemoteStorageSync({ db }: RemoteStorageSyncProps) {
 
   // 声明访问权限
   useEffect(() => {
-    claimAccess('onenav', 'rw')
+    claimDefaultAccess()
   }, [])
 
   // 监听连接状态
