@@ -213,7 +213,6 @@ export async function loadBookmarksFromPouchDB(): Promise<BookmarksStore | null>
   // 转换回 BookmarksStore 格式
   const data: Record<string, BookmarkEntry> = {}
   for (const doc of docs) {
-    console.log('[Config] loadBookmarksFromPouchDB: 转换文档:', doc._id, doc.url)
     data[doc.url] = docToBookmarkEntry(doc)
   }
   
