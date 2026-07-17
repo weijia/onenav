@@ -30,6 +30,7 @@ export default function BookmarkItem({
   const [showTooltip, setShowTooltip] = useState(false)
   const longPressTimer = useRef<number | null>(null)
   const longPressTriggered = useRef(false)
+  const touchMoved = useRef(false)
 
   const firstLetter = bookmark.title.charAt(0).toUpperCase()
 
@@ -48,8 +49,10 @@ export default function BookmarkItem({
     return parts.join('\n')
   }
 
-  const handleClick = () => {
+  const handleClick = (e: React.MouseEvent) => {
     if (longPressTriggered.current) {
+      e.preventDefault()
+      e.stopPropagation()
       longPressTriggered.current = false
       return
     }
@@ -72,19 +75,34 @@ export default function BookmarkItem({
   }
 
   // 长按处理（移动端）
-  const handleTouchStart = () => {
+  const handleTouchStart = (e: React.TouchEvent) => {
+    e.preventDefault()
     longPressTriggered.current = false
+    touchMoved.current = false
     longPressTimer.current = window.setTimeout(() => {
+      if (touchMoved.current) return
       longPressTriggered.current = true
       setShowTooltip(false)
       onEdit?.(bookmark)
     }, 500) // 500ms 长按
   }
 
-  const handleTouchEnd = () => {
+  const handleTouchMove = () => {
+    touchMoved.current = true
     if (longPressTimer.current) {
       clearTimeout(longPressTimer.current)
       longPressTimer.current = null
+    }
+  }
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current)
+      longPressTimer.current = null
+    }
+    if (longPressTriggered.current) {
+      e.preventDefault()
+      e.stopPropagation()
     }
     setTimeout(() => setShowTooltip(false), 2000) // 2秒后隐藏
   }
@@ -128,11 +146,14 @@ export default function BookmarkItem({
       <button
         onClick={handleClick}
         onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
+        onTouchCancel={handleTouchMove}
         onContextMenu={handleContextMenu}
         onMouseEnter={() => setShowTooltip(true)}
         onMouseLeave={() => setShowTooltip(false)}
-        className="flex flex-col items-center gap-1.5 cursor-pointer bg-transparent border-0 p-0 w-full"
+        className="flex flex-col items-center gap-1.5 cursor-pointer bg-transparent border-0 p-0 w-full select-none"
+        style={{ touchAction: 'manipulation', WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none' } as React.CSSProperties}
         title={tooltipContent()}
       >
         <div
