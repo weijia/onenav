@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState } from 'react'
 import type { DisplayBookmark } from '@/types'
 import { Edit3, Pin, Globe } from 'lucide-react'
 
@@ -28,10 +28,6 @@ export default function BookmarkItem({
   const [imgError, setImgError] = useState(false)
   const [imgLoaded, setImgLoaded] = useState(false)
   const [showTooltip, setShowTooltip] = useState(false)
-  const longPressTimer = useRef<number | null>(null)
-  const longPressTriggered = useRef(false)
-  const touchMoved = useRef(false)
-
   const firstLetter = bookmark.title.charAt(0).toUpperCase()
 
   // 生成完整的提示文本
@@ -49,13 +45,7 @@ export default function BookmarkItem({
     return parts.join('\n')
   }
 
-  const handleClick = (e: React.MouseEvent) => {
-    if (longPressTriggered.current) {
-      e.preventDefault()
-      e.stopPropagation()
-      longPressTriggered.current = false
-      return
-    }
+  const handleClick = () => {
     onClick?.(bookmark)
     if (openInNewTab) {
       window.open(bookmark.url, '_blank')
@@ -72,39 +62,6 @@ export default function BookmarkItem({
   const handleEditClick = (e: React.MouseEvent) => {
     e.stopPropagation()
     onEdit?.(bookmark)
-  }
-
-  // 长按处理（移动端）
-  const handleTouchStart = (e: React.TouchEvent) => {
-    e.preventDefault()
-    longPressTriggered.current = false
-    touchMoved.current = false
-    longPressTimer.current = window.setTimeout(() => {
-      if (touchMoved.current) return
-      longPressTriggered.current = true
-      setShowTooltip(false)
-      onEdit?.(bookmark)
-    }, 500) // 500ms 长按
-  }
-
-  const handleTouchMove = () => {
-    touchMoved.current = true
-    if (longPressTimer.current) {
-      clearTimeout(longPressTimer.current)
-      longPressTimer.current = null
-    }
-  }
-
-  const handleTouchEnd = (e: React.TouchEvent) => {
-    if (longPressTimer.current) {
-      clearTimeout(longPressTimer.current)
-      longPressTimer.current = null
-    }
-    if (longPressTriggered.current) {
-      e.preventDefault()
-      e.stopPropagation()
-    }
-    setTimeout(() => setShowTooltip(false), 2000) // 2秒后隐藏
   }
 
   const handleContextMenu = (e: React.MouseEvent) => {
@@ -127,10 +84,10 @@ export default function BookmarkItem({
         <Pin className="w-3 h-3" fill={bookmark.isPinned ? 'currentColor' : 'none'} />
       </button>
 
-      {/* Edit button（桌面端 hover 显示） */}
+      {/* Edit button（移动端常显，桌面端 hover 显示） */}
       <button
         onClick={handleEditClick}
-        className="absolute -top-1 left-1 z-10 w-5 h-5 rounded-full bg-white/20 text-white/60 opacity-0 group-hover:opacity-100 hover:bg-white/40 hover:text-white flex items-center justify-center transition-all"
+        className="absolute -top-1 left-1 z-10 w-6 h-6 sm:w-5 sm:h-5 rounded-full bg-white/25 text-white/80 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 hover:bg-white/40 hover:text-white flex items-center justify-center transition-all"
         title="编辑书签"
       >
         <Edit3 className="w-3 h-3" />
@@ -145,10 +102,6 @@ export default function BookmarkItem({
 
       <button
         onClick={handleClick}
-        onTouchStart={handleTouchStart}
-        onTouchMove={handleTouchMove}
-        onTouchEnd={handleTouchEnd}
-        onTouchCancel={handleTouchMove}
         onContextMenu={handleContextMenu}
         onMouseEnter={() => setShowTooltip(true)}
         onMouseLeave={() => setShowTooltip(false)}
