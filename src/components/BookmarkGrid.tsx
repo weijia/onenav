@@ -13,6 +13,7 @@ interface BookmarkGridProps {
   openInNewTab: boolean
   onItemClick?: (bookmark: DisplayBookmark) => void
   onTogglePin?: (url: string) => void
+  onEditBookmark?: (bookmark: DisplayBookmark) => void
 }
 
 export default function BookmarkGrid({
@@ -26,6 +27,7 @@ export default function BookmarkGrid({
   openInNewTab,
   onItemClick,
   onTogglePin,
+  onEditBookmark,
 }: BookmarkGridProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [columns, setColumns] = useState(6)
@@ -77,6 +79,7 @@ export default function BookmarkGrid({
             openInNewTab={openInNewTab}
             onClick={onItemClick}
             onTogglePin={onTogglePin}
+            onEdit={onEditBookmark}
           />
         ))}
       </div>

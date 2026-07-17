@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react'
 import type { DisplayBookmark } from '@/types'
-import { Pin, Globe } from 'lucide-react'
+import { Edit3, Pin, Globe } from 'lucide-react'
 
 interface BookmarkItemProps {
   bookmark: DisplayBookmark
@@ -11,6 +11,7 @@ interface BookmarkItemProps {
   openInNewTab: boolean
   onClick?: (bookmark: DisplayBookmark) => void
   onTogglePin?: (url: string) => void
+  onEdit?: (bookmark: DisplayBookmark) => void
 }
 
 export default function BookmarkItem({
@@ -22,11 +23,13 @@ export default function BookmarkItem({
   openInNewTab,
   onClick,
   onTogglePin,
+  onEdit,
 }: BookmarkItemProps) {
   const [imgError, setImgError] = useState(false)
   const [imgLoaded, setImgLoaded] = useState(false)
   const [showTooltip, setShowTooltip] = useState(false)
   const longPressTimer = useRef<number | null>(null)
+  const longPressTriggered = useRef(false)
 
   const firstLetter = bookmark.title.charAt(0).toUpperCase()
 
@@ -46,6 +49,10 @@ export default function BookmarkItem({
   }
 
   const handleClick = () => {
+    if (longPressTriggered.current) {
+      longPressTriggered.current = false
+      return
+    }
     onClick?.(bookmark)
     if (openInNewTab) {
       window.open(bookmark.url, '_blank')
@@ -59,10 +66,18 @@ export default function BookmarkItem({
     onTogglePin?.(bookmark.url)
   }
 
+  const handleEditClick = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    onEdit?.(bookmark)
+  }
+
   // 长按处理（移动端）
   const handleTouchStart = () => {
+    longPressTriggered.current = false
     longPressTimer.current = window.setTimeout(() => {
-      setShowTooltip(true)
+      longPressTriggered.current = true
+      setShowTooltip(false)
+      onEdit?.(bookmark)
     }, 500) // 500ms 长按
   }
 
@@ -72,6 +87,11 @@ export default function BookmarkItem({
       longPressTimer.current = null
     }
     setTimeout(() => setShowTooltip(false), 2000) // 2秒后隐藏
+  }
+
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault()
+    onEdit?.(bookmark)
   }
 
   return (
@@ -89,6 +109,15 @@ export default function BookmarkItem({
         <Pin className="w-3 h-3" fill={bookmark.isPinned ? 'currentColor' : 'none'} />
       </button>
 
+      {/* Edit button（桌面端 hover 显示） */}
+      <button
+        onClick={handleEditClick}
+        className="absolute -top-1 left-1 z-10 w-5 h-5 rounded-full bg-white/20 text-white/60 opacity-0 group-hover:opacity-100 hover:bg-white/40 hover:text-white flex items-center justify-center transition-all"
+        title="编辑书签"
+      >
+        <Edit3 className="w-3 h-3" />
+      </button>
+
       {/* 长按提示（移动端） */}
       {showTooltip && (
         <div className="absolute -top-16 left-1/2 -translate-x-1/2 z-50 bg-black/90 text-white text-xs p-3 rounded-lg whitespace-pre-line max-w-xs pointer-events-none">
@@ -100,6 +129,7 @@ export default function BookmarkItem({
         onClick={handleClick}
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
+        onContextMenu={handleContextMenu}
         onMouseEnter={() => setShowTooltip(true)}
         onMouseLeave={() => setShowTooltip(false)}
         className="flex flex-col items-center gap-1.5 cursor-pointer bg-transparent border-0 p-0 w-full"

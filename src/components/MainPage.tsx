@@ -6,12 +6,13 @@ import { loadFavoritesBookmarksFromRS, archiveFavoritesOnRS } from '@/lib/favori
 import { filterByTag, getMostVisitedBookmarks, isDeleted, getFaviconUrl, stringToColor } from '@/lib/bookmarks'
 import { recordClick, loadClickStatsFromWebDAV, togglePinnedBookmark, loadPinnedBookmarks, loadPinnedBookmarksAsync, savePinnedBookmarks } from '@/lib/stats'
 import { clearRemoteStorageLogin, getSavedStorageCredentials, getStorageCredentials, isRemoteStorageAuthError, onStatusChange } from '@/lib/remotestorage-connection'
-import { getPouchDB, upsertBookmarkEntriesFromExternal } from '@/lib/pouchdb'
+import { getPouchDB, updateBookmarkFromEdit, upsertBookmarkEntriesFromExternal, type BookmarkEditInput } from '@/lib/pouchdb'
 import { loadFromRemoteStorage } from '@/lib/remotestorage-load'
 import { syncToRemoteStorage } from '@/lib/remotestorage-sync'
 
 import Sidebar from '@/components/Sidebar'
 import BookmarkGrid from '@/components/BookmarkGrid'
+import BookmarkEditDialog from '@/components/BookmarkEditDialog'
 import SettingsDialog from '@/components/SettingsDialog'
 import SetupWizard from '@/components/SetupWizard'
 import { RefreshCw, Loader2, LayoutGrid, Search, Menu, X } from 'lucide-react'
@@ -34,6 +35,7 @@ export default function MainPage() {
   const [pinnedUrls, setPinnedUrls] = useState<string[]>([])
   const [initialized, setInitialized] = useState(false)
   const [remoteStorageNeedsLogin, setRemoteStorageNeedsLogin] = useState(false)
+  const [editingBookmark, setEditingBookmark] = useState<DisplayBookmark | null>(null)
   const processBookmarksRef = useRef<((store: BookmarksStore, config: AppConfig) => void) | undefined>(undefined)
   const favoritesDataRef = useRef<Record<string, BookmarkEntry> | null>(null)
 
@@ -327,6 +329,33 @@ export default function MainPage() {
     await saveToAllSources(updatedConfig)
   }
 
+  const pushBookmarksToRemoteStorage = useCallback(async () => {
+    const credentials = getStorageCredentials() || getSavedStorageCredentials()
+    if (!credentials) return
+    try {
+      const db = await getPouchDB()
+      await syncToRemoteStorage(db, credentials, {
+        maxFileSize: 500 * 1024,
+        autoMerge: true,
+      })
+    } catch (err) {
+      if (isRemoteStorageAuthError(err)) {
+        handleRemoteStorageAuthExpired()
+        return
+      }
+      console.error('[Sync] 书签编辑后同步失败:', err)
+    }
+  }, [handleRemoteStorageAuthExpired])
+
+  const handleBookmarkEditSave = async (originalUrl: string, data: BookmarkEditInput) => {
+    await updateBookmarkFromEdit(originalUrl, data)
+    const store = await loadBookmarksFromPouchDB()
+    if (store) {
+      renderStore(store, appConfig)
+    }
+    await pushBookmarksToRemoteStorage()
+  }
+
   const handleWebDAVSetup = useCallback((config: { url: string; username: string; password: string }) => {
     setWebdavConfig(config)
     loadAllSources()
@@ -430,7 +459,7 @@ export default function MainPage() {
             </div>
           )}
           <div className="w-full overflow-visible">
-            <BookmarkGrid bookmarks={filteredBookmarks} iconSize={appConfig.display.iconSize} borderRadius={appConfig.display.iconBorderRadius} spacing={appConfig.display.iconSpacing} showName={appConfig.display.showName} nameSize={appConfig.display.nameSize} maxWidth={appConfig.display.maxWidth} openInNewTab={appConfig.display.openInNewTab} onItemClick={(bookmark) => recordClick(bookmark, webdavConfig || undefined)} onTogglePin={handleTogglePin} />
+            <BookmarkGrid bookmarks={filteredBookmarks} iconSize={appConfig.display.iconSize} borderRadius={appConfig.display.iconBorderRadius} spacing={appConfig.display.iconSpacing} showName={appConfig.display.showName} nameSize={appConfig.display.nameSize} maxWidth={appConfig.display.maxWidth} openInNewTab={appConfig.display.openInNewTab} onItemClick={(bookmark) => recordClick(bookmark, webdavConfig || undefined)} onTogglePin={handleTogglePin} onEditBookmark={setEditingBookmark} />
           </div>
         </div>
 
@@ -440,6 +469,14 @@ export default function MainPage() {
           <span>{buildTimeDisplay}</span>
         </div>
       </main>
+      <BookmarkEditDialog
+        open={!!editingBookmark}
+        bookmark={editingBookmark}
+        onOpenChange={(open) => {
+          if (!open) setEditingBookmark(null)
+        }}
+        onSave={handleBookmarkEditSave}
+      />
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} config={appConfig} onConfigSave={handleConfigSave} />
     </div>
   )

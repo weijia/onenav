@@ -135,6 +135,58 @@ export async function saveBookmark(bookmark: Omit<BookmarkDoc, '_id' | 'type'> &
   }
 }
 
+export interface BookmarkEditInput {
+  title: string
+  url: string
+  tags: string[]
+  description?: string
+  icon?: string
+}
+
+export async function updateBookmarkFromEdit(originalUrl: string, input: BookmarkEditInput): Promise<void> {
+  const normalizedUrl = input.url.trim()
+  if (!normalizedUrl) {
+    throw new Error('URL 不能为空')
+  }
+
+  await withAutoReset(async (database) => {
+    const now = Date.now()
+    const originalId = PREFIX.BOOKMARK + originalUrl
+    const targetId = PREFIX.BOOKMARK + normalizedUrl
+    const existing = await database.get(originalId).catch(() => null)
+    const targetExisting = originalId === targetId ? existing : await database.get(targetId).catch(() => null)
+
+    const doc: BookmarkDoc = {
+      _id: targetId,
+      type: 'bookmark',
+      url: normalizedUrl,
+      title: input.title.trim() || normalizedUrl,
+      tags: input.tags.map((t) => t.trim()).filter(Boolean),
+      description: input.description?.trim() || undefined,
+      icon: input.icon?.trim() || undefined,
+      clicks: Number(targetExisting?.clicks ?? existing?.clicks ?? 0),
+      lastClickedAt: targetExisting?.lastClickedAt ?? existing?.lastClickedAt,
+      createdAt: Number(targetExisting?.createdAt ?? existing?.createdAt ?? now),
+      updatedAt: now,
+      deleted: false,
+    }
+
+    if (targetExisting) {
+      await database.put({ ...doc, _rev: targetExisting._rev })
+    } else {
+      await database.put(doc)
+    }
+
+    if (originalId !== targetId && existing && !existing.deleted) {
+      await database.put({
+        ...existing,
+        deleted: true,
+        updatedAt: now,
+      })
+    }
+  })
+}
+
 export async function saveBookmarks(bookmarks: Array<Omit<BookmarkDoc, '_id' | 'type'>>): Promise<void> {
   console.log('[PouchDB] saveBookmarks: 开始保存', bookmarks.length, '条书签到 PouchDB')
   
