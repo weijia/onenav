@@ -18,6 +18,9 @@ import SetupWizard from '@/components/SetupWizard'
 import { RefreshCw, Loader2, LayoutGrid, Search, Menu, X } from 'lucide-react'
 import { versionDisplay, buildTimeDisplay } from '@/lib/version'
 
+type SyncStatus = 'idle' | 'pending' | 'syncing' | 'synced' | 'error'
+const PENDING_BOOKMARK_SYNC_KEY = 'onenav:pendingBookmarkSync'
+
 export default function MainPage() {
   const [webdavConfig, setWebdavConfig] = useState<WebDAVConfig | null>(null)
   const [appConfig, setAppConfig] = useState<AppConfig>(getDefaultAppConfig())
@@ -36,9 +39,14 @@ export default function MainPage() {
   const [initialized, setInitialized] = useState(false)
   const [remoteStorageNeedsLogin, setRemoteStorageNeedsLogin] = useState(false)
   const [editingBookmark, setEditingBookmark] = useState<DisplayBookmark | null>(null)
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>(() =>
+    localStorage.getItem(PENDING_BOOKMARK_SYNC_KEY) === '1' ? 'pending' : 'idle'
+  )
   const processBookmarksRef = useRef<((store: BookmarksStore, config: AppConfig) => void) | undefined>(undefined)
   const favoritesDataRef = useRef<Record<string, BookmarkEntry> | null>(null)
   const deletedBookmarkUrlsRef = useRef<Set<string>>(new Set())
+  const backgroundSyncRunningRef = useRef(false)
+  const pendingSyncRevisionRef = useRef(0)
 
   // 合并收藏书签后渲染（收藏数据来自 favoritesDataRef）
   const renderStore = useCallback((store: BookmarksStore | null, config: AppConfig) => {
@@ -333,23 +341,62 @@ export default function MainPage() {
     await saveToAllSources(updatedConfig)
   }
 
-  const pushBookmarksToRemoteStorage = useCallback(async () => {
+  const markBookmarkSyncPending = useCallback(() => {
+    pendingSyncRevisionRef.current += 1
+    localStorage.setItem(PENDING_BOOKMARK_SYNC_KEY, '1')
+    setSyncStatus('pending')
+  }, [])
+
+  const pushBookmarksToRemoteStorage = useCallback(async (): Promise<boolean> => {
     const credentials = getStorageCredentials() || getSavedStorageCredentials()
-    if (!credentials) return
+    if (!credentials) return false
     try {
       const db = await getPouchDB()
       await syncToRemoteStorage(db, credentials, {
         maxFileSize: 500 * 1024,
         autoMerge: true,
       })
+      return true
     } catch (err) {
       if (isRemoteStorageAuthError(err)) {
         handleRemoteStorageAuthExpired()
-        return
+        throw err
       }
       console.error('[Sync] 书签编辑后同步失败:', err)
+      throw err
     }
   }, [handleRemoteStorageAuthExpired])
+
+  const runBookmarkSyncInBackground = useCallback(() => {
+    if (backgroundSyncRunningRef.current) return
+    backgroundSyncRunningRef.current = true
+    const syncRevision = pendingSyncRevisionRef.current
+    setSyncStatus('syncing')
+
+    pushBookmarksToRemoteStorage()
+      .then((synced) => {
+        if (synced) {
+          if (pendingSyncRevisionRef.current === syncRevision) {
+            localStorage.removeItem(PENDING_BOOKMARK_SYNC_KEY)
+            setSyncStatus('synced')
+          } else {
+            localStorage.setItem(PENDING_BOOKMARK_SYNC_KEY, '1')
+            setSyncStatus('pending')
+          }
+        } else {
+          localStorage.setItem(PENDING_BOOKMARK_SYNC_KEY, '1')
+          setSyncStatus('pending')
+        }
+      })
+      .catch((err) => {
+        localStorage.setItem(PENDING_BOOKMARK_SYNC_KEY, '1')
+        setSyncStatus('error')
+        console.error('[Sync] 后台书签同步失败:', err)
+      })
+      .finally(() => {
+        backgroundSyncRunningRef.current = false
+      })
+  }, [pushBookmarksToRemoteStorage])
 
   const handleBookmarkEditSave = async (originalUrl: string, data: BookmarkEditInput) => {
     await updateBookmarkFromEdit(originalUrl, data)
@@ -358,7 +405,8 @@ export default function MainPage() {
     if (store) {
       renderStore(store, appConfig)
     }
-    await pushBookmarksToRemoteStorage()
+    markBookmarkSyncPending()
+    runBookmarkSyncInBackground()
   }
 
   const handleBookmarkDelete = async (url: string) => {
@@ -372,8 +420,16 @@ export default function MainPage() {
     if (store) {
       renderStore(store, appConfig)
     }
-    await pushBookmarksToRemoteStorage()
+    markBookmarkSyncPending()
+    runBookmarkSyncInBackground()
   }
+
+  useEffect(() => {
+    const credentials = getStorageCredentials() || getSavedStorageCredentials()
+    if (initialized && syncStatus === 'pending' && credentials) {
+      runBookmarkSyncInBackground()
+    }
+  }, [initialized, runBookmarkSyncInBackground, syncStatus])
 
   const handleWebDAVSetup = useCallback((config: { url: string; username: string; password: string }) => {
     setWebdavConfig(config)
@@ -401,6 +457,36 @@ export default function MainPage() {
     const tag = appConfig.tags.find((t) => t.tag === activeTag || t.id === activeTag)
     return tag?.label || activeTag || '全部书签'
   }, [activeTag, appConfig.tags])
+
+  const syncStatusLabel = useMemo(() => {
+    switch (syncStatus) {
+      case 'pending':
+        return '待同步'
+      case 'syncing':
+        return '同步中'
+      case 'synced':
+        return '已同步'
+      case 'error':
+        return '同步失败'
+      default:
+        return ''
+    }
+  }, [syncStatus])
+
+  const syncStatusClass = useMemo(() => {
+    switch (syncStatus) {
+      case 'pending':
+        return 'bg-amber-400/15 text-amber-100 border-amber-300/20'
+      case 'syncing':
+        return 'bg-blue-400/15 text-blue-100 border-blue-300/20 animate-pulse'
+      case 'synced':
+        return 'bg-emerald-400/15 text-emerald-100 border-emerald-300/20'
+      case 'error':
+        return 'bg-red-400/15 text-red-100 border-red-300/20'
+      default:
+        return ''
+    }
+  }, [syncStatus])
 
   const renderBackground = () => {
     const { background } = appConfig
@@ -470,9 +556,16 @@ export default function MainPage() {
             <LayoutGrid className="w-5 h-5 text-white/60" />
             <span className="text-white/60 text-sm">OneNav</span>
           </div>
-          <button onClick={handleRefresh} disabled={refreshing} className="w-8 h-8 rounded-lg flex items-center justify-center text-white/40 hover:text-white/70 hover:bg-white/10 transition-all" title="Refresh">
-            <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
-          </button>
+          <div className="flex items-center gap-2">
+            {syncStatusLabel && (
+              <span className={`rounded-full border px-2.5 py-1 text-xs ${syncStatusClass}`}>
+                {syncStatusLabel}
+              </span>
+            )}
+            <button onClick={handleRefresh} disabled={refreshing} className="w-8 h-8 rounded-lg flex items-center justify-center text-white/40 hover:text-white/70 hover:bg-white/10 transition-all" title="Refresh">
+              <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 flex flex-col items-center justify-center px-4">
