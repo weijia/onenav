@@ -187,6 +187,25 @@ export async function updateBookmarkFromEdit(originalUrl: string, input: Bookmar
   })
 }
 
+export async function deleteBookmarkFromEdit(url: string): Promise<void> {
+  const normalizedUrl = url.trim()
+  if (!normalizedUrl) {
+    throw new Error('URL 不能为空')
+  }
+
+  await withAutoReset(async (database) => {
+    const id = PREFIX.BOOKMARK + normalizedUrl
+    const existing = await database.get(id).catch(() => null)
+    if (!existing) return
+
+    await database.put({
+      ...existing,
+      deleted: true,
+      updatedAt: Date.now(),
+    })
+  })
+}
+
 export async function saveBookmarks(bookmarks: Array<Omit<BookmarkDoc, '_id' | 'type'>>): Promise<void> {
   console.log('[PouchDB] saveBookmarks: 开始保存', bookmarks.length, '条书签到 PouchDB')
   

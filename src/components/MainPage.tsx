@@ -6,7 +6,7 @@ import { loadFavoritesBookmarksFromRS, archiveFavoritesOnRS } from '@/lib/favori
 import { filterByTag, getMostVisitedBookmarks, isDeleted, getFaviconUrl, stringToColor } from '@/lib/bookmarks'
 import { recordClick, loadClickStatsFromWebDAV, togglePinnedBookmark, loadPinnedBookmarks, loadPinnedBookmarksAsync, savePinnedBookmarks } from '@/lib/stats'
 import { clearRemoteStorageLogin, getSavedStorageCredentials, getStorageCredentials, isRemoteStorageAuthError, onStatusChange } from '@/lib/remotestorage-connection'
-import { getPouchDB, updateBookmarkFromEdit, upsertBookmarkEntriesFromExternal, type BookmarkEditInput } from '@/lib/pouchdb'
+import { deleteBookmarkFromEdit, getPouchDB, updateBookmarkFromEdit, upsertBookmarkEntriesFromExternal, type BookmarkEditInput } from '@/lib/pouchdb'
 import { loadFromRemoteStorage } from '@/lib/remotestorage-load'
 import { syncToRemoteStorage } from '@/lib/remotestorage-sync'
 
@@ -356,6 +356,15 @@ export default function MainPage() {
     await pushBookmarksToRemoteStorage()
   }
 
+  const handleBookmarkDelete = async (url: string) => {
+    await deleteBookmarkFromEdit(url)
+    const store = await loadBookmarksFromPouchDB()
+    if (store) {
+      renderStore(store, appConfig)
+    }
+    await pushBookmarksToRemoteStorage()
+  }
+
   const handleWebDAVSetup = useCallback((config: { url: string; username: string; password: string }) => {
     setWebdavConfig(config)
     loadAllSources()
@@ -492,6 +501,7 @@ export default function MainPage() {
           if (!open) setEditingBookmark(null)
         }}
         onSave={handleBookmarkEditSave}
+        onDelete={handleBookmarkDelete}
       />
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} config={appConfig} onConfigSave={handleConfigSave} />
     </div>

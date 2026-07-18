@@ -11,7 +11,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Loader2 } from 'lucide-react'
+import { Loader2, Trash2 } from 'lucide-react'
 
 interface BookmarkEditDialogProps {
   open: boolean
@@ -24,15 +24,18 @@ interface BookmarkEditDialogProps {
     description?: string
     icon?: string
   }) => Promise<void>
+  onDelete: (url: string) => Promise<void>
 }
 
-export default function BookmarkEditDialog({ open, bookmark, onOpenChange, onSave }: BookmarkEditDialogProps) {
+export default function BookmarkEditDialog({ open, bookmark, onOpenChange, onSave, onDelete }: BookmarkEditDialogProps) {
   const [title, setTitle] = useState('')
   const [url, setUrl] = useState('')
   const [tagsText, setTagsText] = useState('')
   const [description, setDescription] = useState('')
   const [icon, setIcon] = useState('')
   const [saving, setSaving] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -43,10 +46,11 @@ export default function BookmarkEditDialog({ open, bookmark, onOpenChange, onSav
     setDescription(bookmark.description || '')
     setIcon(bookmark.favicon || '')
     setError('')
+    setConfirmDelete(false)
   }, [bookmark])
 
   const handleSave = async () => {
-    if (!bookmark || saving) return
+    if (!bookmark || saving || deleting) return
     const nextUrl = url.trim()
     if (!nextUrl) {
       setError('URL 不能为空')
@@ -75,6 +79,26 @@ export default function BookmarkEditDialog({ open, bookmark, onOpenChange, onSav
       setError(e instanceof Error ? e.message : String(e))
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleDelete = async () => {
+    if (!bookmark || saving || deleting) return
+    if (!confirmDelete) {
+      setConfirmDelete(true)
+      setError('')
+      return
+    }
+
+    setDeleting(true)
+    setError('')
+    try {
+      await onDelete(bookmark.url)
+      onOpenChange(false)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -122,14 +146,26 @@ export default function BookmarkEditDialog({ open, bookmark, onOpenChange, onSav
           {error && <p className="text-sm text-red-300">{error}</p>}
         </div>
 
-        <DialogFooter className="bg-white/5 border-white/10">
-          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={saving} className="text-white/70 hover:text-white hover:bg-white/10">
+        <DialogFooter className="bg-white/5 border-white/10 sm:justify-between">
+          <Button
+            variant="ghost"
+            onClick={handleDelete}
+            disabled={saving || deleting}
+            className={confirmDelete ? 'text-red-200 hover:text-white hover:bg-red-500/20' : 'text-red-300/80 hover:text-red-100 hover:bg-red-500/15'}
+          >
+            {deleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+            {confirmDelete ? '确认删除' : '删除书签'}
+          </Button>
+
+          <div className="flex gap-2">
+          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={saving || deleting} className="text-white/70 hover:text-white hover:bg-white/10">
             取消
           </Button>
-          <Button onClick={handleSave} disabled={saving}>
+          <Button onClick={handleSave} disabled={saving || deleting}>
             {saving && <Loader2 className="w-4 h-4 animate-spin" />}
             保存
           </Button>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>
