@@ -6,7 +6,7 @@ import { loadFavoritesBookmarksFromRS, archiveFavoritesOnRS } from '@/lib/favori
 import { filterByTag, getMostVisitedBookmarks, isDeleted, getFaviconUrl, stringToColor } from '@/lib/bookmarks'
 import { recordClick, loadClickStatsFromWebDAV, togglePinnedBookmark, loadPinnedBookmarks, loadPinnedBookmarksAsync, savePinnedBookmarks } from '@/lib/stats'
 import { clearRemoteStorageLogin, getSavedStorageCredentials, getStorageCredentials, isRemoteStorageAuthError, onStatusChange } from '@/lib/remotestorage-connection'
-import { deleteBookmarkFromEdit, getPouchDB, updateBookmarkFromEdit, upsertBookmarkEntriesFromExternal, type BookmarkEditInput } from '@/lib/pouchdb'
+import { deleteBookmarkFromEdit, getDeletedBookmarkUrls, getPouchDB, updateBookmarkFromEdit, upsertBookmarkEntriesFromExternal, type BookmarkEditInput } from '@/lib/pouchdb'
 import { loadFromRemoteStorage } from '@/lib/remotestorage-load'
 import { syncToRemoteStorage } from '@/lib/remotestorage-sync'
 
@@ -38,12 +38,13 @@ export default function MainPage() {
   const [editingBookmark, setEditingBookmark] = useState<DisplayBookmark | null>(null)
   const processBookmarksRef = useRef<((store: BookmarksStore, config: AppConfig) => void) | undefined>(undefined)
   const favoritesDataRef = useRef<Record<string, BookmarkEntry> | null>(null)
+  const deletedBookmarkUrlsRef = useRef<Set<string>>(new Set())
 
   // 合并收藏书签后渲染（收藏数据来自 favoritesDataRef）
   const renderStore = useCallback((store: BookmarksStore | null, config: AppConfig) => {
     if (!store) return
     const merged = favoritesDataRef.current
-      ? mergeFavoritesIntoStore(store, favoritesDataRef.current)
+      ? mergeFavoritesIntoStore(store, favoritesDataRef.current, deletedBookmarkUrlsRef.current)
       : store
     processBookmarksRef.current?.(merged, config)
   }, [])
@@ -113,6 +114,7 @@ export default function MainPage() {
       // 1. 先从本地加载缓存（快速显示）
       let config = loadAppConfig() || await loadAppConfigFromPouchDB() || getDefaultAppConfig()
       const localStore = await loadBookmarksFromPouchDB()
+      deletedBookmarkUrlsRef.current = await getDeletedBookmarkUrls()
       const pinned = await loadPinnedBookmarksAsync()
 
       setAppConfig(config)
@@ -193,6 +195,7 @@ export default function MainPage() {
           // 重新加载以显示 RemoteStorage 的数据
           const rsConfig = await loadAppConfigFromPouchDB()
           const rsStore = await loadBookmarksFromPouchDB()
+          deletedBookmarkUrlsRef.current = await getDeletedBookmarkUrls()
           if (rsConfig) {
             // 检查 activeTag 是否还存在
             const tagKeys = rsConfig.tags.flatMap((t: { id: string; tag: string }) => [t.id, t.tag])
@@ -280,6 +283,7 @@ export default function MainPage() {
   useEffect(() => {
     const loadAndFilter = async () => {
       const store = await loadBookmarksFromPouchDB()
+      deletedBookmarkUrlsRef.current = await getDeletedBookmarkUrls()
       if (store) renderStore(store, appConfig)
     }
     loadAndFilter()
@@ -350,6 +354,7 @@ export default function MainPage() {
   const handleBookmarkEditSave = async (originalUrl: string, data: BookmarkEditInput) => {
     await updateBookmarkFromEdit(originalUrl, data)
     const store = await loadBookmarksFromPouchDB()
+    deletedBookmarkUrlsRef.current = await getDeletedBookmarkUrls()
     if (store) {
       renderStore(store, appConfig)
     }
@@ -358,7 +363,12 @@ export default function MainPage() {
 
   const handleBookmarkDelete = async (url: string) => {
     await deleteBookmarkFromEdit(url)
+    deletedBookmarkUrlsRef.current.add(url)
+    if (favoritesDataRef.current) {
+      delete favoritesDataRef.current[url]
+    }
     const store = await loadBookmarksFromPouchDB()
+    deletedBookmarkUrlsRef.current = await getDeletedBookmarkUrls()
     if (store) {
       renderStore(store, appConfig)
     }

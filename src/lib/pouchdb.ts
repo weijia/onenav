@@ -328,6 +328,26 @@ export async function getAllBookmarks(): Promise<BookmarkDoc[]> {
   }
 }
 
+export async function getDeletedBookmarkUrls(): Promise<Set<string>> {
+  try {
+    return withAutoReset(async (database) => {
+      const result = await database.allDocs({
+        startkey: PREFIX.BOOKMARK,
+        endkey: PREFIX.BOOKMARK + '\uffff',
+        include_docs: true,
+      })
+      const urls = result.rows
+        .map((row: any) => row.doc)
+        .filter((doc: BookmarkDoc) => doc.deleted)
+        .map((doc: BookmarkDoc) => doc.url)
+      return new Set(urls)
+    })
+  } catch (err) {
+    console.error('[PouchDB] getDeletedBookmarkUrls error:', err)
+    return new Set()
+  }
+}
+
 export async function deleteBookmark(url: string): Promise<void> {
   try {
     const database = await getDb()

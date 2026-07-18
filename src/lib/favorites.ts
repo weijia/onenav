@@ -221,10 +221,14 @@ export function archiveFavorites(config: WebDAVConfig): Promise<ArchiveResult> {
 export function mergeFavoritesIntoStore(
   store: BookmarksStore,
   favorites: Record<string, BookmarkEntry>,
+  deletedUrls?: Set<string>,
 ): BookmarksStore {
   if (!favorites || Object.keys(favorites).length === 0) return store
   const data = { ...store.data }
   for (const [url, entry] of Object.entries(favorites)) {
+    if (deletedUrls?.has(url)) {
+      continue
+    }
     const existing = data[url]
     if (existing) {
       const tagSet = new Set(existing.tags)
