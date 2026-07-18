@@ -376,6 +376,13 @@ export default function MainPage() {
     )
   }, [bookmarks, allBookmarks, searchQuery])
 
+  const currentTagLabel = useMemo(() => {
+    if (activeTag === 'onenav') return '常用书签'
+    if (activeTag === '._all_' || activeTag === null) return '全部书签'
+    const tag = appConfig.tags.find((t) => t.tag === activeTag || t.id === activeTag)
+    return tag?.label || activeTag || '全部书签'
+  }, [activeTag, appConfig.tags])
+
   const renderBackground = () => {
     const { background } = appConfig
     if (background.type === 'gradient') {
@@ -458,7 +465,16 @@ export default function MainPage() {
               </div>
             </div>
           )}
-          <div className="w-full overflow-visible">
+          <div className="w-full overflow-visible" style={{ maxWidth: `${appConfig.display.maxWidth}px` }}>
+            <div className="mb-4 flex items-center justify-between px-2">
+              <div>
+                <p className="text-xs uppercase tracking-[0.18em] text-white/35">当前标签</p>
+                <h2 className="mt-1 text-lg font-medium text-white/85">{currentTagLabel}</h2>
+              </div>
+              <span className="rounded-full bg-white/10 px-2.5 py-1 text-xs text-white/45">
+                {filteredBookmarks.length} 个书签
+              </span>
+            </div>
             <BookmarkGrid bookmarks={filteredBookmarks} iconSize={appConfig.display.iconSize} borderRadius={appConfig.display.iconBorderRadius} spacing={appConfig.display.iconSpacing} showName={appConfig.display.showName} nameSize={appConfig.display.nameSize} maxWidth={appConfig.display.maxWidth} openInNewTab={appConfig.display.openInNewTab} onItemClick={(bookmark) => recordClick(bookmark, webdavConfig || undefined)} onTogglePin={handleTogglePin} onEditBookmark={setEditingBookmark} />
           </div>
         </div>
