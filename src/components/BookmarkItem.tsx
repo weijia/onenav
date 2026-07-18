@@ -84,10 +84,10 @@ export default function BookmarkItem({
         <Pin className="w-3 h-3" fill={bookmark.isPinned ? 'currentColor' : 'none'} />
       </button>
 
-      {/* Edit button（移动端常显，桌面端 hover 显示） */}
+      {/* Edit button（桌面端 hover 显示；移动端使用长按编辑） */}
       <button
         onClick={handleEditClick}
-        className="absolute -top-1 left-1 z-10 w-6 h-6 sm:w-5 sm:h-5 rounded-full bg-white/25 text-white/80 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 hover:bg-white/40 hover:text-white flex items-center justify-center transition-all"
+        className="absolute -top-1 left-1 z-10 hidden sm:flex w-5 h-5 rounded-full bg-white/25 text-white/80 opacity-0 sm:group-hover:opacity-100 hover:bg-white/40 hover:text-white items-center justify-center transition-all"
         title="编辑书签"
       >
         <Edit3 className="w-3 h-3" />
