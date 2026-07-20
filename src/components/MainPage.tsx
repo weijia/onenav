@@ -511,6 +511,12 @@ export default function MainPage() {
           <Loader2 className="w-8 h-8 text-white/60 animate-spin mx-auto mb-4" />
           <p className="text-white/60">Loading...</p>
         </div>
+        {/* 浮动加载状态 - 页面加载时也可见 */}
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50">
+          <span className="rounded-full border border-blue-300/20 bg-blue-400/15 px-3 py-1.5 text-xs text-blue-100 backdrop-blur-sm shadow-lg animate-pulse">
+            加载中...
+          </span>
+        </div>
       </div>
     )
   }
@@ -557,11 +563,6 @@ export default function MainPage() {
             <span className="text-white/60 text-sm">OneNav</span>
           </div>
           <div className="flex items-center gap-2">
-            {syncStatusLabel && (
-              <span className={`rounded-full border px-2.5 py-1 text-xs ${syncStatusClass}`}>
-                {syncStatusLabel}
-              </span>
-            )}
             <button onClick={handleRefresh} disabled={refreshing} className="w-8 h-8 rounded-lg flex items-center justify-center text-white/40 hover:text-white/70 hover:bg-white/10 transition-all" title="Refresh">
               <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
             </button>
@@ -597,6 +598,14 @@ export default function MainPage() {
           <span>{buildTimeDisplay}</span>
         </div>
       </main>
+      {/* 浮动同步状态 - 始终可见 */}
+      {syncStatusLabel && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 transition-all duration-300">
+          <span className={`rounded-full border px-3 py-1.5 text-xs backdrop-blur-sm shadow-lg ${syncStatusClass}`}>
+            {syncStatusLabel}
+          </span>
+        </div>
+      )}
       <BookmarkEditDialog
         open={!!editingBookmark}
         bookmark={editingBookmark}

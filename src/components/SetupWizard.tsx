@@ -12,6 +12,7 @@ import {
 import { syncToRemoteStorage } from '@/lib/remotestorage-sync'
 import { loadFromRemoteStorage, hasRemoteStorageData } from '@/lib/remotestorage-load'
 import { getPouchDB } from '@/lib/pouchdb'
+import { versionDisplay } from '@/lib/version'
 
 type SetupMode = 'choose' | 'webdav' | 'remotestorage'
 type RSLoginMode = 'widget' | 'manual'
@@ -397,7 +398,7 @@ export default function SetupWizard({ onWebDAVSetup, onRemoteStorageSetup, initi
         )}
         {/* 版本信息 */}
         <div className="text-center mt-6">
-          <p className="text-white/20 text-xs">v{__APP_VERSION__} · {new Date().getFullYear()}</p>
+          <p className="text-white/20 text-xs">{versionDisplay} · {new Date().getFullYear()}</p>
         </div>
       </div>
     </div>

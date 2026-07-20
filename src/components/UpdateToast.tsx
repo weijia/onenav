@@ -1,29 +1,31 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { RefreshCw } from 'lucide-react'
 
 export default function UpdateToast() {
   const [show, setShow] = useState(false)
+  const updateAvailableRef = useRef(false)
 
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return
 
     const handleUpdate = (reg: ServiceWorkerRegistration) => {
-      // 监听新的 Service Worker 安装
       reg.addEventListener('updatefound', () => {
         const newWorker = reg.installing
         if (!newWorker) return
 
         newWorker.addEventListener('statechange', () => {
-          // 新 Worker 已安装且等待中，提示用户刷新
+          // 新 Worker 已安装且等待中，只通知一次
           if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-            console.log('[PWA] 新版本可用')
-            setShow(true)
+            if (!updateAvailableRef.current) {
+              updateAvailableRef.current = true
+              console.log('[PWA] 新版本可用')
+              setShow(true)
+            }
           }
         })
       })
     }
 
-    // 获取 Service Worker 注册并监听更新
     const checkUpdate = async () => {
       try {
         const reg = await navigator.serviceWorker.ready
@@ -35,8 +37,7 @@ export default function UpdateToast() {
 
         // 页面加载后 3 秒检查更新
         setTimeout(() => {
-          reg.update().catch((err) => {
-            // 忽略 "Failed to update" 错误（开发环境或 scope 不匹配时常见）
+          reg.update().catch((err: Error) => {
             if (err?.message?.includes('Failed to update')) {
               console.log('[PWA] 更新检查被跳过:', err.message)
             } else {
@@ -57,7 +58,7 @@ export default function UpdateToast() {
         .then((reg) => {
           if (reg?.active) return reg.update()
         })
-        .catch((err) => {
+        .catch((err: Error) => {
           if (err?.message?.includes('Failed to update')) {
             console.log('[PWA] 更新检查被跳过:', err.message)
           } else {
@@ -78,10 +79,8 @@ export default function UpdateToast() {
     const newWorker = reg.waiting
 
     if (newWorker) {
-      // 发送消息让新 Worker 跳过等待
       newWorker.postMessage({ type: 'SKIP_WAITING' })
 
-      // 监听 controllerchange 事件，新 Worker 激活后刷新页面
       navigator.serviceWorker.addEventListener('controllerchange', () => {
         window.location.reload()
       })
@@ -93,7 +92,7 @@ export default function UpdateToast() {
   if (!show) return null
 
   return (
-    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 animate-slide-in">
+    <div className="fixed bottom-16 left-1/2 -translate-x-1/2 z-[60] animate-slide-in-bottom">
       <div className="flex items-center gap-3 bg-gray-900/95 backdrop-blur-xl text-white px-4 py-3 rounded-xl border border-white/10 shadow-lg">
         <span className="text-sm">新版本可用</span>
         <button

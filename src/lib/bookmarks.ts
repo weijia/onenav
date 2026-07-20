@@ -10,24 +10,18 @@ export function isDeleted(entry: { deletedMeta?: unknown; meta: { deleted?: numb
 }
 
 export function filterByTag(store: BookmarksStore, tag: string): DisplayBookmark[] {
-  console.log('[filterByTag] 开始过滤，标签:', tag)
   const results: DisplayBookmark[] = []
   // 支持逗号分隔的多个 tag，书签匹配其中任意一个即可
   const tags = tag.split(',').map(t => t.trim()).filter(Boolean)
-  console.log('[filterByTag] 解析后的标签:', tags)
-  console.log('[filterByTag] 总书签数量:', Object.keys(store.data).length)
 
   for (const [key, entry] of Object.entries(store.data)) {
     // Skip deleted entries
     if (isDeleted(entry)) continue
 
     // Check if entry has at least one of the requested tags
-    console.log('[filterByTag] 检查书签:', key, 'tags:', entry.tags)
     if (!entry.tags.some((t: string) => tags.includes(t))) {
-      console.log('[filterByTag]   -> 不匹配')
       continue
     }
-    console.log('[filterByTag]   -> 匹配成功')
 
     // URL 从 key 获取（key 就是 URL），meta.url 可能为空
     const url = key
@@ -45,7 +39,6 @@ export function filterByTag(store: BookmarksStore, tag: string): DisplayBookmark
     })
   }
 
-  console.log('[filterByTag] 过滤完成，结果数量:', results.length)
   return results
 }
 
@@ -157,7 +150,6 @@ export function getMostVisitedBookmarks(store: BookmarksStore, limit: number = 3
   
   // 如果没有点击记录或结果不足，补充其他书签
   if (results.length === 0) {
-    console.log('[Bookmarks] 没有点击记录，显示所有书签')
     const allBookmarks = Object.entries(store.data)
       .filter(([_, e]) => !isDeleted(e))
       .map(([url, e]) => ({
