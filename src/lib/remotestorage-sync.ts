@@ -7,6 +7,7 @@
 import { RemoteStorageFileSystem, type RemoteStorageConfig } from './remotestorage-fs'
 import { resolveOneNavSyncConflict } from './bookmark-conflicts'
 import { showSyncToast, type SyncToast } from './sync-notify'
+import { getStorageCredentials } from './remotestorage-connection'
 
 let SyncEngine: any = null
 
