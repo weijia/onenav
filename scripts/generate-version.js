@@ -1,10 +1,11 @@
 /**
  * Generate version.json before build.
  * Reads git info and current time, writes to src/version.json.
+ * Also records key dependency versions for debugging.
  * Works both locally and in CI.
  */
 import { execSync } from 'child_process'
-import { writeFileSync } from 'fs'
+import { writeFileSync, readFileSync } from 'fs'
 
 function run(cmd) {
   try {
@@ -30,7 +31,25 @@ const buildTime = new Date().toLocaleString('zh-CN', {
   hour12: false,
 })
 
-const payload = { version, buildTime, sha, branch, tag }
+// Read key dependency versions from package.json
+const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf-8'))
+const deps = pkg.dependencies || {}
+const packages = [
+  'universal-sync-v2',
+  'zen-fs-remotestoragejs',
+  'zen-fs-cache',
+  'zen-fs-webdav',
+  '@zenfs/core',
+  '@zenfs/dom',
+  'pouchdb-browser',
+  'remotestoragejs',
+]
+const depVersions = {}
+for (const name of packages) {
+  if (deps[name]) depVersions[name] = deps[name]
+}
+
+const payload = { version, buildTime, sha, branch, tag, depVersions }
 writeFileSync(
   new URL('../src/version.json', import.meta.url),
   JSON.stringify(payload, null, 2) + '\n'
