@@ -1,5 +1,6 @@
 import type { BookmarkEntry } from '@/types'
 import { getEntryUpdatedAt } from '@/lib/bookmark-conflicts'
+import { isRemoteStorageConfigured, scheduleAutoSync } from '@/lib/remotestorage-sync'
 
 const DB_NAME = 'onenav'
 let db: any = null
@@ -243,6 +244,11 @@ export async function saveBookmarks(bookmarks: Array<Omit<BookmarkDoc, '_id' | '
     console.log('[PouchDB] saveBookmarks: 准备 bulkDocs，文档数量:', docs.length)
     await database.bulkDocs(docs)
     console.log('[PouchDB] saveBookmarks: bulkDocs 完成')
+
+    // 已配置 RemoteStorage 时，保存后自动同步到服务器
+    if (isRemoteStorageConfigured()) {
+      await scheduleAutoSync(database)
+    }
   })
 }
 

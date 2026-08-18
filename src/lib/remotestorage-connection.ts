@@ -35,6 +35,25 @@ function notifyListeners(info: RSConnectionInfo) {
   listeners.forEach(cb => cb(info))
 }
 
+/**
+ * 连接成功后自动双向同步：先 pull（把服务器配置/书签拉回本地），再 push（把本地配置上传到服务器）。
+ * 这能解决「授权后首次加载时本地 cfg:app 缺失导致 404」的问题——push 之后远端就有了配置。
+ * 通过动态 import 避免与 remotestorage-sync 形成循环依赖。
+ */
+async function triggerAutoSyncAfterConnect(): Promise<void> {
+  try {
+    const creds = getStorageCredentials()
+    if (!creds) return
+    const { getPouchDB } = await import('./pouchdb')
+    const { syncToRemoteStorage } = await import('./remotestorage-sync')
+    const db = await getPouchDB()
+    console.log('[RS Connection] 连接成功，自动双向同步（pull + push）…')
+    await syncToRemoteStorage(db, creds, { showToast: true })
+  } catch (err) {
+    console.error('[RS Connection] 自动同步失败（已忽略）:', err)
+  }
+}
+
 function saveCredentials(userAddress: string, href: string, token: string): void {
   try {
     localStorage.setItem(RS_CREDENTIALS_KEY, JSON.stringify({ userAddress, href, token }))
@@ -141,6 +160,7 @@ export function getRemoteStorage(): RemoteStorage {
             storageHref: saved.href,
             token: saved.token,
           })
+          void triggerAutoSyncAfterConnect()
         })
         rsInstance.on('error', (err: any) => {
           console.error('[RS Connection] 连接恢复失败:', err)
@@ -226,6 +246,7 @@ export function connectWithUserAddress(userAddress: string): void {
       storageHref: remote?.href,
       token: remote?.token,
     })
+    void triggerAutoSyncAfterConnect()
   })
 
   rs.on('error', (err: any) => {
@@ -258,6 +279,7 @@ export function connectWithToken(userAddress: string, token: string): void {
       storageHref: remote?.href,
       token: remote?.token,
     })
+    void triggerAutoSyncAfterConnect()
   })
 
   rs.on('error', (err: any) => {

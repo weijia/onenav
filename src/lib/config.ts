@@ -6,8 +6,10 @@ import {
   saveBookmarks,
   getAllBookmarks,
   loadAppConfigFromPouch,
+  getPouchDB,
   type BookmarkDoc,
 } from '@/lib/pouchdb'
+import { isRemoteStorageConfigured, scheduleAutoSync } from '@/lib/remotestorage-sync'
 import { loadPinnedBookmarks } from '@/lib/stats'
 
 const WEBDAV_CONFIG_KEY = 'webDAVConfig'
@@ -58,6 +60,12 @@ export async function saveAppConfig(config: AppConfig): Promise<void> {
     updatedAt: Date.now(),
   })
   console.log('[Config] saveAppConfig: 配置已保存到 localStorage 和 PouchDB, 固定书签:', pinned.length)
+
+  // 已配置 RemoteStorage 时，保存后自动同步到服务器
+  if (isRemoteStorageConfigured()) {
+    const db = await getPouchDB()
+    await scheduleAutoSync(db)
+  }
 }
 
 export async function fetchAppConfig(wdav: WebDAVConfig): Promise<AppConfig | null> {
