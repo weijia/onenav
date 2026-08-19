@@ -410,6 +410,34 @@ export async function recordClickToPouch(url: string, tag?: string): Promise<voi
   }
 }
 
+/**
+ * 直接设置某 URL 的点击统计（用于从 WebDAV 同步时覆盖，不累加）
+ */
+export async function setClickStatsToPouch(url: string, count: number, lastClickedAt: number): Promise<void> {
+  try {
+    const database = await getDb()
+    const id = PREFIX.CLICK + url
+    const existing = await database.get(id).catch(() => null)
+
+    const doc: ClickStatDoc = {
+      _id: id,
+      type: 'click-stat',
+      url,
+      count,
+      lastClickedAt,
+      clickHistory: existing?.clickHistory || [],
+    }
+
+    if (existing) {
+      await database.put({ ...doc, _rev: existing._rev })
+    } else {
+      await database.put(doc)
+    }
+  } catch (err) {
+    console.error('[PouchDB] setClickStatsToPouch error:', url, err)
+  }
+}
+
 export async function getClickStats(): Promise<Record<string, { count: number; lastClickedAt: number }>> {
   try {
     const database = await getDb()
