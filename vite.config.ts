@@ -32,7 +32,7 @@ export default defineConfig({
       filename: 'sw.ts',
       injectManifest: {
         injectionPoint: 'self.__WB_MANIFEST',
-        globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,json}'],
       },
       manifest: {
         name: 'OneNav',
