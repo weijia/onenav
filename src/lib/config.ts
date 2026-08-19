@@ -51,11 +51,11 @@ export async function saveAppConfig(config: AppConfig): Promise<void> {
   const pinned = loadPinnedBookmarks()
   await saveAppConfigToPouch({
     tags: config.tags.map(t => ({ id: t.id, name: t.tag, displayName: t.label, icon: t.icon, order: t.order })),
-    display: {
-      showFavicons: true,
-      cardStyle: 'comfortable',
-      showDescriptions: true,
-    },
+    display: config.display,
+    background: config.background,
+    widgets: config.widgets,
+    bookmarkPath: config.bookmarkPath,
+    autoRefreshInterval: config.autoRefreshInterval,
     pinnedBookmarks: pinned,
     updatedAt: Date.now(),
   })
@@ -170,7 +170,9 @@ export async function loadAppConfigFromPouchDB(): Promise<AppConfig | null> {
   console.log('[Config] loadAppConfigFromPouchDB: 加载配置', doc)
   console.log('[Config] loadAppConfigFromPouchDB: tags 详情:', doc.tags.map((t: any) => ({ id: t.id, name: t.name, icon: t.icon, hasIcon: 'icon' in t })))
   
-  // 转换回 AppConfig 格式
+  const defaults = getDefaultAppConfig()
+
+  // 转换回 AppConfig 格式 — 从 PouchDB 文档读取真实值，仅对缺失字段回退默认值
   return {
     version: 1,
     tags: doc.tags.map((t: any) => ({ 
@@ -180,32 +182,20 @@ export async function loadAppConfigFromPouchDB(): Promise<AppConfig | null> {
       icon: t.icon || 'LayoutGrid', 
       order: t.order 
     })),
-    bookmarkPath: 'app_data/utags/bookmarks.json',
+    bookmarkPath: doc.bookmarkPath || defaults.bookmarkPath,
     display: {
-      iconSize: 56,
-      iconBorderRadius: 12,
-      iconSpacing: 20,
-      showName: true,
-      nameSize: 11,
-      maxWidth: 1600,
-      openInNewTab: true,
-      defaultColor: '#1e293b',
+      iconSize: doc.display?.iconSize ?? defaults.display.iconSize,
+      iconBorderRadius: doc.display?.iconBorderRadius ?? defaults.display.iconBorderRadius,
+      iconSpacing: doc.display?.iconSpacing ?? defaults.display.iconSpacing,
+      showName: doc.display?.showName ?? defaults.display.showName,
+      nameSize: doc.display?.nameSize ?? defaults.display.nameSize,
+      maxWidth: doc.display?.maxWidth ?? defaults.display.maxWidth,
+      openInNewTab: doc.display?.openInNewTab ?? defaults.display.openInNewTab,
+      defaultColor: doc.display?.defaultColor ?? defaults.display.defaultColor,
     },
-    background: {
-      type: 'gradient',
-      value: 'from-blue-900 via-purple-900 to-indigo-900',
-      maskOpacity: 0.2,
-      blur: 0,
-    },
-    widgets: {
-      showTime: false,
-      showSearchBar: false,
-      showSeconds: false,
-      searchEngine: 'google',
-      fontSize: 70,
-      fontColor: '#ffffff',
-    },
-    autoRefreshInterval: 60,
+    background: doc.background || defaults.background,
+    widgets: doc.widgets || defaults.widgets,
+    autoRefreshInterval: doc.autoRefreshInterval ?? defaults.autoRefreshInterval,
   }
 }
 
@@ -272,5 +262,6 @@ export function getDefaultAppConfig(): AppConfig {
       fontSize: 70,
       fontColor: '#ffffff',
     },
+    autoRefreshInterval: 60,
   }
 }

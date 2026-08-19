@@ -1,4 +1,4 @@
-import type { BookmarkEntry } from '@/types'
+import type { BookmarkEntry, DisplayConfig, BackgroundConfig, WidgetsConfig } from '@/types'
 import { getEntryUpdatedAt } from '@/lib/bookmark-conflicts'
 import { isRemoteStorageConfigured, scheduleAutoSync } from '@/lib/remotestorage-sync'
 
@@ -441,11 +441,11 @@ export interface AppConfigDoc {
   _rev?: string
   type: 'app-config'
   tags: Array<{ id: string; name: string; displayName: string; icon: string; order: number }>
-  display: {
-    showFavicons: boolean
-    cardStyle: 'compact' | 'comfortable'
-    showDescriptions: boolean
-  }
+  display: DisplayConfig
+  background: BackgroundConfig
+  widgets: WidgetsConfig
+  bookmarkPath?: string
+  autoRefreshInterval?: number
   pinnedBookmarks: string[]
   updatedAt: number
 }
@@ -463,6 +463,10 @@ export async function saveAppConfigToPouch(config: Omit<AppConfigDoc, '_id' | 't
       type: 'app-config',
       tags: config.tags,
       display: config.display,
+      background: config.background,
+      widgets: config.widgets,
+      bookmarkPath: config.bookmarkPath,
+      autoRefreshInterval: config.autoRefreshInterval,
       pinnedBookmarks: config.pinnedBookmarks,
       updatedAt: Date.now(),
     }
