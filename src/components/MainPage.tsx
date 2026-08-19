@@ -158,9 +158,9 @@ export default function MainPage() {
               savePinnedBookmarks(config.pinnedBookmarks)
             }
           }
-          const webdavStore = await fetchBookmarks(wdav, config.bookmarkPath)
-          // 渲染：优先 webdav，否则回退本地（保证收藏合并生效）
-          const storeToRender = webdavStore || (await loadBookmarksFromPouchDB())
+          await fetchBookmarks(wdav, config.bookmarkPath)
+          // fetchBookmarks 已将 WebDAV 书签 upsert 到 PouchDB，重新从 PouchDB 加载以获取合并后的完整数据
+          const storeToRender = await loadBookmarksFromPouchDB()
           if (storeToRender) { renderStore(storeToRender, config); lastStore = storeToRender }
         } catch (err) {
           console.error('[Sync] WebDAV 加载失败:', err)
