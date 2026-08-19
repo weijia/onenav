@@ -386,8 +386,8 @@ export async function recordClickToPouch(url: string, tag?: string): Promise<voi
     const history = existing?.clickHistory || []
     history.push({ timestamp: now, tag })
     
-    // 只保留最近 100 条点击记录
-    if (history.length > 100) {
+    // 只保留最近 10 条点击记录
+    if (history.length > 10) {
       history.shift()
     }
     
@@ -412,9 +412,7 @@ export async function recordClickToPouch(url: string, tag?: string): Promise<voi
 
 /**
  * 直接设置某 URL 的点击统计（用于从 WebDAV 同步时覆盖，不累加）
- * 同时清理 clickHistory 中由旧版同步逻辑产生的假记录：
- * - 删除时间戳 > lastClickedAt 的记录（同步时刻的 Date.now() 晚于真实点击）
- * - 按时间戳去重（同一毫秒只保留一条）
+ * clickHistory 只保留最近 10 条记录
  */
 export async function setClickStatsToPouch(url: string, count: number, lastClickedAt: number): Promise<void> {
   try {
@@ -422,23 +420,8 @@ export async function setClickStatsToPouch(url: string, count: number, lastClick
     const id = PREFIX.CLICK + url
     const existing = await database.get(id).catch(() => null)
 
-    // 清理假记录：只保留 timestamp <= lastClickedAt 的记录
-    let history = (existing?.clickHistory || []).filter(
-      (h: { timestamp: number; tag?: string }) => h.timestamp <= lastClickedAt
-    )
-
-    // 按时间戳去重
-    const seen = new Set<number>()
-    history = history.filter((h: { timestamp: number }) => {
-      if (seen.has(h.timestamp)) return false
-      seen.add(h.timestamp)
-      return true
-    })
-
-    // 只保留最近 100 条
-    if (history.length > 100) {
-      history = history.slice(-100)
-    }
+    // 只保留最近 10 条
+    const history = (existing?.clickHistory || []).slice(-10)
 
     const doc: ClickStatDoc = {
       _id: id,
