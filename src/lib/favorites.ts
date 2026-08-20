@@ -5,6 +5,16 @@ import { isRemoteStorageAuthError } from '@/lib/remotestorage-connection'
 const FAVORITES_ROOT = 'app_data/favorites'
 const BM_FILE_RE = /^bm_.*\.json$/
 
+/** 收藏书签加载进度 */
+export interface FavoritesLoadProgress {
+  phase: 'listing' | 'loading' | 'done'
+  totalMonths?: number
+  processedMonths?: number
+  currentMonth?: string
+  loadedBookmarks?: number
+  message?: string
+}
+
 /** 当前 UTC 年月（YYYY-MM） */
 export function getCurrentYM(): string {
   const d = new Date()
@@ -91,11 +101,27 @@ export async function listFavoritesMonthsGeneric(fs: FavoritesFs): Promise<Month
  * - 历史月：优先读取 archive-YYYY-MM.json（存在即完整）；否则回退扫描 bm_*.json
  * - 当前月：直接扫描 bm_*.json（活跃源数据，需纳入展示）
  */
-export async function loadFavoritesBookmarksGeneric(fs: FavoritesFs): Promise<Record<string, BookmarkEntry>> {
+export async function loadFavoritesBookmarksGeneric(
+  fs: FavoritesFs,
+  onProgress?: (p: FavoritesLoadProgress) => void
+): Promise<Record<string, BookmarkEntry>> {
   const result: Record<string, BookmarkEntry> = {}
+  onProgress?.({ phase: 'listing', message: '正在列举收藏目录...' })
   const months = await listFavoritesMonthsGeneric(fs)
+  const totalMonths = months.length
+  let processedMonths = 0
+  let loadedBookmarks = 0
 
   for (const m of months) {
+    onProgress?.({
+      phase: 'loading',
+      totalMonths,
+      processedMonths,
+      currentMonth: m.ym,
+      loadedBookmarks,
+      message: `正在加载 ${m.ym} ...`,
+    })
+
     let raws: RawFavoritesBookmark[] = []
 
     if (!m.isCurrent) {
@@ -136,10 +162,22 @@ export async function loadFavoritesBookmarksGeneric(fs: FavoritesFs): Promise<Re
       const entry = rawToBookmarkEntry(r)
       if (entry && entry.meta.url) {
         result[entry.meta.url] = entry
+        loadedBookmarks++
       }
     }
+
+    processedMonths++
+    onProgress?.({
+      phase: 'loading',
+      totalMonths,
+      processedMonths,
+      currentMonth: m.ym,
+      loadedBookmarks,
+      message: `已加载 ${m.ym} (${processedMonths}/${totalMonths})`,
+    })
   }
 
+  onProgress?.({ phase: 'done', totalMonths, processedMonths, loadedBookmarks, message: `收藏书签加载完成（${loadedBookmarks} 条）` })
   return result
 }
 
@@ -205,8 +243,11 @@ function webdavFavoritesFs(config: WebDAVConfig): FavoritesFs {
 }
 
 // WebDAV 入口（保持旧签名，供 MainPage / SettingsDialog 调用）
-export function loadFavoritesBookmarks(config: WebDAVConfig): Promise<Record<string, BookmarkEntry>> {
-  return loadFavoritesBookmarksGeneric(webdavFavoritesFs(config))
+export function loadFavoritesBookmarks(
+  config: WebDAVConfig,
+  onProgress?: (p: FavoritesLoadProgress) => void
+): Promise<Record<string, BookmarkEntry>> {
+  return loadFavoritesBookmarksGeneric(webdavFavoritesFs(config), onProgress)
 }
 
 export function archiveFavorites(config: WebDAVConfig): Promise<ArchiveResult> {

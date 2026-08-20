@@ -5,6 +5,7 @@ import {
   listFavoritesMonthsGeneric,
   loadFavoritesBookmarksGeneric,
   archiveFavoritesGeneric,
+  type FavoritesLoadProgress,
 } from '@/lib/favorites'
 import type { FavoritesFs } from '@/lib/favorites'
 
@@ -69,8 +70,10 @@ function rsFavoritesFs(): FavoritesFs {
   }
 }
 
-export async function loadFavoritesBookmarksFromRS(): Promise<Record<string, BookmarkEntry>> {
-  return loadFavoritesBookmarksGeneric(rsFavoritesFs())
+export async function loadFavoritesBookmarksFromRS(
+  onProgress?: (p: FavoritesLoadProgress) => void
+): Promise<Record<string, BookmarkEntry>> {
+  return loadFavoritesBookmarksGeneric(rsFavoritesFs(), onProgress)
 }
 
 export async function archiveFavoritesOnRS(): Promise<ArchiveResult> {

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import type { AppConfig, DisplayBookmark, WebDAVConfig, BookmarksStore, BookmarkEntry } from '@/types'
 import { loadWebDAVConfig, loadAppConfig, fetchAppConfig, fetchBookmarks, getDefaultAppConfig, saveAppConfig, saveAppConfigToWebDAV, loadAppConfigFromPouchDB, loadBookmarksFromPouchDB } from '@/lib/config'
-import { loadFavoritesBookmarks, archiveFavorites, mergeFavoritesIntoStore, mergeFavoritesData, shouldAutoArchive } from '@/lib/favorites'
+import { loadFavoritesBookmarks, archiveFavorites, mergeFavoritesIntoStore, mergeFavoritesData, shouldAutoArchive, type FavoritesLoadProgress } from '@/lib/favorites'
 import { loadFavoritesBookmarksFromRS, archiveFavoritesOnRS } from '@/lib/favorites-remotestorage'
 import { filterByTag, getMostVisitedBookmarks, isDeleted, getFaviconUrl, stringToColor } from '@/lib/bookmarks'
 import { recordClick, loadClickStatsFromWebDAV, togglePinnedBookmark, loadPinnedBookmarks, loadPinnedBookmarksAsync, savePinnedBookmarks } from '@/lib/stats'
@@ -47,6 +47,7 @@ export default function MainPage() {
   const deletedBookmarkUrlsRef = useRef<Set<string>>(new Set())
   const backgroundSyncRunningRef = useRef(false)
   const pendingSyncRevisionRef = useRef(0)
+  const [favProgress, setFavProgress] = useState<FavoritesLoadProgress | null>(null)
 
   // 合并收藏书签后渲染（收藏数据来自 favoritesDataRef）
   const renderStore = useCallback((store: BookmarksStore | null, config: AppConfig) => {
@@ -187,7 +188,7 @@ export default function MainPage() {
                 console.error('[FavRS] 自动归档失败:', e)
               })
             }
-            const rsFav = await loadFavoritesBookmarksFromRS().catch((e) => {
+            const rsFav = await loadFavoritesBookmarksFromRS((p) => setFavProgress(p)).catch((e) => {
               if (isRemoteStorageAuthError(e)) throw e
               return null
             })
@@ -237,6 +238,8 @@ export default function MainPage() {
       setError(`Failed to load data: ${err instanceof Error ? err.message : 'Unknown error'}`)
     } finally {
       setLoading(false)
+      // 延迟清除收藏进度，让用户看到"完成"状态
+      setTimeout(() => setFavProgress(null), 2000)
     }
   }, [activeTag, handleRemoteStorageAuthExpired, renderStore])
 
@@ -598,6 +601,28 @@ export default function MainPage() {
           <span>{buildTimeDisplay}</span>
         </div>
       </main>
+      {/* 浮动收藏加载进度 */}
+      {favProgress && favProgress.phase !== 'done' && (
+        <div className="fixed bottom-14 left-1/2 -translate-x-1/2 z-50 transition-all duration-300">
+          <div className="rounded-full border border-cyan-300/20 bg-cyan-400/15 px-4 py-2 text-xs text-cyan-100 backdrop-blur-sm shadow-lg flex items-center gap-2">
+            <Loader2 className="w-3 h-3 animate-spin" />
+            <span>{favProgress.message || '正在加载收藏书签...'}</span>
+            {favProgress.totalMonths != null && favProgress.processedMonths != null && favProgress.totalMonths > 0 && (
+              <span className="text-cyan-300/70">
+                {favProgress.processedMonths}/{favProgress.totalMonths}
+                {favProgress.loadedBookmarks != null && ` · ${favProgress.loadedBookmarks} 条`}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+      {favProgress && favProgress.phase === 'done' && (
+        <div className="fixed bottom-14 left-1/2 -translate-x-1/2 z-50 transition-all duration-300">
+          <div className="rounded-full border border-green-300/20 bg-green-400/15 px-4 py-2 text-xs text-green-100 backdrop-blur-sm shadow-lg flex items-center gap-2">
+            <span>{favProgress.message}</span>
+          </div>
+        </div>
+      )}
       {/* 浮动同步状态 - 始终可见 */}
       {syncStatusLabel && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 transition-all duration-300">
