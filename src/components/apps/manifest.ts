@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react'
-import { Wallet } from 'lucide-react'
+import { Flag, Wallet } from 'lucide-react'
 
 /**
  * 内置小应用的轻量元信息。
@@ -36,6 +36,14 @@ export const APP_MANIFEST: AppMeta[] = [
     accent: 'from-emerald-500 to-teal-600',
     description: '日常收支记账',
     entry: 'apps/bookkeeping/index.html',
+  },
+  {
+    id: 'golf',
+    name: '高尔夫球场地图',
+    icon: Flag,
+    accent: 'from-green-500 to-emerald-600',
+    description: '球场地图与码数标注',
+    entry: 'apps/golf/index.html',
   },
 ]
 
