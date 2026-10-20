@@ -17,7 +17,7 @@ import { Label } from '@/components/ui/label'
 import { Loader2, Plus, Trash2, GripVertical } from 'lucide-react'
 import RemoteStorageSync from '@/components/RemoteStorageSync'
 import { getPouchDB } from '@/lib/pouchdb'
-import { APP_REGISTRY } from '@/components/apps/registry'
+import { APP_MANIFEST } from '@/components/apps/manifest'
 
 // Wrapper to load PouchDB instance
 function RemoteStorageSyncWrapper() {
@@ -612,10 +612,10 @@ export default function SettingsDialog({ open, onOpenChange, config, onConfigSav
           {activeTab === 'apps' && (
             <div className="space-y-3">
               <p className="text-sm text-white/60">选择要在书签区显示的内置应用；关闭后该应用从首页隐藏。此配置会随账号跨设备同步。</p>
-              {APP_REGISTRY.length === 0 && (
+              {APP_MANIFEST.length === 0 && (
                 <p className="text-center text-white/40 py-8">暂无内置应用</p>
               )}
-              {APP_REGISTRY.map((app) => {
+              {APP_MANIFEST.map((app) => {
                 const hidden = localConfig.apps?.[app.id]?.hidden ?? false
                 const Icon = app.icon
                 return (

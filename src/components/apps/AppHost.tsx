@@ -1,32 +1,28 @@
+import type { ComponentType } from 'react'
+import type { LucideIcon } from 'lucide-react'
 import { ArrowLeft } from 'lucide-react'
-import { APP_REGISTRY } from './registry'
 
 interface AppHostProps {
-  appId: string
+  /** 应用名称 */
+  name: string
+  /** 一句话描述 */
+  description: string
+  /** 卡片渐变背景（tailwind from-/to- 类） */
+  accent: string
+  /** 图标（lucide 组件） */
+  icon: LucideIcon
+  /** 应用页面组件（由各自入口直接传入，主 bundle 不含此组件） */
+  component: ComponentType
+  /** 返回书签区 */
   onBack: () => void
 }
 
-/** 内置应用的独立页面容器：顶部返回栏 + 应用页面主体 */
-export default function AppHost({ appId, onBack }: AppHostProps) {
-  const def = APP_REGISTRY.find((a) => a.id === appId)
-
-  if (!def) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full text-white/60 gap-4">
-        <p>未找到应用：{appId}</p>
-        <button
-          onClick={onBack}
-          className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white"
-        >
-          返回
-        </button>
-      </div>
-    )
-  }
-
-  const AppComp = def.component
-  const Icon = def.icon
-
+/**
+ * 内置应用的独立页面容器：顶部返回栏 + 应用页面主体。
+ * 这是一个纯展示组件——页面组件由各应用入口（apps/<id>/entry.tsx）直接传入，
+ * 从而保持主 bundle 不含任何应用代码。
+ */
+export default function AppHost({ name, description, accent, icon: Icon, component: AppComp, onBack }: AppHostProps) {
   return (
     <div className="w-full h-full flex flex-col">
       <div className="flex items-center gap-3 px-4 py-3 border-b border-white/10 shrink-0">
@@ -37,12 +33,12 @@ export default function AppHost({ appId, onBack }: AppHostProps) {
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
-        <div className={`w-9 h-9 rounded-lg bg-gradient-to-br ${def.accent} flex items-center justify-center`}>
+        <div className={`w-9 h-9 rounded-lg bg-gradient-to-br ${accent} flex items-center justify-center`}>
           <Icon className="w-5 h-5 text-white" />
         </div>
         <div>
-          <h2 className="text-white/90 font-medium leading-tight">{def.name}</h2>
-          <p className="text-white/40 text-xs">{def.description}</p>
+          <h2 className="text-white/90 font-medium leading-tight">{name}</h2>
+          <p className="text-white/40 text-xs">{description}</p>
         </div>
       </div>
       <div className="flex-1 overflow-y-auto">

@@ -1,21 +1,20 @@
-import type { AppDefinition } from './registry'
+import type { AppMeta } from './manifest'
 
 interface AppCardProps {
-  app: AppDefinition
+  app: AppMeta
   iconSize: number
   borderRadius: number
   nameSize: number
-  onClick: (id: string) => void
 }
 
-/** 书签区中展示的一个应用入口卡片（外观与书签卡片一致） */
-export default function AppCard({ app, iconSize, borderRadius, nameSize, onClick }: AppCardProps) {
+/** 书签区中展示的一个应用入口卡片（外观与书签卡片一致）。点击跳转到该应用的独立页面（单独的 HTML 文件）。 */
+export default function AppCard({ app, iconSize, borderRadius, nameSize }: AppCardProps) {
   const Icon = app.icon
 
   return (
-    <button
-      onClick={() => onClick(app.id)}
-      className="flex flex-col items-center gap-1.5 cursor-pointer bg-transparent border-0 p-0 select-none group"
+    <a
+      href={app.entry}
+      className="flex flex-col items-center gap-1.5 cursor-pointer bg-transparent border-0 p-0 select-none group no-underline"
       style={{
         width: `${iconSize + 24}px`,
         touchAction: 'manipulation',
@@ -49,6 +48,6 @@ export default function AppCard({ app, iconSize, borderRadius, nameSize, onClick
       >
         {app.name}
       </span>
-    </button>
+    </a>
   )
 }
