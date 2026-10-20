@@ -271,113 +271,135 @@ function toPriceExportShape(r: PriceRecord) {
 }
 
 // ───────────────────────────────────────────────────────────
-// 统一导入解析：按目标（tx / price）路由
+// 统一导入解析：自动识别 tx / price，支持混合数组
 // ───────────────────────────────────────────────────────────
-type ImportTarget = 'tx' | 'price'
-type ImportPreview =
-  | { target: 'tx'; valid: Tx[]; skipped: number }
-  | { target: 'price'; valid: PriceRecord[]; skipped: number }
+type ImportTarget = 'tx' | 'price' | 'auto'
 
-function parseImport(text: string, target: ImportTarget): ImportPreview {
+/**
+ * 自动识别单条记录属于 tx 还是 price：
+ * - 有 kind 字段 → price（kind=item/combo/voucher）
+ * - 有 type + category + amount → tx
+ * - 含糊：有 unitPrice 且无 type → price item；否则 tx
+ */
+function detectRowKind(raw: any): 'tx' | 'price' | null {
+  if (!raw || typeof raw !== 'object') return null
+  if ('kind' in raw) return 'price'
+  // tx 强特征
+  if ('amount' in raw && ('type' in raw || 'category' in raw)) return 'tx'
+  // price item 特征
+  if ('unitPrice' in raw && !('type' in raw)) return 'price'
+  return null
+}
+
+type ImportPreview = {
+  txs: Tx[]
+  prices: PriceRecord[]
+  skipped: number
+}
+
+function parseImport(text: string, target: ImportTarget = 'auto'): ImportPreview {
   let parsed: any
   try {
     parsed = JSON.parse(text)
   } catch {
     throw new Error('剪贴板内容不是有效的 JSON')
   }
-  const arr = Array.isArray(parsed)
-    ? parsed
-    : target === 'tx'
-      ? parsed && Array.isArray(parsed.transactions)
-        ? parsed.transactions
-        : null
-      : parsed && Array.isArray(parsed.prices)
-        ? parsed.prices
-        : null
-  if (!arr) throw new Error('JSON 应为数组，或对应 { "transactions" | "prices": [...] }')
-  const valid: (Tx | PriceRecord)[] = []
-  let skipped = 0
-  const fd = today()
-  for (const raw of arr) {
-    const row = target === 'tx' ? normalizeRow(raw, fd) : normalizePriceRow(raw, fd)
-    if (row) valid.push(row)
-    else skipped++
-  }
-  if (valid.length === 0) throw new Error('没有可导入的有效记录')
-  return target === 'tx'
-    ? { target: 'tx', valid: valid as Tx[], skipped }
-    : { target: 'price', valid: valid as PriceRecord[], skipped }
-}
 
-/** 根据 JSON 内容自动探测目标类型（tx / price），供 Ctrl+V 直接粘贴使用 */
-function detectImportTarget(text: string): ImportTarget | null {
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(text)
-  } catch {
-    return null
+  // 1. 确定数组来源：纯数组 / { transactions, prices } 包装
+  let txArr: any[] | null = null
+  let priceArr: any[] | null = null
+  let mixedArr: any[] | null = null
+
+  if (Array.isArray(parsed)) {
+    mixedArr = parsed
+  } else if (parsed && typeof parsed === 'object') {
+    const obj = parsed as Record<string, any>
+    if (Array.isArray(obj.transactions)) txArr = obj.transactions
+    if (Array.isArray(obj.prices)) priceArr = obj.prices
+    // 也支持 kind 标签包装：{ records: [...] } 按 kind 自识别
+    if (!txArr && !priceArr) {
+      for (const key of Object.keys(obj)) {
+        if (Array.isArray(obj[key])) { mixedArr = obj[key]; break }
+      }
+    }
   }
-  // 包装格式：顶层带 transactions / prices 字段
-  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-    const obj = parsed as Record<string, unknown>
-    if (Array.isArray(obj.prices)) return 'price'
-    if (Array.isArray(obj.transactions)) return 'tx'
+
+  // 2. 有强制目标时：把全部数组都按该目标解析
+  if (target !== 'auto') {
+    if (target === 'tx') {
+      txArr = txArr ?? priceArr ?? mixedArr
+      priceArr = null
+    } else {
+      priceArr = priceArr ?? txArr ?? mixedArr
+      txArr = null
+    }
+    mixedArr = null
   }
-  // 数组格式：看首个元素的特征
-  if (Array.isArray(parsed) && parsed.length > 0 && parsed[0] && typeof parsed[0] === 'object') {
-    const first = parsed[0] as Record<string, unknown>
-    if ('kind' in first) return 'price' // price 记录必有 kind
-    if ('amount' in first && ('type' in first || 'category' in first)) return 'tx'
-    // 含糊情况：优先 tx，因 price 的 kind 是强特征
+
+  // 3. 遍历所有来源，自动识别
+  const fd = today()
+  const txs: Tx[] = []
+  const prices: PriceRecord[] = []
+  let skipped = 0
+
+  const feed = (rows: any[]) => {
+    for (const raw of rows) {
+      const kind = detectRowKind(raw)
+      if (kind === 'tx') {
+        const r = normalizeRow(raw, fd)
+        r ? txs.push(r) : skipped++
+      } else if (kind === 'price') {
+        const r = normalizePriceRow(raw, fd)
+        r ? prices.push(r) : skipped++
+      } else {
+        skipped++
+      }
+    }
   }
-  return null
+
+  if (txArr) feed(txArr)
+  if (priceArr) feed(priceArr)
+  if (mixedArr) feed(mixedArr)
+
+  if (txs.length === 0 && prices.length === 0) throw new Error('没有可导入的有效记录')
+  return { txs, prices, skipped }
 }
 
 // ── AI 提示词模板：复制到 AI 里生成记录，然后 Ctrl+V 粘贴导入 ──
 
-/** 让 AI 生成【记账记录】JSON 的提示词模板 */
-const TX_PROMPT_TEMPLATE = `你是一个记账助手。请根据以下消费/收入描述，输出严格的 JSON 数组，不要输出任何其他文字：
+/** 统一提示词：AI 自己判断是记账记录还是价格记录 */
+const AI_PROMPT_TEMPLATE = `你是一个智能记账助手。请理解以下内容（可能是消费流水、也可能是商品价格、可能同时有两者），
+输出一个严格的 JSON 数组，不要输出任何其他文字（不要解释、不要 markdown 代码块标记）。
 
-消费描述：{在这里粘贴你的消费流水，例如：今天午餐麻辣烫35块，地铁6块，超市买了牛奶12.5}
+内容：{在这里粘贴你的流水或价格描述，例如：今天午餐麻辣烫35，地铁6；鸡蛋5.8一斤；超市券75买100}
 
-输出格式要求：
-- 顶层必须是 JSON 数组，每个元素一条记录
-- 字段：date(YYYY-MM-DD)、type("expense"支出/"income"收入)、category(分类)、amount(金额数字)、note(备注，可选)、product(商品名，可选)
-- 分类建议值：餐饮/交通/购物/居家/娱乐/医疗/工资/理财/其他
-- 只输出 JSON，不要解释、不要 markdown 代码块标记
+请判断每条内容属于哪种类型，用不同字段输出：
+
+【A. 记账记录（支出/收入）】
+特征：有金额支出或收入，带 type/category/amount 字段
+字段：date(YYYY-MM-DD)、type("expense"支出/"income"收入)、category(分类)、amount(金额)、note(备注，可选)、product(商品名，可选)
+分类建议：餐饮/交通/购物/居家/娱乐/医疗/工资/理财/其他
+
+【B. 价格记录（报价/单价/套餐/代金券）】
+特征：描述"X 多少钱一斤"、套餐价格、代金券面值等，用 kind 字段区分
+- kind:"item" 单品：product、unit、unitPrice、date
+- kind:"combo" 套餐：name、unitPrice、items[] (product/unit/quantity)、date
+- kind:"voucher" 代金券：name、cost(实付)、faceValue(面值)、date
+
+数组里可以混合两类，系统会自动识别。
 
 示例输出：
 [
   {"date":"2026-10-20","type":"expense","category":"餐饮","amount":35,"note":"午餐","product":"麻辣烫"},
   {"date":"2026-10-20","type":"expense","category":"交通","amount":6,"note":"地铁"},
-  {"date":"2026-10-20","type":"expense","category":"购物","amount":12.5,"note":"牛奶"}
-]`
-
-/** 让 AI 生成【价格记录】JSON 的提示词模板 */
-const PRICE_PROMPT_TEMPLATE = `你是一个价格记录助手。请根据以下价格信息描述，输出严格的 JSON 数组，不要输出任何其他文字：
-
-价格描述：{在这里粘贴你的价格信息，例如：鸡蛋5.8一斤，宫保鸡丁套餐68元含一份鸡丁两碗米饭，超市券75买100}
-
-输出格式要求：
-- 顶层必须是 JSON 数组，每个元素用 kind 区分类型：
-  - "item" 单品：product、unit、unitPrice、date
-  - "combo" 套餐：name、unitPrice、items[] (含 product/unit/quantity)、date
-  - "voucher" 代金券：name、cost、faceValue、date
-- date 格式 YYYY-MM-DD
-- 只输出 JSON，不要解释、不要 markdown 代码块标记
-
-示例输出：
-[
   {"kind":"item","date":"2026-10-20","product":"鸡蛋","unit":"斤","unitPrice":5.8},
-  {"kind":"combo","date":"2026-10-20","name":"宫保鸡丁套餐","unitPrice":68,
-   "items":[{"product":"宫保鸡丁","unit":"份","quantity":1},{"product":"米饭","unit":"碗","quantity":2}]},
   {"kind":"voucher","date":"2026-10-20","name":"超市券","cost":75,"faceValue":100}
 ]`
 
-/** JSON 格式说明（简化版） */
-const FORMAT_NOTE = `字段均可省略，系统会自动识别 tx / price 类型。
-解析失败的行会被跳过，Toast 会告诉你跳过了几条。
-导出的 JSON 也可直接当模板。`
+/** JSON 格式说明 */
+const FORMAT_NOTE = `系统自动识别每条记录是 tx 还是 price，支持混合数组。
+字段均可省略；kind/item/combo/voucher 自动分类；解析失败的行会跳过，Toast 会告诉你跳过了几条。
+导出的 JSON 可直接当模板交给 AI 生成。`
 
 // ───────────────────────────────────────────────────────────
 // 主组件
@@ -398,25 +420,20 @@ export default function BookkeepingApp() {
   const [importMode, setImportMode] = useState<'merge' | 'replace'>('merge')
   const [importError, setImportError] = useState<string | null>(null)
   const [showFormatHelp, setShowFormatHelp] = useState(false)
-  const [copiedPrompt, setCopiedPrompt] = useState<'tx' | 'price' | null>(null)
+  const [copiedPrompt, setCopiedPrompt] = useState(false)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
-  const copyPrompt = async (kind: 'tx' | 'price') => {
-    const text = kind === 'tx' ? TX_PROMPT_TEMPLATE : PRICE_PROMPT_TEMPLATE
+  const copyPrompt = async () => {
     try {
-      await navigator.clipboard.writeText(text)
-      setCopiedPrompt(kind)
-      setTimeout(() => setCopiedPrompt(null), 1500)
+      await navigator.clipboard.writeText(AI_PROMPT_TEMPLATE)
     } catch {
-      // fallback
       const ta = document.createElement('textarea')
-      ta.value = text
-      document.body.appendChild(ta)
-      ta.select()
+      ta.value = AI_PROMPT_TEMPLATE
+      document.body.appendChild(ta); ta.select()
       document.execCommand('copy')
       document.body.removeChild(ta)
-      setCopiedPrompt(kind)
-      setTimeout(() => setCopiedPrompt(null), 1500)
     }
+    setCopiedPrompt(true)
+    setTimeout(() => setCopiedPrompt(false), 1500)
   }
   // 粘贴反馈 toast
   const [toast, setToast] = useState<{ text: string; kind: 'ok' | 'err' } | null>(null)
@@ -618,14 +635,15 @@ export default function BookkeepingApp() {
 
   const runImport = (text: string, forcedTarget?: ImportTarget) => {
     setImportError(null)
-    const target = forcedTarget ?? detectImportTarget(text) ?? tab
+    const target: ImportTarget = forcedTarget ?? 'auto'
     try {
       const preview = parseImport(text, target)
       setImportPreview(preview)
+      const parts: string[] = []
+      if (preview.txs.length) parts.push(`${preview.txs.length} 条记录`)
+      if (preview.prices.length) parts.push(`${preview.prices.length} 条价格`)
       showToast(
-        `识别到 ${preview.valid.length} 条${preview.target === 'tx' ? '记录' : '价格'}${
-          preview.skipped ? `（跳过 ${preview.skipped} 条无效）` : ''
-        }`,
+        `识别到 ${parts.join('、')}${preview.skipped ? `（跳过 ${preview.skipped} 条无效）` : ''}`,
         'ok',
       )
     } catch (err) {
@@ -665,15 +683,15 @@ export default function BookkeepingApp() {
 
   const confirmImport = async () => {
     if (!importPreview) return
-    if (importPreview.target === 'tx') {
-      const next =
-        importMode === 'replace' ? importPreview.valid : [...importPreview.valid, ...transactions]
-      await save({ transactions: next, prices })
-    } else {
-      const next =
-        importMode === 'replace' ? importPreview.valid : [...importPreview.valid, ...prices]
-      await save({ transactions, prices: next })
-    }
+    const nextTx =
+      importMode === 'replace' && importPreview.txs.length > 0
+        ? importPreview.txs
+        : [...importPreview.txs, ...transactions]
+    const nextPrice =
+      importMode === 'replace' && importPreview.prices.length > 0
+        ? importPreview.prices
+        : [...importPreview.prices, ...prices]
+    await save({ transactions: nextTx, prices: nextPrice })
     setImportPreview(null)
   }
 
@@ -1106,7 +1124,7 @@ export default function BookkeepingApp() {
       {showFormatHelp && (
         <div className="rounded-xl bg-black/30 border border-white/10 p-4 space-y-3">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-medium text-white/80">🎯 让 AI 帮你生成 JSON</h3>
+            <h3 className="text-sm font-medium text-white/80">🎯 让 AI 生成 JSON（自动识别类型）</h3>
             <button
               onClick={() => setShowFormatHelp(false)}
               className="text-white/40 hover:text-white/70 text-xs"
@@ -1115,46 +1133,26 @@ export default function BookkeepingApp() {
             </button>
           </div>
           <p className="text-[11px] text-white/50 leading-relaxed">
-            复制下面的提示词粘贴到 AI（ChatGPT / Claude / 豆包 等），把你的流水描述替换掉占位符，AI 会输出 JSON，然后回来点「导入」或直接 Ctrl+V 粘贴。
+            复制下面的提示词粘贴到 AI（ChatGPT / Claude / 豆包 等），把你的流水或价格描述替换掉占位符，AI 会输出 JSON。
+            回来点「导入」或直接 Ctrl+V 粘贴，系统自动识别每条是记账记录还是价格记录，支持混合数组。
           </p>
 
-          {/* 记账记录 Prompt */}
           <div className="rounded-lg bg-white/5 border border-white/10">
             <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
-              <span className="text-xs text-white/70 font-medium">📒 生成【记账记录】提示词</span>
+              <span className="text-xs text-white/70 font-medium">📋 统一提示词（复制即用）</span>
               <button
-                onClick={() => copyPrompt('tx')}
+                onClick={copyPrompt}
                 className="flex items-center gap-1 text-xs px-2 py-1 rounded-md bg-white/10 hover:bg-white/20 text-white/80 transition-colors"
               >
-                {copiedPrompt === 'tx' ? (
+                {copiedPrompt ? (
                   <><Check className="w-3 h-3 text-emerald-400" /> 已复制</>
                 ) : (
                   <><Copy className="w-3 h-3" /> 复制</>
                 )}
               </button>
             </div>
-            <pre className="p-3 text-[10.5px] leading-relaxed text-white/55 whitespace-pre-wrap max-h-64 overflow-y-auto font-mono">
-{TX_PROMPT_TEMPLATE}
-            </pre>
-          </div>
-
-          {/* 价格记录 Prompt */}
-          <div className="rounded-lg bg-white/5 border border-white/10">
-            <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
-              <span className="text-xs text-white/70 font-medium">🏷️ 生成【价格记录】提示词</span>
-              <button
-                onClick={() => copyPrompt('price')}
-                className="flex items-center gap-1 text-xs px-2 py-1 rounded-md bg-white/10 hover:bg-white/20 text-white/80 transition-colors"
-              >
-                {copiedPrompt === 'price' ? (
-                  <><Check className="w-3 h-3 text-emerald-400" /> 已复制</>
-                ) : (
-                  <><Copy className="w-3 h-3" /> 复制</>
-                )}
-              </button>
-            </div>
-            <pre className="p-3 text-[10.5px] leading-relaxed text-white/55 whitespace-pre-wrap max-h-64 overflow-y-auto font-mono">
-{PRICE_PROMPT_TEMPLATE}
+            <pre className="p-3 text-[10.5px] leading-relaxed text-white/55 whitespace-pre-wrap max-h-80 overflow-y-auto font-mono">
+{AI_PROMPT_TEMPLATE}
             </pre>
           </div>
 
@@ -1266,12 +1264,15 @@ export default function BookkeepingApp() {
           >
             <h3 className="text-white font-medium">导入预览</h3>
             <p className="text-sm text-white/70">
-              识别到 <span className="text-emerald-300 font-medium">{importPreview.valid.length}</span> 条有效
-              {importPreview.target === 'tx' ? '记录' : '价格'}
-              {importPreview.skipped > 0 && (
-                <span className="text-rose-300">，{importPreview.skipped} 条已跳过（缺必填项或未知类型）</span>
+              {importPreview.txs.length > 0 && (
+                <><span className="text-emerald-300 font-medium">{importPreview.txs.length}</span> 条记录 </>
               )}
-              。
+              {importPreview.prices.length > 0 && (
+                <><span className="text-emerald-300 font-medium">{importPreview.prices.length}</span> 条价格 </>
+              )}
+              {importPreview.skipped > 0 && (
+                <span className="text-rose-300">（跳过 {importPreview.skipped} 条无效）</span>
+              )}
             </p>
             <div className="flex gap-2">
               <button
