@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Trash2,
   TrendingUp,
@@ -277,7 +277,12 @@ type ImportPreview =
   | { target: 'price'; valid: PriceRecord[]; skipped: number }
 
 function parseImport(text: string, target: ImportTarget): ImportPreview {
-  const parsed = JSON.parse(text)
+  let parsed: any
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    throw new Error('剪贴板内容不是有效的 JSON')
+  }
   const arr = Array.isArray(parsed)
     ? parsed
     : target === 'tx'
@@ -300,6 +305,30 @@ function parseImport(text: string, target: ImportTarget): ImportPreview {
   return target === 'tx'
     ? { target: 'tx', valid: valid as Tx[], skipped }
     : { target: 'price', valid: valid as PriceRecord[], skipped }
+}
+
+/** 根据 JSON 内容自动探测目标类型（tx / price），供 Ctrl+V 直接粘贴使用 */
+function detectImportTarget(text: string): ImportTarget | null {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return null
+  }
+  // 包装格式：顶层带 transactions / prices 字段
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    const obj = parsed as Record<string, unknown>
+    if (Array.isArray(obj.prices)) return 'price'
+    if (Array.isArray(obj.transactions)) return 'tx'
+  }
+  // 数组格式：看首个元素的特征
+  if (Array.isArray(parsed) && parsed.length > 0 && parsed[0] && typeof parsed[0] === 'object') {
+    const first = parsed[0] as Record<string, unknown>
+    if ('kind' in first) return 'price' // price 记录必有 kind
+    if ('amount' in first && ('type' in first || 'category' in first)) return 'tx'
+    // 含糊情况：优先 tx，因 price 的 kind 是强特征
+  }
+  return null
 }
 
 const FORMAT_HELP = `两个 Tab 各自独立导入/导出：
@@ -343,6 +372,14 @@ export default function BookkeepingApp() {
   const [showFormatHelp, setShowFormatHelp] = useState(false)
   const [showImportDialog, setShowImportDialog] = useState(false)
   const [pasteText, setPasteText] = useState('')
+  // 粘贴反馈 toast
+  const [toast, setToast] = useState<{ text: string; kind: 'ok' | 'err' } | null>(null)
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const showToast = (text: string, kind: 'ok' | 'err' = 'ok') => {
+    if (toastTimer.current) clearTimeout(toastTimer.current)
+    setToast({ text, kind })
+    toastTimer.current = setTimeout(() => setToast(null), 2500)
+  }
 
   const transactions = useMemo(() => data?.transactions || [], [data])
   const prices = useMemo(() => data?.prices || [], [data])
@@ -533,13 +570,23 @@ export default function BookkeepingApp() {
     URL.revokeObjectURL(url)
   }
 
-  const runImport = (text: string) => {
+  const runImport = (text: string, forcedTarget?: ImportTarget) => {
     setImportError(null)
+    const target = forcedTarget ?? detectImportTarget(text) ?? tab
     try {
-      setImportPreview(parseImport(text, tab))
+      const preview = parseImport(text, target)
+      setImportPreview(preview)
       setShowImportDialog(false)
+      showToast(
+        `识别到 ${preview.valid.length} 条${preview.target === 'tx' ? '记录' : '价格'}${
+          preview.skipped ? `（跳过 ${preview.skipped} 条无效）` : ''
+        }`,
+        'ok',
+      )
     } catch (err) {
-      setImportError(err instanceof Error ? err.message : '解析失败')
+      const msg = err instanceof Error ? err.message : '解析失败'
+      setImportError(msg)
+      showToast(msg, 'err')
     }
   }
 
@@ -568,6 +615,27 @@ export default function BookkeepingApp() {
     }
     setImportPreview(null)
   }
+
+  // ── 全局粘贴拦截：Ctrl+V / Cmd+V 在非输入焦点处自动触发导入 ──
+  useEffect(() => {
+    const isEditable = (el: EventTarget | null) => {
+      if (!(el instanceof HTMLElement)) return false
+      const tag = el.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return true
+      if ((el as HTMLElement).isContentEditable) return true
+      return false
+    }
+    const onPaste = (e: ClipboardEvent) => {
+      if (isEditable(e.target)) return // 输入框内正常粘贴
+      const text = e.clipboardData?.getData('text/plain')
+      if (!text || !text.trim()) return
+      e.preventDefault()
+      runImport(text)
+    }
+    document.addEventListener('paste', onPaste)
+    return () => document.removeEventListener('paste', onPaste)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab])
 
   if (loading) {
     return <div className="text-center text-white/40 py-10">加载中…</div>
@@ -1159,6 +1227,19 @@ export default function BookkeepingApp() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* 粘贴反馈 Toast */}
+      {toast && (
+        <div
+          className={`fixed top-4 left-1/2 -translate-x-1/2 z-[60] px-4 py-2 rounded-lg text-sm shadow-lg backdrop-blur-sm border transition-all duration-200 ${
+            toast.kind === 'ok'
+              ? 'bg-emerald-500/20 border-emerald-400/30 text-emerald-100'
+              : 'bg-rose-500/20 border-rose-400/30 text-rose-100'
+          }`}
+        >
+          {toast.text}
         </div>
       )}
 
