@@ -370,8 +370,7 @@ export default function BookkeepingApp() {
   const [importMode, setImportMode] = useState<'merge' | 'replace'>('merge')
   const [importError, setImportError] = useState<string | null>(null)
   const [showFormatHelp, setShowFormatHelp] = useState(false)
-  const [showImportDialog, setShowImportDialog] = useState(false)
-  const [pasteText, setPasteText] = useState('')
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
   // 粘贴反馈 toast
   const [toast, setToast] = useState<{ text: string; kind: 'ok' | 'err' } | null>(null)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -576,7 +575,6 @@ export default function BookkeepingApp() {
     try {
       const preview = parseImport(text, target)
       setImportPreview(preview)
-      setShowImportDialog(false)
       showToast(
         `识别到 ${preview.valid.length} 条${preview.target === 'tx' ? '记录' : '价格'}${
           preview.skipped ? `（跳过 ${preview.skipped} 条无效）` : ''
@@ -600,7 +598,23 @@ export default function BookkeepingApp() {
     e.target.value = ''
   }
 
-  const handlePasteImport = () => runImport(pasteText)
+  /** 点"导入"按钮：优先读剪贴板 JSON，不行则 fallback 到选文件 */
+  const handleImportClick = async () => {
+    try {
+      if (navigator.clipboard?.readText) {
+        const text = await navigator.clipboard.readText()
+        if (text && text.trim()) {
+          runImport(text)
+          return
+        }
+      }
+    } catch {
+      // 剪贴板不可用（HTTP / 无权限），降级到文件选择
+    }
+    // Fallback：打开文件选择器
+    showToast('剪贴板不可用，打开文件选择…', 'err')
+    setTimeout(() => fileInputRef.current?.click(), 300)
+  }
 
   const confirmImport = async () => {
     if (!importPreview) return
@@ -1004,12 +1018,18 @@ export default function BookkeepingApp() {
         )}
         <div className="flex gap-1">
           <button
-            onClick={() => setShowImportDialog((v) => !v)}
-            className={`px-2.5 py-1.5 rounded-lg text-xs flex items-center gap-1 ${
-              showImportDialog ? 'bg-white/25 text-white' : 'bg-white/5 text-white/60 hover:bg-white/10'
-            }`}
+            onClick={handleImportClick}
+            className="px-2.5 py-1.5 rounded-lg text-xs flex items-center gap-1 bg-white/5 text-white/70 hover:bg-white/15 hover:text-white"
+            title="从剪贴板粘贴导入（Ctrl+V 也可）"
           >
             <FileUp className="w-3.5 h-3.5" /> 导入
+          </button>
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="w-8 h-8 rounded-lg text-xs bg-white/5 text-white/50 hover:bg-white/10 hover:text-white flex items-center justify-center"
+            title="选择本地 JSON 文件导入"
+          >
+            <FileUp className="w-4 h-4 opacity-70" />
           </button>
           <button
             onClick={handleExport}
@@ -1027,53 +1047,14 @@ export default function BookkeepingApp() {
         </div>
       </div>
 
-      {showImportDialog && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4"
-          onClick={() => setShowImportDialog(false)}
-        >
-          <div
-            className="w-full max-w-sm rounded-xl bg-zinc-900 border border-white/15 p-5 space-y-4"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className="text-white font-medium">导入{tab === 'tx' ? '记录' : '价格'}</h3>
-            <p className="text-sm text-white/60">
-              选择本地文件，或把其他 AI 生成的 JSON 直接粘贴到下方，点「解析并预览」即可导入（按当前 Tab 区分记录 / 价格）。
-            </p>
-
-            <label className="flex items-center justify-center gap-2 w-full py-3 rounded-lg bg-white/5 border border-dashed border-white/25 text-white/70 hover:bg-white/10 cursor-pointer text-sm">
-              <FileUp className="w-4 h-4" /> 选择文件（.json / .txt）
-              <input type="file" accept=".json,application/json,.txt" className="hidden" onChange={handleImportFile} />
-            </label>
-
-            <div className="flex items-center gap-2 text-white/30 text-xs">
-              <div className="flex-1 h-px bg-white/10" />或粘贴<div className="flex-1 h-px bg-white/10" />
-            </div>
-
-            <textarea
-              value={pasteText}
-              onChange={(e) => setPasteText(e.target.value)}
-              placeholder={'[\n  { "kind":"item", "date":"2026-10-01", "product":"鸡蛋", "unit":"斤", "unitPrice":5.8 }\n]'}
-              className="w-full h-32 rounded-lg bg-black/30 border border-white/15 text-white text-xs px-3 py-2 outline-none focus:border-white/40 font-mono resize-y"
-            />
-            <div className="flex gap-2">
-              <button
-                onClick={handlePasteImport}
-                disabled={!pasteText.trim()}
-                className="flex-1 py-2 rounded-lg text-sm bg-emerald-500/80 hover:bg-emerald-500 text-white disabled:opacity-40"
-              >
-                解析并预览
-              </button>
-              <button
-                onClick={() => setShowImportDialog(false)}
-                className="flex-1 py-2 rounded-lg text-sm bg-white/5 text-white/60 border border-white/10"
-              >
-                关闭
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Hidden file input — triggered programmatically */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".json,application/json,.txt"
+        className="hidden"
+        onChange={handleImportFile}
+      />
 
       {showFormatHelp && (
         <pre className="rounded-xl bg-black/30 border border-white/10 p-3 text-[11px] leading-relaxed text-white/70 whitespace-pre-wrap">
