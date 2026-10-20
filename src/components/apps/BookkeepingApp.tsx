@@ -8,7 +8,6 @@ import {
   FileUp,
   FileDown,
   HelpCircle,
-  ClipboardPaste,
   Tag,
   Package,
   Ticket,
@@ -345,7 +344,7 @@ export default function BookkeepingApp() {
   const [importMode, setImportMode] = useState<'merge' | 'replace'>('merge')
   const [importError, setImportError] = useState<string | null>(null)
   const [showFormatHelp, setShowFormatHelp] = useState(false)
-  const [showPaste, setShowPaste] = useState(false)
+  const [showImportDialog, setShowImportDialog] = useState(false)
   const [pasteText, setPasteText] = useState('')
 
   const transactions = useMemo(() => data?.transactions || [], [data])
@@ -541,6 +540,7 @@ export default function BookkeepingApp() {
     setImportError(null)
     try {
       setImportPreview(parseImport(text, tab))
+      setShowImportDialog(false)
     } catch (err) {
       setImportError(err instanceof Error ? err.message : '解析失败')
     }
@@ -938,17 +938,13 @@ export default function BookkeepingApp() {
           </div>
         )}
         <div className="flex gap-1">
-          <label className="px-2.5 py-1.5 rounded-lg text-xs bg-white/5 text-white/60 hover:bg-white/10 cursor-pointer flex items-center gap-1">
-            <FileUp className="w-3.5 h-3.5" /> 导入
-            <input type="file" accept=".json,application/json,.txt" className="hidden" onChange={handleImportFile} />
-          </label>
           <button
-            onClick={() => setShowPaste((v) => !v)}
+            onClick={() => setShowImportDialog((v) => !v)}
             className={`px-2.5 py-1.5 rounded-lg text-xs flex items-center gap-1 ${
-              showPaste ? 'bg-white/25 text-white' : 'bg-white/5 text-white/60 hover:bg-white/10'
+              showImportDialog ? 'bg-white/25 text-white' : 'bg-white/5 text-white/60 hover:bg-white/10'
             }`}
           >
-            <ClipboardPaste className="w-3.5 h-3.5" /> 粘贴
+            <FileUp className="w-3.5 h-3.5" /> 导入
           </button>
           <button
             onClick={handleExport}
@@ -966,29 +962,50 @@ export default function BookkeepingApp() {
         </div>
       </div>
 
-      {showPaste && (
-        <div className="rounded-xl bg-white/5 border border-white/10 p-3 space-y-2">
-          <p className="text-xs text-white/50">把其他 AI 生成的 JSON 直接粘贴到这里，点「解析并预览」即可导入（按当前 Tab 区分记录/价格）：</p>
-          <textarea
-            value={pasteText}
-            onChange={(e) => setPasteText(e.target.value)}
-            placeholder={'[\n  { "kind":"item", "date":"2026-10-01", "product":"鸡蛋", "unit":"斤", "unitPrice":5.8 }\n]'}
-            className="w-full h-32 rounded-lg bg-black/30 border border-white/15 text-white text-xs px-3 py-2 outline-none focus:border-white/40 font-mono resize-y"
-          />
-          <div className="flex gap-2">
-            <button
-              onClick={handlePasteImport}
-              disabled={!pasteText.trim()}
-              className="px-3 py-1.5 rounded-lg text-xs bg-emerald-500/80 hover:bg-emerald-500 text-white disabled:opacity-40"
-            >
-              解析并预览
-            </button>
-            <button
-              onClick={() => setShowPaste(false)}
-              className="px-3 py-1.5 rounded-lg text-xs bg-white/5 text-white/60 border border-white/10"
-            >
-              收起
-            </button>
+      {showImportDialog && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4"
+          onClick={() => setShowImportDialog(false)}
+        >
+          <div
+            className="w-full max-w-sm rounded-xl bg-zinc-900 border border-white/15 p-5 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-white font-medium">导入{tab === 'tx' ? '记录' : '价格'}</h3>
+            <p className="text-sm text-white/60">
+              选择本地文件，或把其他 AI 生成的 JSON 直接粘贴到下方，点「解析并预览」即可导入（按当前 Tab 区分记录 / 价格）。
+            </p>
+
+            <label className="flex items-center justify-center gap-2 w-full py-3 rounded-lg bg-white/5 border border-dashed border-white/25 text-white/70 hover:bg-white/10 cursor-pointer text-sm">
+              <FileUp className="w-4 h-4" /> 选择文件（.json / .txt）
+              <input type="file" accept=".json,application/json,.txt" className="hidden" onChange={handleImportFile} />
+            </label>
+
+            <div className="flex items-center gap-2 text-white/30 text-xs">
+              <div className="flex-1 h-px bg-white/10" />或粘贴<div className="flex-1 h-px bg-white/10" />
+            </div>
+
+            <textarea
+              value={pasteText}
+              onChange={(e) => setPasteText(e.target.value)}
+              placeholder={'[\n  { "kind":"item", "date":"2026-10-01", "product":"鸡蛋", "unit":"斤", "unitPrice":5.8 }\n]'}
+              className="w-full h-32 rounded-lg bg-black/30 border border-white/15 text-white text-xs px-3 py-2 outline-none focus:border-white/40 font-mono resize-y"
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={handlePasteImport}
+                disabled={!pasteText.trim()}
+                className="flex-1 py-2 rounded-lg text-sm bg-emerald-500/80 hover:bg-emerald-500 text-white disabled:opacity-40"
+              >
+                解析并预览
+              </button>
+              <button
+                onClick={() => setShowImportDialog(false)}
+                className="flex-1 py-2 rounded-lg text-sm bg-white/5 text-white/60 border border-white/10"
+              >
+                关闭
+              </button>
+            </div>
           </div>
         </div>
       )}
