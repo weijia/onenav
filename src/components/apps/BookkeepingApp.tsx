@@ -12,6 +12,8 @@ import {
   Package,
   Ticket,
   Plus,
+  Copy,
+  Check,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useAppData } from '@/lib/app-data'
@@ -331,25 +333,51 @@ function detectImportTarget(text: string): ImportTarget | null {
   return null
 }
 
-const FORMAT_HELP = `两个 Tab 各自独立导入/导出：
+// ── AI 提示词模板：复制到 AI 里生成记录，然后 Ctrl+V 粘贴导入 ──
 
-【记录 Tab】标准 JSON（数组，或 { "transactions": [...] }）：
+/** 让 AI 生成【记账记录】JSON 的提示词模板 */
+const TX_PROMPT_TEMPLATE = `你是一个记账助手。请根据以下消费/收入描述，输出严格的 JSON 数组，不要输出任何其他文字：
+
+消费描述：{在这里粘贴你的消费流水，例如：今天午餐麻辣烫35块，地铁6块，超市买了牛奶12.5}
+
+输出格式要求：
+- 顶层必须是 JSON 数组，每个元素一条记录
+- 字段：date(YYYY-MM-DD)、type("expense"支出/"income"收入)、category(分类)、amount(金额数字)、note(备注，可选)、product(商品名，可选)
+- 分类建议值：餐饮/交通/购物/居家/娱乐/医疗/工资/理财/其他
+- 只输出 JSON，不要解释、不要 markdown 代码块标记
+
+示例输出：
 [
-  { "date":"2026-10-01", "type":"expense", "category":"餐饮", "amount":12.5,
-    "note":"午餐", "product":"宫保鸡丁", "quantity":1, "unit":"份", "unitPrice":12.5 }
-]
+  {"date":"2026-10-20","type":"expense","category":"餐饮","amount":35,"note":"午餐","product":"麻辣烫"},
+  {"date":"2026-10-20","type":"expense","category":"交通","amount":6,"note":"地铁"},
+  {"date":"2026-10-20","type":"expense","category":"购物","amount":12.5,"note":"牛奶"}
+]`
 
-【价格 Tab】标准 JSON（数组，或 { "prices": [...] }），kind 区分类型：
+/** 让 AI 生成【价格记录】JSON 的提示词模板 */
+const PRICE_PROMPT_TEMPLATE = `你是一个价格记录助手。请根据以下价格信息描述，输出严格的 JSON 数组，不要输出任何其他文字：
+
+价格描述：{在这里粘贴你的价格信息，例如：鸡蛋5.8一斤，宫保鸡丁套餐68元含一份鸡丁两碗米饭，超市券75买100}
+
+输出格式要求：
+- 顶层必须是 JSON 数组，每个元素用 kind 区分类型：
+  - "item" 单品：product、unit、unitPrice、date
+  - "combo" 套餐：name、unitPrice、items[] (含 product/unit/quantity)、date
+  - "voucher" 代金券：name、cost、faceValue、date
+- date 格式 YYYY-MM-DD
+- 只输出 JSON，不要解释、不要 markdown 代码块标记
+
+示例输出：
 [
-  { "kind":"item",    "date":"2026-10-01", "product":"鸡蛋",  "unit":"斤", "unitPrice":5.8 },
-  { "kind":"combo",   "date":"2026-10-01", "name":"双人套餐A", "unitPrice":68,
-    "items":[ {"product":"宫保鸡丁","unit":"份","quantity":1}, {"product":"米饭","unit":"碗","quantity":2} ] },
-  { "kind":"voucher", "date":"2026-10-01", "name":"超市券", "cost":75, "faceValue":100 }
-]
+  {"kind":"item","date":"2026-10-20","product":"鸡蛋","unit":"斤","unitPrice":5.8},
+  {"kind":"combo","date":"2026-10-20","name":"宫保鸡丁套餐","unitPrice":68,
+   "items":[{"product":"宫保鸡丁","unit":"份","quantity":1},{"product":"米饭","unit":"碗","quantity":2}]},
+  {"kind":"voucher","date":"2026-10-20","name":"超市券","cost":75,"faceValue":100}
+]`
 
-- 字段均可省略；type 与 date 容错，无法解析的行会被跳过并计数。
-- 未知 kind 的行会被跳过（保证旧版本读新数据不崩）。
-- 导出的文件即为此格式，可直接当模板交给其他 AI 生成。`
+/** JSON 格式说明（简化版） */
+const FORMAT_NOTE = `字段均可省略，系统会自动识别 tx / price 类型。
+解析失败的行会被跳过，Toast 会告诉你跳过了几条。
+导出的 JSON 也可直接当模板。`
 
 // ───────────────────────────────────────────────────────────
 // 主组件
@@ -370,7 +398,26 @@ export default function BookkeepingApp() {
   const [importMode, setImportMode] = useState<'merge' | 'replace'>('merge')
   const [importError, setImportError] = useState<string | null>(null)
   const [showFormatHelp, setShowFormatHelp] = useState(false)
+  const [copiedPrompt, setCopiedPrompt] = useState<'tx' | 'price' | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const copyPrompt = async (kind: 'tx' | 'price') => {
+    const text = kind === 'tx' ? TX_PROMPT_TEMPLATE : PRICE_PROMPT_TEMPLATE
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopiedPrompt(kind)
+      setTimeout(() => setCopiedPrompt(null), 1500)
+    } catch {
+      // fallback
+      const ta = document.createElement('textarea')
+      ta.value = text
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      document.body.removeChild(ta)
+      setCopiedPrompt(kind)
+      setTimeout(() => setCopiedPrompt(null), 1500)
+    }
+  }
   // 粘贴反馈 toast
   const [toast, setToast] = useState<{ text: string; kind: 'ok' | 'err' } | null>(null)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -1020,14 +1067,14 @@ export default function BookkeepingApp() {
           <button
             onClick={handleImportClick}
             className="px-2.5 py-1.5 rounded-lg text-xs flex items-center gap-1 bg-white/5 text-white/70 hover:bg-white/15 hover:text-white"
-            title="从剪贴板粘贴导入（Ctrl+V 也可）"
+            title="粘贴 JSON 导入（Ctrl+V 也可）"
           >
             <FileUp className="w-3.5 h-3.5" /> 导入
           </button>
           <button
             onClick={() => fileInputRef.current?.click()}
             className="w-8 h-8 rounded-lg text-xs bg-white/5 text-white/50 hover:bg-white/10 hover:text-white flex items-center justify-center"
-            title="选择本地 JSON 文件导入"
+            title="选择本地 JSON 文件"
           >
             <FileUp className="w-4 h-4 opacity-70" />
           </button>
@@ -1040,7 +1087,7 @@ export default function BookkeepingApp() {
           <button
             onClick={() => setShowFormatHelp((v) => !v)}
             className="w-8 h-8 rounded-lg text-xs bg-white/5 text-white/50 hover:bg-white/10 flex items-center justify-center"
-            title="导入格式说明"
+            title="AI 提示词 / JSON 格式说明"
           >
             <HelpCircle className="w-4 h-4" />
           </button>
@@ -1057,9 +1104,64 @@ export default function BookkeepingApp() {
       />
 
       {showFormatHelp && (
-        <pre className="rounded-xl bg-black/30 border border-white/10 p-3 text-[11px] leading-relaxed text-white/70 whitespace-pre-wrap">
-          {FORMAT_HELP}
-        </pre>
+        <div className="rounded-xl bg-black/30 border border-white/10 p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-medium text-white/80">🎯 让 AI 帮你生成 JSON</h3>
+            <button
+              onClick={() => setShowFormatHelp(false)}
+              className="text-white/40 hover:text-white/70 text-xs"
+            >
+              ✕
+            </button>
+          </div>
+          <p className="text-[11px] text-white/50 leading-relaxed">
+            复制下面的提示词粘贴到 AI（ChatGPT / Claude / 豆包 等），把你的流水描述替换掉占位符，AI 会输出 JSON，然后回来点「导入」或直接 Ctrl+V 粘贴。
+          </p>
+
+          {/* 记账记录 Prompt */}
+          <div className="rounded-lg bg-white/5 border border-white/10">
+            <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
+              <span className="text-xs text-white/70 font-medium">📒 生成【记账记录】提示词</span>
+              <button
+                onClick={() => copyPrompt('tx')}
+                className="flex items-center gap-1 text-xs px-2 py-1 rounded-md bg-white/10 hover:bg-white/20 text-white/80 transition-colors"
+              >
+                {copiedPrompt === 'tx' ? (
+                  <><Check className="w-3 h-3 text-emerald-400" /> 已复制</>
+                ) : (
+                  <><Copy className="w-3 h-3" /> 复制</>
+                )}
+              </button>
+            </div>
+            <pre className="p-3 text-[10.5px] leading-relaxed text-white/55 whitespace-pre-wrap max-h-64 overflow-y-auto font-mono">
+{TX_PROMPT_TEMPLATE}
+            </pre>
+          </div>
+
+          {/* 价格记录 Prompt */}
+          <div className="rounded-lg bg-white/5 border border-white/10">
+            <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
+              <span className="text-xs text-white/70 font-medium">🏷️ 生成【价格记录】提示词</span>
+              <button
+                onClick={() => copyPrompt('price')}
+                className="flex items-center gap-1 text-xs px-2 py-1 rounded-md bg-white/10 hover:bg-white/20 text-white/80 transition-colors"
+              >
+                {copiedPrompt === 'price' ? (
+                  <><Check className="w-3 h-3 text-emerald-400" /> 已复制</>
+                ) : (
+                  <><Copy className="w-3 h-3" /> 复制</>
+                )}
+              </button>
+            </div>
+            <pre className="p-3 text-[10.5px] leading-relaxed text-white/55 whitespace-pre-wrap max-h-64 overflow-y-auto font-mono">
+{PRICE_PROMPT_TEMPLATE}
+            </pre>
+          </div>
+
+          <div className="rounded-lg bg-white/[0.03] border border-white/10 p-3 text-[11px] text-white/50 leading-relaxed">
+            {FORMAT_NOTE}
+          </div>
+        </div>
       )}
 
       {importError && (
