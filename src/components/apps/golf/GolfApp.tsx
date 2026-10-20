@@ -11,7 +11,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import L from 'leaflet'
-import { Check, Circle, Menu, Plus, Ruler, Search, Square, X } from 'lucide-react'
+import { Check, Circle, Locate, Menu, Plus, Ruler, Search, Square, X, ZoomIn, ZoomOut } from 'lucide-react'
 import { useAppData } from '@/lib/app-data'
 import {
   FACILITY_TYPES,
@@ -430,6 +430,26 @@ export default function GolfApp() {
     setFlyTo({ lng, lat, zoom, key: Date.now() })
   }, [])
 
+  // ── 定位到「我的位置」 ────────────────────────────────
+  // GPS 首次回调是异步的，所以先置一个待居中标记，等拿到坐标再飞行过去。
+  const pendingCenterOnUserRef = useRef(false)
+
+  const locateAndCenter = useCallback(() => {
+    if (userLocation) {
+      flyToTarget(userLocation.lng, userLocation.lat, 17)
+      return
+    }
+    pendingCenterOnUserRef.current = true
+    if (!gpsActive) handleLocate()
+  }, [userLocation, gpsActive, handleLocate, flyToTarget])
+
+  useEffect(() => {
+    if (pendingCenterOnUserRef.current && userLocation) {
+      pendingCenterOnUserRef.current = false
+      flyToTarget(userLocation.lng, userLocation.lat, 17)
+    }
+  }, [userLocation, flyToTarget])
+
   const selectedFacility = selected?.kind === 'facility' ? data.facilities.find((f) => f.id === selected.id) : undefined
   const selectedArea = selected?.kind === 'area' ? data.areas.find((a) => a.id === selected.id) : undefined
   const selectedLine = selected?.kind === 'line' ? data.lines.find((l) => l.id === selected.id) : undefined
@@ -560,6 +580,40 @@ export default function GolfApp() {
               </div>
             )}
           </div>
+        </div>
+
+        {/*
+          缩放 / 定位按钮组
+          Leaflet 自带 zoomControl 固定在左上、层级 1000，会盖住上方的菜单与搜索框，
+          因此 MapCanvas 里已把它关掉，改在这里用普通按钮实现，层级统一 z-[600]。
+          放在搜索框下方（top-16）避开所有浮层；按钮尺寸 44px 满足户外单手点触。
+        */}
+        <div className="absolute left-3 top-16 z-[600] flex flex-col gap-1.5">
+          <button
+            onClick={() => mapRef.current?.zoomIn()}
+            title="放大"
+            className="w-11 h-11 rounded-lg bg-slate-900/90 border border-white/15 text-white/75 flex items-center justify-center active:bg-slate-800"
+          >
+            <ZoomIn className="w-5 h-5" />
+          </button>
+          <button
+            onClick={() => mapRef.current?.zoomOut()}
+            title="缩小"
+            className="w-11 h-11 rounded-lg bg-slate-900/90 border border-white/15 text-white/75 flex items-center justify-center active:bg-slate-800"
+          >
+            <ZoomOut className="w-5 h-5" />
+          </button>
+          <button
+            onClick={locateAndCenter}
+            title={gpsActive ? '定位到我的位置' : '开启 GPS 并定位到我的位置'}
+            className={`w-11 h-11 rounded-lg border flex items-center justify-center ${
+              gpsActive
+                ? 'bg-blue-500/90 border-blue-300/60 text-white'
+                : 'bg-slate-900/90 border-white/15 text-white/75 active:bg-slate-800'
+            }`}
+          >
+            <Locate className="w-5 h-5" />
+          </button>
         </div>
 
         {/* 绘制工具栏（管理模式显示完整，浏览模式只给测距） */}
@@ -696,9 +750,9 @@ export default function GolfApp() {
           )}
         </div>
 
-        {/* 导航距离读数 */}
+        {/* 导航距离读数（bottom-7：给底部版权条让出空间） */}
         {navDistance !== null && (
-          <div className="absolute bottom-3 right-3 z-[600] px-3 py-2 rounded-lg bg-slate-900/90 border border-white/15 text-xs text-white">
+          <div className="absolute bottom-7 right-3 z-[600] px-3 py-2 rounded-lg bg-slate-900/90 border border-white/15 text-xs text-white">
             <div className="text-white/50">距 {navTarget?.label}</div>
             <div className="text-lg font-semibold text-blue-300">{formatDistance(navDistance, unit)}</div>
             {userLocation && (
@@ -709,7 +763,7 @@ export default function GolfApp() {
 
         {/* GPS 提示 */}
         {gpsError && (
-          <div className="absolute bottom-3 right-3 z-[600] px-3 py-2 rounded-lg bg-red-500/25 text-red-200 text-xs">
+          <div className="absolute bottom-7 right-3 z-[600] px-3 py-2 rounded-lg bg-red-500/25 text-red-200 text-xs">
             {gpsError}
           </div>
         )}

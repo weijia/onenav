@@ -120,11 +120,14 @@ export default function MapCanvas(props: MapCanvasProps) {
     const [lng, lat] = handlersRef.current.data.center
     const center = ll(lng, lat)
 
+    // 关闭 Leaflet 自带的缩放与版权控件：
+    // 它们所在的 .leaflet-top/.leaflet-bottom 层级是 1000，会盖住我们自己渲染的浮层按钮（z-600）。
+    // 缩放按钮改为在 GolfApp 中用普通按钮实现；版权改为本组件自己渲染在低层级。
     const map = L.map(containerRef.current, {
       center,
       zoom: handlersRef.current.data.zoom,
-      zoomControl: true,
-      attributionControl: true,
+      zoomControl: false,
+      attributionControl: false,
     })
     mapRef.current = map
 
@@ -454,5 +457,16 @@ export default function MapCanvas(props: MapCanvasProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.flyTo?.key])
 
-  return <div ref={containerRef} className="w-full h-full" />
+  return (
+    <div className="relative w-full h-full">
+      <div ref={containerRef} className="w-full h-full" />
+      {/*
+        版权信息：Leaflet 自带 attribution 控件层级为 1000 会压住浮层按钮，
+        所以这里自己渲染，并刻意放在低层级（z-[400]）与底部，不与任何操作按钮争位。
+      */}
+      <div className="absolute bottom-0 right-1 z-[400] pointer-events-none rounded bg-black/35 px-1.5 py-[1px] text-[10px] leading-4 text-white/60">
+        {getBasemap(props.basemapId).attribution}
+      </div>
+    </div>
+  )
 }
