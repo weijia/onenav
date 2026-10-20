@@ -1,6 +1,10 @@
+import { useEffect } from 'react'
 import type { ComponentType } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import { ArrowLeft } from 'lucide-react'
+import UpdateToast from '@/components/UpdateToast'
+import { registerServiceWorker } from '@/lib/sw-register'
+import { versionDisplay } from '@/lib/version'
 
 interface AppHostProps {
   /** 应用名称 */
@@ -23,6 +27,13 @@ interface AppHostProps {
  * 从而保持主 bundle 不含任何应用代码。
  */
 export default function AppHost({ name, description, accent, icon: Icon, component: AppComp, onBack }: AppHostProps) {
+  useEffect(() => {
+    // 独立应用页位于 apps/<id>/，需指向根目录的 SW，才能离线 &
+    // 与主页面共用同一份 SW 检测全站更新。若从首页点链接进入，
+    // 首页已注册过同一份 SW，此处幂等复用，不会重复注册。
+    registerServiceWorker('../../sw.js')
+  }, [])
+
   return (
     <div className="w-full h-full flex flex-col">
       <div className="flex items-center gap-3 px-4 py-3 border-b border-white/10 shrink-0">
@@ -44,6 +55,10 @@ export default function AppHost({ name, description, accent, icon: Icon, compone
       <div className="flex-1 overflow-y-auto">
         <AppComp />
       </div>
+      <div className="shrink-0 px-4 py-2 text-center text-white/20 text-xs border-t border-white/5">
+        {versionDisplay}
+      </div>
+      <UpdateToast />
     </div>
   )
 }
