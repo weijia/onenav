@@ -79,12 +79,45 @@ export async function getPouchDB(): Promise<PouchDB.Database> {
   return getDb()
 }
 
+// ==================== 内置应用数据（每个应用一个文档：app:<appId>）====================
+// 应用数据（如记账记录）随 PouchDB 整库同步到 RemoteStorage；WebDAV 端由 app-data.ts 额外落盘到 app_data/onenav/apps/<appId>.json。
+
+export async function saveAppDataToPouch(appId: string, data: unknown): Promise<void> {
+  return withAutoReset(async (database) => {
+    const id = PREFIX.APP + appId
+    const existing = await database.get(id).catch(() => null)
+    const doc = {
+      _id: id,
+      type: 'app-data',
+      appId,
+      data,
+      updatedAt: Date.now(),
+    }
+    if (existing) {
+      await database.put({ ...doc, _rev: existing._rev })
+    } else {
+      await database.put(doc)
+    }
+  })
+}
+
+export async function loadAppDataFromPouch(appId: string): Promise<unknown> {
+  try {
+    const database = await getDb()
+    const doc = await database.get(PREFIX.APP + appId).catch(() => null)
+    return doc ? (doc as any).data : null
+  } catch {
+    return null
+  }
+}
+
 // ==================== 文档 ID 前缀 ====================
 export const PREFIX = {
   BOOKMARK: 'bm:',
   CLICK: 'clk:',
   CONFIG: 'cfg:',
   META: 'meta:',
+  APP: 'app:',
 } as const
 
 // ==================== 书签（每条一个文档）====================
@@ -479,6 +512,7 @@ export interface AppConfigDoc {
   bookmarkPath?: string
   autoRefreshInterval?: number
   pinnedBookmarks: string[]
+  apps?: Record<string, { hidden: boolean }>
   updatedAt: number
 }
 

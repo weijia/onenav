@@ -17,6 +17,7 @@ import { Label } from '@/components/ui/label'
 import { Loader2, Plus, Trash2, GripVertical } from 'lucide-react'
 import RemoteStorageSync from '@/components/RemoteStorageSync'
 import { getPouchDB } from '@/lib/pouchdb'
+import { APP_REGISTRY } from '@/components/apps/registry'
 
 // Wrapper to load PouchDB instance
 function RemoteStorageSyncWrapper() {
@@ -75,7 +76,7 @@ interface SettingsDialogProps {
   onConfigSave: (config: AppConfig) => void
 }
 
-type SettingsTab = 'tags' | 'display' | 'background' | 'widgets' | 'webdav' | 'remotestorage' | 'favorites'
+type SettingsTab = 'tags' | 'display' | 'background' | 'widgets' | 'apps' | 'webdav' | 'remotestorage' | 'favorites'
 
 const ICON_NAMES = [
   'Globe', 'Code', 'BookOpen', 'Music', 'Video', 'Gamepad2',
@@ -153,6 +154,11 @@ export default function SettingsDialog({ open, onOpenChange, config, onConfigSav
     setLocalConfig((prev) => ({ ...prev, widgets: { ...prev.widgets, ...updates } }))
   }
 
+  // 内置应用显隐
+  const updateApps = (updates: Record<string, { hidden: boolean }>) => {
+    setLocalConfig((prev) => ({ ...prev, apps: { ...prev.apps, ...updates } }))
+  }
+
   // Tag management
   const addTag = () => {
     const newTag: TagConfig = {
@@ -198,6 +204,7 @@ export default function SettingsDialog({ open, onOpenChange, config, onConfigSav
     { key: 'display', label: 'Display' },
     { key: 'background', label: 'Background' },
     { key: 'widgets', label: 'Widgets' },
+    { key: 'apps', label: '应用' },
     { key: 'webdav', label: 'WebDAV' },
     { key: 'remotestorage', label: 'RemoteStorage' },
     { key: 'favorites', label: '收藏归档' },
@@ -599,6 +606,43 @@ export default function SettingsDialog({ open, onOpenChange, config, onConfigSav
                   />
                 </div>
               </div>
+            </div>
+          )}
+
+          {activeTab === 'apps' && (
+            <div className="space-y-3">
+              <p className="text-sm text-white/60">选择要在书签区显示的内置应用；关闭后该应用从首页隐藏。此配置会随账号跨设备同步。</p>
+              {APP_REGISTRY.length === 0 && (
+                <p className="text-center text-white/40 py-8">暂无内置应用</p>
+              )}
+              {APP_REGISTRY.map((app) => {
+                const hidden = localConfig.apps?.[app.id]?.hidden ?? false
+                const Icon = app.icon
+                return (
+                  <div key={app.id} className="flex items-center gap-3 bg-white/5 rounded-lg p-3">
+                    <div className={`w-9 h-9 rounded-lg bg-gradient-to-br ${app.accent} flex items-center justify-center`}>
+                      <Icon className="w-5 h-5 text-white" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-white/90 text-sm">{app.name}</p>
+                      <p className="text-white/40 text-xs">{app.description}</p>
+                    </div>
+                    <button
+                      onClick={() => updateApps({ [app.id]: { hidden: !hidden } })}
+                      className={`w-10 h-5 rounded-full transition-colors relative ${
+                        !hidden ? 'bg-white/30' : 'bg-white/10'
+                      }`}
+                      title={hidden ? '显示' : '隐藏'}
+                    >
+                      <span
+                        className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                          !hidden ? 'left-5' : 'left-0.5'
+                        }`}
+                      />
+                    </button>
+                  </div>
+                )
+              })}
             </div>
           )}
 

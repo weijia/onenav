@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import type { AppConfig, DisplayBookmark, WebDAVConfig, BookmarksStore, BookmarkEntry } from '@/types'
+import type { AppConfig, DisplayBookmark, WebDAVConfig, BookmarksStore, BookmarkEntry, AppVisibility } from '@/types'
 import { loadWebDAVConfig, loadAppConfig, fetchAppConfig, fetchBookmarks, getDefaultAppConfig, saveAppConfig, saveAppConfigToWebDAV, loadAppConfigFromPouchDB, loadBookmarksFromPouchDB } from '@/lib/config'
 import { loadFavoritesBookmarks, archiveFavorites, mergeFavoritesIntoStore, mergeFavoritesData, shouldAutoArchive, type FavoritesLoadProgress } from '@/lib/favorites'
 import { loadFavoritesBookmarksFromRS, archiveFavoritesOnRS } from '@/lib/favorites-remotestorage'
@@ -15,10 +15,25 @@ import BookmarkGrid from '@/components/BookmarkGrid'
 import BookmarkEditDialog from '@/components/BookmarkEditDialog'
 import SettingsDialog from '@/components/SettingsDialog'
 import SetupWizard from '@/components/SetupWizard'
+import AppCard from '@/components/apps/AppCard'
+import AppHost from '@/components/apps/AppHost'
+import { APP_REGISTRY, isAppVisible } from '@/components/apps/registry'
 import { RefreshCw, Loader2, LayoutGrid, Search, Menu, X } from 'lucide-react'
 import { versionDisplay, buildTimeDisplay } from '@/lib/version'
 
 type SyncStatus = 'idle' | 'pending' | 'syncing' | 'synced' | 'error'
+
+// 应用可见性配置的并集合并：任一来源里 hidden:true 都保留，避免多端各自隐藏不同应用后相互覆盖。
+export function unionAppsVisibility(
+  base?: Record<string, AppVisibility>,
+  incoming?: Record<string, AppVisibility>,
+): Record<string, AppVisibility> {
+  const out: Record<string, AppVisibility> = { ...(base || {}) }
+  for (const [id, v] of Object.entries(incoming || {})) {
+    if (v?.hidden) out[id] = { hidden: true }
+  }
+  return out
+}
 const PENDING_BOOKMARK_SYNC_KEY = 'onenav:pendingBookmarkSync'
 
 export default function MainPage() {
@@ -29,6 +44,7 @@ export default function MainPage() {
     return window.location.hash.replace('#', '') || 'onenav'
   })
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [activeApp, setActiveApp] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [refreshing, setRefreshing] = useState(false)
@@ -122,6 +138,8 @@ export default function MainPage() {
 
       // 1. 先从本地加载缓存（快速显示）
       let config = loadAppConfig() || await loadAppConfigFromPouchDB() || getDefaultAppConfig()
+      // 应用可见性配置跨来源并集合并（任一来源 hidden:true 都保留）
+      let mergedApps = { ...(config.apps || {}) }
       const localStore = await loadBookmarksFromPouchDB()
       deletedBookmarkUrlsRef.current = await getDeletedBookmarkUrls()
       const pinned = await loadPinnedBookmarksAsync()
@@ -152,7 +170,8 @@ export default function MainPage() {
 
           const webdavConfig = await fetchAppConfig(wdav)
           if (webdavConfig) {
-            config = webdavConfig
+            mergedApps = unionAppsVisibility(mergedApps, webdavConfig.apps)
+            config = { ...webdavConfig, apps: mergedApps }
             setAppConfig(config)
             if (config.pinnedBookmarks?.length) {
               setPinnedUrls(config.pinnedBookmarks)
@@ -213,8 +232,10 @@ export default function MainPage() {
               setActiveTag('onenav')
               window.location.hash = 'onenav'
             }
-            setAppConfig(rsConfig)
-            config = rsConfig
+            mergedApps = unionAppsVisibility(mergedApps, rsConfig.apps)
+            const mergedRsConfig = { ...rsConfig, apps: mergedApps }
+            setAppConfig(mergedRsConfig)
+            config = mergedRsConfig
           }
           if (rsStore) {
             renderStore(rsStore, config)
@@ -329,6 +350,7 @@ export default function MainPage() {
   }
 
   const handleTagSelect = (tag: string | null) => {
+    setActiveApp(null)
     setActiveTag(tag)
     setSearchQuery('')
     window.location.hash = tag || ''
@@ -454,6 +476,12 @@ export default function MainPage() {
     )
   }, [bookmarks, allBookmarks, searchQuery])
 
+  // 书签区顶部展示的可见应用卡片（隐藏配置来自 appConfig.apps，未配置时默认显示）
+  const visibleApps = useMemo(
+    () => APP_REGISTRY.filter((a) => isAppVisible(a, appConfig.apps)),
+    [appConfig.apps]
+  )
+
   const currentTagLabel = useMemo(() => {
     if (activeTag === 'onenav') return '常用书签'
     if (activeTag === '._all_' || activeTag === null) return '全部书签'
@@ -573,26 +601,52 @@ export default function MainPage() {
         </div>
 
         <div className="flex-1 flex flex-col items-center justify-center px-4">
-          {bookmarks.length > 0 && (
-            <div className="w-full max-w-md mb-6">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
-                <input type="text" placeholder="搜索书签..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full h-10 pl-10 pr-4 rounded-lg bg-white/10 border border-white/20 text-white placeholder:text-white/40 focus:outline-none focus:border-white/40" />
-              </div>
+          {activeApp ? (
+            <div className="w-full h-full">
+              <AppHost appId={activeApp} onBack={() => setActiveApp(null)} />
             </div>
+          ) : (
+            <>
+              {bookmarks.length > 0 && (
+                <div className="w-full max-w-md mb-6">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
+                    <input type="text" placeholder="搜索书签..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full h-10 pl-10 pr-4 rounded-lg bg-white/10 border border-white/20 text-white placeholder:text-white/40 focus:outline-none focus:border-white/40" />
+                  </div>
+                </div>
+              )}
+              <div className="w-full overflow-visible" style={{ maxWidth: `${appConfig.display.maxWidth}px` }}>
+                {/* 应用入口：默认显示在书签区顶部，可于设置中隐藏 */}
+                {visibleApps.length > 0 && !searchQuery.trim() && (
+                  <div className="mb-7">
+                    <p className="text-xs uppercase tracking-[0.18em] text-white/35 mb-3 px-2">应用</p>
+                    <div className="flex flex-wrap gap-4 justify-center">
+                      {visibleApps.map((a) => (
+                        <AppCard
+                          key={a.id}
+                          app={a}
+                          iconSize={appConfig.display.iconSize}
+                          borderRadius={appConfig.display.iconBorderRadius}
+                          nameSize={appConfig.display.nameSize}
+                          onClick={setActiveApp}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div className="mb-4 flex items-center justify-between px-2">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.18em] text-white/35">当前标签</p>
+                    <h2 className="mt-1 text-lg font-medium text-white/85">{currentTagLabel}</h2>
+                  </div>
+                  <span className="rounded-full bg-white/10 px-2.5 py-1 text-xs text-white/45">
+                    {filteredBookmarks.length} 个书签
+                  </span>
+                </div>
+                <BookmarkGrid bookmarks={filteredBookmarks} iconSize={appConfig.display.iconSize} borderRadius={appConfig.display.iconBorderRadius} spacing={appConfig.display.iconSpacing} showName={appConfig.display.showName} nameSize={appConfig.display.nameSize} maxWidth={appConfig.display.maxWidth} openInNewTab={appConfig.display.openInNewTab} onItemClick={(bookmark) => recordClick(bookmark, webdavConfig || undefined)} onTogglePin={handleTogglePin} onEditBookmark={setEditingBookmark} />
+              </div>
+            </>
           )}
-          <div className="w-full overflow-visible" style={{ maxWidth: `${appConfig.display.maxWidth}px` }}>
-            <div className="mb-4 flex items-center justify-between px-2">
-              <div>
-                <p className="text-xs uppercase tracking-[0.18em] text-white/35">当前标签</p>
-                <h2 className="mt-1 text-lg font-medium text-white/85">{currentTagLabel}</h2>
-              </div>
-              <span className="rounded-full bg-white/10 px-2.5 py-1 text-xs text-white/45">
-                {filteredBookmarks.length} 个书签
-              </span>
-            </div>
-            <BookmarkGrid bookmarks={filteredBookmarks} iconSize={appConfig.display.iconSize} borderRadius={appConfig.display.iconBorderRadius} spacing={appConfig.display.iconSpacing} showName={appConfig.display.showName} nameSize={appConfig.display.nameSize} maxWidth={appConfig.display.maxWidth} openInNewTab={appConfig.display.openInNewTab} onItemClick={(bookmark) => recordClick(bookmark, webdavConfig || undefined)} onTogglePin={handleTogglePin} onEditBookmark={setEditingBookmark} />
-          </div>
         </div>
 
         <div className="text-center pb-4 text-white/20 text-xs flex items-center justify-center gap-2">

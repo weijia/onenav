@@ -57,6 +57,7 @@ export async function saveAppConfig(config: AppConfig): Promise<void> {
     bookmarkPath: config.bookmarkPath,
     autoRefreshInterval: config.autoRefreshInterval,
     pinnedBookmarks: pinned,
+    apps: config.apps,
     updatedAt: Date.now(),
   })
   console.log('[Config] saveAppConfig: 配置已保存到 localStorage 和 PouchDB, 固定书签:', pinned.length)
@@ -196,6 +197,7 @@ export async function loadAppConfigFromPouchDB(): Promise<AppConfig | null> {
     background: doc.background || defaults.background,
     widgets: doc.widgets || defaults.widgets,
     autoRefreshInterval: doc.autoRefreshInterval ?? defaults.autoRefreshInterval,
+    apps: doc.apps || defaults.apps,
   }
 }
 
@@ -263,5 +265,6 @@ export function getDefaultAppConfig(): AppConfig {
       fontColor: '#ffffff',
     },
     autoRefreshInterval: 60,
+    apps: {},
   }
 }

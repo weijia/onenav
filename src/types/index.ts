@@ -50,6 +50,12 @@ export interface AppConfig {
   widgets: WidgetsConfig
   pinnedBookmarks?: string[] // 固定的书签 URL 列表
   autoRefreshInterval?: number // 自动刷新间隔（分钟），0 表示禁用，默认 60
+  apps?: Record<string, AppVisibility> // 内置小应用（如记账）的显示/隐藏配置，跨设备同步
+}
+
+/** 单个内置应用的可见性配置 */
+export interface AppVisibility {
+  hidden: boolean
 }
 
 // utags bookmark types (simplified)
