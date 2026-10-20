@@ -1224,6 +1224,10 @@ export default function BookkeepingApp() {
                         <div className="flex-1 min-w-0">
                           <div className="text-white/90 text-sm truncate">{m?.getTitle(r)}</div>
                           <div className="text-white/40 text-xs">{m?.getSubtitle(r)}</div>
+                          <div className="text-white/40 text-xs">
+                            {r.date}
+                            {'source' in r && r.source ? ` · ${r.source}` : ''}
+                          </div>
                           {m?.detail ? m.detail(r) : null}
                         </div>
                         <div className="text-sm font-medium text-white/70">
