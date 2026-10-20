@@ -16,9 +16,6 @@ import {
 import type { LucideIcon } from 'lucide-react'
 import { useAppData } from '@/lib/app-data'
 
-/** 记账小应用版本号（独立应用页底部展示；配合 Service Worker 可做更新提示） */
-const APP_VERSION = '1.2.0'
-
 // ───────────────────────────────────────────────────────────
 // 交易记录（流水）
 // ───────────────────────────────────────────────────────────
@@ -1165,8 +1162,6 @@ export default function BookkeepingApp() {
         </div>
       )}
 
-      {/* 版本号 */}
-      <div className="text-center text-white/25 text-xs pt-2">记账 v{APP_VERSION}</div>
     </div>
   )
 }

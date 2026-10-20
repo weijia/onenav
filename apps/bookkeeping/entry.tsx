@@ -20,7 +20,7 @@ function goBack() {
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     {/* 独立页面自带深色背景（与主程序默认渐变一致），不依赖主程序的背景配置 */}
-    <div className="fixed inset-0 bg-gradient-to-br from-blue-900 via-purple-900 to-indigo-900 overflow-auto">
+    <div className="fixed inset-0 bg-gradient-to-br from-blue-900 via-purple-900 to-indigo-900">
       <AppHost
         name={meta.name}
         description={meta.description}

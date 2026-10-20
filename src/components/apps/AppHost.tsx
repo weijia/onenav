@@ -1,6 +1,7 @@
 import type { ComponentType } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import { ArrowLeft } from 'lucide-react'
+import { versionDisplay, buildTimeDisplay } from '@/lib/version'
 
 interface AppHostProps {
   /** 应用名称 */
@@ -43,6 +44,11 @@ export default function AppHost({ name, description, accent, icon: Icon, compone
       </div>
       <div className="flex-1 overflow-y-auto">
         <AppComp />
+      </div>
+      <div className="text-center py-2 text-white/20 text-xs shrink-0 flex items-center justify-center gap-2">
+        <span>{versionDisplay}</span>
+        <span>·</span>
+        <span>{buildTimeDisplay}</span>
       </div>
     </div>
   )
