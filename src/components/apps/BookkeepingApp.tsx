@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Trash2, TrendingUp, TrendingDown, Wallet, Search, FileUp, FileDown, HelpCircle } from 'lucide-react'
+import { Trash2, TrendingUp, TrendingDown, Wallet, Search, FileUp, FileDown, HelpCircle, ClipboardPaste } from 'lucide-react'
 import { useAppData } from '@/lib/app-data'
 
 interface Tx {
@@ -93,6 +93,27 @@ function toExportShape(t: Tx) {
   }
 }
 
+/** 解析导入文本（文件内容或粘贴内容通用）：支持数组 或 { transactions: [...] }，返回有效行与跳过行数 */
+function parseImportText(text: string): { valid: Tx[]; skipped: number } {
+  const parsed = JSON.parse(text)
+  const arr = Array.isArray(parsed)
+    ? parsed
+    : parsed && Array.isArray(parsed.transactions)
+      ? parsed.transactions
+      : null
+  if (!arr) throw new Error('JSON 应为数组，或 { "transactions": [...] }')
+  const valid: Tx[] = []
+  let skipped = 0
+  const fd = today()
+  for (const raw of arr) {
+    const row = normalizeRow(raw, fd)
+    if (row) valid.push(row)
+    else skipped++
+  }
+  if (valid.length === 0) throw new Error('没有可导入的有效记录')
+  return { valid, skipped }
+}
+
 const FORMAT_HELP = `标准 JSON 格式（数组，或 { "transactions": [...] }）：
 
 [
@@ -135,6 +156,8 @@ export default function BookkeepingApp() {
   const [importMode, setImportMode] = useState<'merge' | 'replace'>('merge')
   const [importError, setImportError] = useState<string | null>(null)
   const [showFormatHelp, setShowFormatHelp] = useState(false)
+  const [showPaste, setShowPaste] = useState(false)
+  const [pasteText, setPasteText] = useState('')
 
   const transactions = useMemo(() => data?.transactions || [], [data])
 
@@ -230,23 +253,7 @@ export default function BookkeepingApp() {
     const reader = new FileReader()
     reader.onload = () => {
       try {
-        const parsed = JSON.parse(String(reader.result))
-        const arr = Array.isArray(parsed)
-          ? parsed
-          : parsed && Array.isArray(parsed.transactions)
-            ? parsed.transactions
-            : null
-        if (!arr) throw new Error('JSON 应为数组，或 { "transactions": [...] }')
-        const valid: Tx[] = []
-        let skipped = 0
-        const fd = today()
-        for (const raw of arr) {
-          const row = normalizeRow(raw, fd)
-          if (row) valid.push(row)
-          else skipped++
-        }
-        if (valid.length === 0) throw new Error('没有可导入的有效记录')
-        setImportPreview({ valid, skipped })
+        setImportPreview(parseImportText(String(reader.result)))
       } catch (err) {
         setImportError(err instanceof Error ? err.message : '解析失败')
       } finally {
@@ -254,6 +261,15 @@ export default function BookkeepingApp() {
       }
     }
     reader.readAsText(file)
+  }
+
+  const handlePasteImport = () => {
+    setImportError(null)
+    try {
+      setImportPreview(parseImportText(pasteText))
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : '解析失败')
+    }
   }
 
   const confirmImport = async () => {
@@ -426,6 +442,14 @@ export default function BookkeepingApp() {
             />
           </label>
           <button
+            onClick={() => setShowPaste((v) => !v)}
+            className={`px-2.5 py-1.5 rounded-lg text-xs flex items-center gap-1 ${
+              showPaste ? 'bg-white/25 text-white' : 'bg-white/5 text-white/60 hover:bg-white/10'
+            }`}
+          >
+            <ClipboardPaste className="w-3.5 h-3.5" /> 粘贴
+          </button>
+          <button
             onClick={handleExport}
             className="px-2.5 py-1.5 rounded-lg text-xs bg-white/5 text-white/60 hover:bg-white/10 flex items-center gap-1"
           >
@@ -440,6 +464,33 @@ export default function BookkeepingApp() {
           </button>
         </div>
       </div>
+
+      {showPaste && (
+        <div className="rounded-xl bg-white/5 border border-white/10 p-3 space-y-2">
+          <p className="text-xs text-white/50">把其他 AI 生成的 JSON 直接粘贴到这里，点「解析并预览」即可导入：</p>
+          <textarea
+            value={pasteText}
+            onChange={(e) => setPasteText(e.target.value)}
+            placeholder={'[\n  { "date": "2026-10-01", "type": "expense", "category": "餐饮", "amount": 12.5, "note": "午餐", "quantity": 1, "unit": "份", "unitPrice": 12.5 }\n]'}
+            className="w-full h-32 rounded-lg bg-black/30 border border-white/15 text-white text-xs px-3 py-2 outline-none focus:border-white/40 font-mono resize-y"
+          />
+          <div className="flex gap-2">
+            <button
+              onClick={handlePasteImport}
+              disabled={!pasteText.trim()}
+              className="px-3 py-1.5 rounded-lg text-xs bg-emerald-500/80 hover:bg-emerald-500 text-white disabled:opacity-40"
+            >
+              解析并预览
+            </button>
+            <button
+              onClick={() => setShowPaste(false)}
+              className="px-3 py-1.5 rounded-lg text-xs bg-white/5 text-white/60 border border-white/10"
+            >
+              收起
+            </button>
+          </div>
+        </div>
+      )}
 
       {showFormatHelp && (
         <pre className="rounded-xl bg-black/30 border border-white/10 p-3 text-[11px] leading-relaxed text-white/70 whitespace-pre-wrap">
