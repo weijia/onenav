@@ -98,9 +98,15 @@ export default function GolfApp() {
   const [userLocation, setUserLocation] = useState<{ lng: number; lat: number; accuracy: number } | null>(null)
   const [gpsActive, setGpsActive] = useState(false)
   const [gpsPending, setGpsPending] = useState(false)
+  /** 定位已等待秒数（看门狗每秒刷新，避免「一直转但不知道有没有在工作」） */
+  const [gpsElapsed, setGpsElapsed] = useState(0)
+  /** 浏览器定位权限状态：prompt=等待用户授权 / denied=已被拒 / granted=已允许 */
+  const [gpsPermission, setGpsPermission] = useState<PermissionState | null>(null)
   const [gpsError, setGpsError] = useState<string | null>(null)
   const [navTarget, setNavTarget] = useState<{ lng: number; lat: number; label: string } | null>(null)
   const watchIdRef = useRef<number | null>(null)
+  const gpsWatchdogRef = useRef<number | null>(null)
+  const gpsStartedAtRef = useRef<number>(0)
   const mapRef = useRef<L.Map | null>(null)
 
   const provider = getBasemap(layerPrefs.basemap)
@@ -387,14 +393,50 @@ export default function GolfApp() {
     }
   }
 
-  /** 写入一次定位结果（浏览器给的是 WGS-84，统一转 GCJ-02 后再进入业务数据） */
-  const applyPosition = useCallback((pos: GeolocationPosition) => {
-    const [lng, lat] = wgs84ToGcj02(pos.coords.longitude, pos.coords.latitude)
-    console.log('[golf] 定位成功', { lng, lat, accuracy: pos.coords.accuracy })
-    setUserLocation({ lng, lat, accuracy: pos.coords.accuracy ?? 20 })
-    setGpsPending(false)
-    setGpsError(null)
+  /** 定位总超时（秒）：超过仍未拿到坐标就明确报错，不再无限转圈 */
+  const GPS_TIMEOUT_S = 25
+
+  const stopGpsWatchdog = useCallback(() => {
+    if (gpsWatchdogRef.current !== null) {
+      window.clearInterval(gpsWatchdogRef.current)
+      gpsWatchdogRef.current = null
+    }
   }, [])
+
+  /**
+   * 看门狗：每秒刷新已等待秒数；到点仍未拿到坐标就判定失败。
+   * 没有它的话，watchPosition 在「等待用户点授权」或「信号不可用」时既不回调成功也不回调失败，
+   * 界面就会一直显示「定位中…」，用户无法判断是卡住还是在正常工作。
+   */
+  const startGpsWatchdog = useCallback(() => {
+    stopGpsWatchdog()
+    gpsStartedAtRef.current = Date.now()
+    setGpsElapsed(0)
+    gpsWatchdogRef.current = window.setInterval(() => {
+      const sec = Math.floor((Date.now() - gpsStartedAtRef.current) / 1000)
+      setGpsElapsed(sec)
+      if (sec >= GPS_TIMEOUT_S) {
+        stopGpsWatchdog()
+        setGpsPending(false)
+        setGpsError(
+          `定位超时：${GPS_TIMEOUT_S} 秒内未拿到坐标。常见原因：未允许定位授权、室内无 GPS 信号、或非 HTTPS 访问。`,
+        )
+      }
+    }, 1000)
+  }, [stopGpsWatchdog])
+
+  /** 写入一次定位结果（浏览器给的是 WGS-84，统一转 GCJ-02 后再进入业务数据） */
+  const applyPosition = useCallback(
+    (pos: GeolocationPosition) => {
+      const [lng, lat] = wgs84ToGcj02(pos.coords.longitude, pos.coords.latitude)
+      console.log('[golf] 定位成功', { lng, lat, accuracy: pos.coords.accuracy })
+      setUserLocation({ lng, lat, accuracy: pos.coords.accuracy ?? 20 })
+      setGpsPending(false)
+      setGpsError(null)
+      stopGpsWatchdog()
+    },
+    [stopGpsWatchdog],
+  )
 
   /** 持续监听位置变化（用户移动时更新） */
   const startWatch = useCallback(() => {
@@ -410,20 +452,31 @@ export default function GolfApp() {
     watchIdRef.current = id
   }, [applyPosition])
 
-  const handleLocate = useCallback(() => {
-    if (gpsActive) {
-      if (watchIdRef.current !== null) navigator.geolocation.clearWatch(watchIdRef.current)
-      watchIdRef.current = null
-      setGpsActive(false)
-      setGpsPending(false)
-      setUserLocation(null)
-      setNavTarget(null)
-      return
-    }
-    if (!('geolocation' in navigator)) {
-      setGpsError('当前浏览器不支持定位')
-      return
-    }
+  const handleLocate = useCallback(
+    (opts?: { restart?: boolean }) => {
+      const restart = opts?.restart === true
+      if (gpsActive && !restart) {
+        if (watchIdRef.current !== null) navigator.geolocation.clearWatch(watchIdRef.current)
+        watchIdRef.current = null
+        setGpsActive(false)
+        setGpsPending(false)
+        setGpsElapsed(0)
+        setGpsPermission(null)
+        setUserLocation(null)
+        setNavTarget(null)
+        stopGpsWatchdog()
+        return
+      }
+      // restart：先清掉上一轮的监听与看门狗，再重新走一遍开启流程（用于超时后重试）
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(watchIdRef.current)
+        watchIdRef.current = null
+      }
+      stopGpsWatchdog()
+      if (!('geolocation' in navigator)) {
+        setGpsError('当前浏览器不支持定位')
+        return
+      }
     // 浏览器只在安全上下文（HTTPS / localhost）下才允许定位，非 HTTPS 会被直接拒绝
     if (!window.isSecureContext) {
       setGpsError('当前页面非 HTTPS，浏览器已禁用定位（请用 https 访问本站）')
@@ -431,8 +484,22 @@ export default function GolfApp() {
     }
 
     setGpsError(null)
+    setGpsPermission(null)
     setGpsPending(true)
     setGpsActive(true)
+    startGpsWatchdog()
+
+    // 先探测权限状态：prompt 表示浏览器正在等用户点授权（这是最常见的「一直转」原因），
+    // denied 表示之前被拒过、浏览器不会再弹窗（必须去站点设置里改）。
+    navigator.permissions?.query({ name: 'geolocation' })?.then((st) => {
+      console.log('[golf] 定位权限状态:', st.state)
+      setGpsPermission(st.state)
+      if (st.state === 'denied') {
+        stopGpsWatchdog()
+        setGpsPending(false)
+        setGpsError('定位权限已被拒绝：请在浏览器站点设置里把「位置信息」改为允许，然后重试')
+      }
+    }).catch(() => { /* 不支持 Permissions API 的浏览器忽略 */ })
 
     // 先取一次即时定位（比 watchPosition 的首个回调更可靠）
     navigator.geolocation.getCurrentPosition(
@@ -454,7 +521,7 @@ export default function GolfApp() {
     )
 
     startWatch()
-  }, [gpsActive, applyPosition, startWatch])
+  }, [gpsActive, applyPosition, startWatch, startGpsWatchdog, stopGpsWatchdog])
 
   /** GPS 到导航目标的实时距离 */
   const navDistance = useMemo(() => {
@@ -669,8 +736,23 @@ export default function GolfApp() {
             <ZoomOut className="w-5 h-5" />
           </button>
           <button
-            onClick={locateAndCenter}
-            title={gpsActive ? '定位到我的位置' : '开启 GPS 并定位到我的位置'}
+            onClick={() => {
+              // 正在定位：忽略重复点击，否则会被当成「关闭 GPS」
+              if (gpsPending) return
+              // 已开启但没拿到坐标（超时/失败）：再点一次即重试
+              if (gpsActive && !userLocation) {
+                handleLocate({ restart: true })
+                return
+              }
+              locateAndCenter()
+            }}
+            title={
+              gpsActive && !userLocation
+                ? '正在定位…'
+                : gpsActive
+                  ? '定位到我的位置'
+                  : '开启 GPS 并定位到我的位置'
+            }
             className={`w-11 h-11 rounded-lg border flex items-center justify-center ${
               gpsActive
                 ? 'bg-blue-500/90 border-blue-300/60 text-white'
@@ -683,7 +765,7 @@ export default function GolfApp() {
           {/* GPS 状态：让「点了没反应」变成看得见的等待/精度，便于排查 */}
           {(gpsPending || (gpsActive && !userLocation)) && (
             <div className="whitespace-nowrap px-1.5 py-0.5 rounded bg-slate-900/90 border border-white/15 text-[10px] text-white/60 text-center">
-              定位中…
+              {gpsPermission === 'prompt' ? '请在授权框点允许' : '定位中…'} {gpsElapsed}s / {GPS_TIMEOUT_S}s
             </div>
           )}
           {gpsActive && userLocation && (
