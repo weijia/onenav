@@ -1,0 +1,68 @@
+[
+  {
+    "account": "边缘richard",
+    "platform": "jd",
+    "order_id": "3658473011154524",
+    "order_time": "2026-10-21 17:06:43",
+    "year": "2026",
+    "shop": "京东自营·数码旗舰店",
+    "status": "付款成功",
+    "items": [
+      { "name": "绿联 Type-C 数据线 1m", "spec": null, "price": null, "qty": 2, "amount": null },
+      { "name": "公牛 USB 充电器 65W", "spec": null, "price": null, "qty": 1, "amount": null }
+    ],
+    "total_amount": 248.03,
+    "payment": "在线支付",
+    "is_master_split": false,
+    "receiver_name": "汪维佳",
+    "receiver_address": "浙江杭州市…",
+    "remark": null,
+    "freight": null,
+    "logistics": null,
+    "refund_note": null,
+    "is_phone_order": null
+  },
+  {
+    "account": "weijiagg",
+    "platform": "taobao",
+    "order_id": "2211993344556677",
+    "order_time": "2026-09-02 00:00:00",
+    "year": "2026",
+    "shop": "良品铺子官方旗舰店",
+    "status": "交易成功",
+    "items": [
+      { "name": "每日坚果礼盒 750g", "spec": "混合味", "price": 69.9, "qty": 2, "amount": 139.8 },
+      { "name": "猪肉脯 200g", "spec": "蜜汁", "price": 19.9, "qty": 1, "amount": 19.9 }
+    ],
+    "total_amount": 159.7,
+    "payment": "信用卡支付",
+    "is_master_split": false,
+    "receiver_name": null,
+    "receiver_address": null,
+    "remark": null,
+    "freight": 0,
+    "logistics": "已签收",
+    "refund_note": null,
+    "is_phone_order": true
+  },
+  {
+    "account": "边缘richard",
+    "platform": "jd",
+    "order_id": "3658473011154999",
+    "order_time": "2026-10-20 10:00:00",
+    "year": "2026",
+    "shop": null,
+    "status": null,
+    "items": [],
+    "total_amount": 512.0,
+    "payment": null,
+    "is_master_split": true,
+    "receiver_name": null,
+    "receiver_address": null,
+    "remark": null,
+    "freight": null,
+    "logistics": null,
+    "refund_note": null,
+    "is_phone_order": null
+  }
+]

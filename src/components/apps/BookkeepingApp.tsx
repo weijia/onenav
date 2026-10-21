@@ -18,6 +18,15 @@ import {
 import type { LucideIcon } from 'lucide-react'
 import { useAppData } from '@/lib/app-data'
 
+// 订单商品明细（与 schema §3.2 对齐）
+interface OrderItem {
+  name: string
+  spec: string | null
+  price: number | null
+  qty: number | null
+  amount: number | null
+}
+
 // ───────────────────────────────────────────────────────────
 // 交易记录（流水）
 // ───────────────────────────────────────────────────────────
@@ -37,6 +46,21 @@ interface Tx {
   unit?: string
   /** 单价（可选） */
   unitPrice?: number
+  // ── 电商订单导入扩展字段（来自京东/淘宝统一 schema，缺省不存） ──
+  /** 平台：jd=京东 / taobao=淘宝 */
+  platform?: 'jd' | 'taobao'
+  /** 账号标识（见 schema §1） */
+  account?: string
+  /** 平台订单号 */
+  orderId?: string
+  /** 交易状态（保留各平台原文，如 已完成/交易成功） */
+  status?: string
+  /** 店铺名 */
+  shop?: string
+  /** 支付方式 */
+  payment?: string
+  /** 商品明细（京东仅 name/qty，淘宝有完整 price/qty/amount） */
+  items?: OrderItem[]
 }
 
 // ───────────────────────────────────────────────────────────
@@ -157,6 +181,32 @@ function normalizeType(v: unknown): 'income' | 'expense' {
   return 'expense'
 }
 
+function toNumberOrNull(v: unknown): number | null {
+  const n = Number(v)
+  return Number.isFinite(n) ? n : null
+}
+
+/** 把 schema 的 items 数组归一化为内部 OrderItem[]（无效行丢弃） */
+function parseItems(raw: unknown): OrderItem[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  const list = raw
+    .map((it): OrderItem | null => {
+      if (!it || typeof it !== 'object') return null
+      const o = it as Record<string, unknown>
+      const name = typeof o.name === 'string' ? o.name.trim() : ''
+      if (!name) return null
+      return {
+        name,
+        spec: typeof o.spec === 'string' ? o.spec : null,
+        price: toNumberOrNull(o.price),
+        qty: toNumberOrNull(o.qty),
+        amount: toNumberOrNull(o.amount),
+      }
+    })
+    .filter((x): x is OrderItem => x !== null)
+  return list.length ? list : undefined
+}
+
 // ───────────────────────────────────────────────────────────
 // 交易记录（流水）导入导出
 // ───────────────────────────────────────────────────────────
@@ -176,6 +226,13 @@ function normalizeRow(raw: unknown, fallbackDate: string): Tx | null {
   const note = typeof r.note === 'string' ? r.note.trim() : ''
   const product = typeof r.product === 'string' ? r.product.trim() : ''
   const unit = typeof r.unit === 'string' ? r.unit.trim() : ''
+  const platform = r.platform === 'jd' || r.platform === 'taobao' ? r.platform : undefined
+  const orderId = typeof r.order_id === 'string' ? r.order_id : undefined
+  const status = typeof r.status === 'string' ? r.status : undefined
+  const shop = typeof r.shop === 'string' ? r.shop : undefined
+  const account = typeof r.account === 'string' ? r.account : undefined
+  const payment = typeof r.payment === 'string' ? r.payment : undefined
+  const items = parseItems(r.items)
   return {
     id: randId(),
     type,
@@ -188,11 +245,58 @@ function normalizeRow(raw: unknown, fallbackDate: string): Tx | null {
     quantity: quantity || undefined,
     unit: unit || undefined,
     unitPrice: unitPrice || undefined,
+    platform,
+    account,
+    orderId,
+    status,
+    shop,
+    payment,
+    items,
   }
 }
 
-function toExportShape(t: Tx) {
+function normalizeOrderRow(raw: unknown, fallbackDate: string): Tx | null {
+  if (!raw || typeof raw !== 'object') return null
+  const r = raw as Record<string, unknown>
+  // 过滤京东拆单主单（schema §5.1：统计真实交易时排除）
+  if (r.is_master_split === true) return null
+  const platform = r.platform === 'jd' || r.platform === 'taobao' ? r.platform : undefined
+  const orderId = typeof r.order_id === 'string' ? r.order_id : undefined
+  if (!platform || !orderId) return null
+  const total = toNumber(r.total_amount)
+  const orderTime = typeof r.order_time === 'string' ? r.order_time : ''
+  const ymd = orderTime.slice(0, 10)
+  const date =
+    DATE_RE.test(ymd) ? ymd : typeof r.year === 'string' && /^\d{4}$/.test(r.year) ? `${r.year}-01-01` : fallbackDate
+  const items = parseItems(r.items)
+  const firstProduct = items?.[0]?.name ?? (typeof r.shop === 'string' && r.shop ? r.shop : undefined)
+  const status = typeof r.status === 'string' ? r.status : undefined
+  const shop = typeof r.shop === 'string' ? r.shop : undefined
+  const account = typeof r.account === 'string' ? r.account : undefined
+  const payment = typeof r.payment === 'string' ? r.payment : undefined
+  const platformLabel = platform === 'jd' ? '京东' : '淘宝'
+  const noteParts = [platformLabel, account ? `@${account}` : '', status ?? ''].filter(Boolean)
   return {
+    id: randId(),
+    type: 'expense',
+    amount: total,
+    category: '购物',
+    note: noteParts.join(' · '),
+    date,
+    createdAt: typeof r.createdAt === 'number' ? r.createdAt : Date.now(),
+    product: firstProduct,
+    platform,
+    account,
+    orderId,
+    status,
+    shop,
+    payment,
+    items,
+  }
+}
+
+function toExportShape(t: Tx): Record<string, unknown> {
+  const out: Record<string, unknown> = {
     date: t.date,
     type: t.type,
     category: t.category,
@@ -203,6 +307,21 @@ function toExportShape(t: Tx) {
     unit: t.unit ?? null,
     unitPrice: t.unitPrice ?? null,
   }
+  // 订单字段：仅当该记录确实来自电商订单时才写，避免普通记账记录被误判为订单
+  if (t.platform) {
+    out.platform = t.platform
+    out.account = t.account ?? null
+    out.order_id = t.orderId ?? null
+    out.order_time = `${t.date} 00:00:00`
+    out.year = t.date.slice(0, 4)
+    out.shop = t.shop ?? null
+    out.status = t.status ?? null
+    out.payment = t.payment ?? null
+    out.items = t.items ?? null
+    out.is_master_split = false
+    out.total_amount = t.amount // 用 schema 的 total_amount 表达金额，保证回灌时识别正确
+  }
+  return out
 }
 
 // ───────────────────────────────────────────────────────────
@@ -281,8 +400,10 @@ type ImportTarget = 'tx' | 'price' | 'auto'
  * - 有 type + category + amount → tx
  * - 含糊：有 unitPrice 且无 type → price item；否则 tx
  */
-function detectRowKind(raw: any): 'tx' | 'price' | null {
+function detectRowKind(raw: any): 'tx' | 'price' | 'order' | null {
   if (!raw || typeof raw !== 'object') return null
+  // 电商订单 schema 强特征（platform + order_id / total_amount）
+  if ('order_id' in raw || ('platform' in raw && 'total_amount' in raw)) return 'order'
   if ('kind' in raw) return 'price'
   // tx 强特征
   if ('amount' in raw && ('type' in raw || 'category' in raw)) return 'tx'
@@ -351,6 +472,11 @@ function parseImport(text: string, target: ImportTarget = 'auto'): ImportPreview
       } else if (kind === 'price') {
         const r = normalizePriceRow(raw, fd)
         r ? prices.push(r) : skipped++
+      } else if (kind === 'order') {
+        // 京东拆单主单按 schema 规定过滤，不计入"无效"
+        if (raw && typeof raw === 'object' && (raw as Record<string, unknown>).is_master_split === true) continue
+        const r = normalizeOrderRow(raw, fd)
+        r ? txs.push(r) : skipped++
       } else {
         skipped++
       }
@@ -386,7 +512,12 @@ const AI_PROMPT_TEMPLATE = `你是一个智能记账助手。请理解以下内�
 - kind:"combo" 套餐：name、unitPrice、items[] (product/unit/quantity)、date
 - kind:"voucher" 代金券：name、cost(实付)、faceValue(面值)、date
 
-数组里可以混合两类，系统会自动识别。
+【C. 电商订单（京东/淘宝统一 schema）】
+特征：来自 all_orders_unified.json，有 platform(京东=jd/淘宝=taobao) 和 order_id
+字段：account、platform、order_id、order_time(YYYY-MM-DD HH:MM:SS)、year、shop、status、items[{name,spec,price,qty,amount}]、total_amount、payment、is_master_split
+注意：系统会自动过滤 is_master_split=true 的拆单主单，并把每笔真实订单作为一条"支出"记录归入「记录」Tab
+
+数组里可以混合三类，系统会自动识别。
 
 示例输出：
 [
@@ -397,9 +528,11 @@ const AI_PROMPT_TEMPLATE = `你是一个智能记账助手。请理解以下内�
 ]`
 
 /** JSON 格式说明 */
-const FORMAT_NOTE = `系统自动识别每条记录是 tx 还是 price，支持混合数组。
-字段均可省略；kind/item/combo/voucher 自动分类；解析失败的行会跳过，Toast 会告诉你跳过了几条。
-导出的 JSON 可直接当模板交给 AI 生成。`
+const FORMAT_NOTE = `系统自动识别每条记录是 记账 / 价格 / 订单，支持混合数组：
+- 含 order_id（或 platform + total_amount）→ 电商订单：按统一 schema 解析为支出记录，自动过滤京东拆单主单，保留 platform/account/order_id/status/shop/items 等字段
+- 含 kind(item/combo/voucher) → 价格记录
+- 含 type + category + amount → 记账记录
+解析失败的行会跳过，Toast 会告诉你跳过了几条。导出的 JSON 可直接当模板交给 AI 生成。`
 
 // ───────────────────────────────────────────────────────────
 // 主组件
@@ -514,6 +647,13 @@ export default function BookkeepingApp() {
         t.note,
         t.category,
         t.product ?? '',
+        t.platform ? (t.platform === 'jd' ? '京东' : '淘宝') : '',
+        t.account ?? '',
+        t.orderId ?? '',
+        t.status ?? '',
+        t.shop ?? '',
+        t.payment ?? '',
+        t.items?.map((i) => i.name).join(' ') ?? '',
         t.unit,
         String(t.amount),
         t.unitPrice != null ? String(t.unitPrice) : '',
@@ -1180,12 +1320,27 @@ export default function BookkeepingApp() {
             <div key={t.id} className="flex items-center gap-3 px-4 py-2.5">
               <div className="flex-1 min-w-0">
                 <div className="text-white/90 text-sm truncate">
+                  {t.platform ? (
+                    <span
+                      className={`mr-1 inline-block px-1.5 py-0.5 rounded text-[10px] align-middle ${
+                        t.platform === 'jd'
+                          ? 'bg-red-500/20 text-red-200'
+                          : 'bg-orange-500/20 text-orange-200'
+                      }`}
+                    >
+                      {t.platform === 'jd' ? '京东' : '淘宝'}
+                    </span>
+                  ) : null}
                   {t.category}
                   {t.product ? ` · ${t.product}` : ''}
                   {t.note ? ` · ${t.note}` : ''}
                   {t.unitPrice ? ` · ¥${t.unitPrice}/${t.unit ?? ''}${t.quantity ? ` ×${t.quantity}` : ''}` : ''}
                 </div>
-                <div className="text-white/40 text-xs">{t.date}</div>
+                <div className="text-white/40 text-xs">
+                  {t.date}
+                  {t.items?.length ? ` · ${t.items.length} 件` : ''}
+                  {t.account ? ` · ${t.account}` : ''}
+                </div>
               </div>
               <div className={`text-sm font-medium ${t.type === 'income' ? 'text-emerald-300' : 'text-rose-300'}`}>
                 {t.type === 'income' ? '+' : '-'}
