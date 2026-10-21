@@ -440,7 +440,7 @@ function parseImport(text: string, target: ImportTarget = 'auto'): ImportPreview
         if (raw && typeof raw === 'object' && (raw as Record<string, unknown>).is_master_split === true) continue
         const r = normalizeOrderRow(raw, fd)
         r ? orders.push(r) : skipped++
-        // 订单里「有单价」的商品同时生成价格记录，导入后会出现在「价格」页
+        // 订单里「有单价」的商品同时生成价格记录，导入后会出现在统一时间线的「报价」里
         for (const pr of extractOrderPrices(raw, fd)) prices.push(pr)
       } else {
         skipped++
@@ -507,7 +507,7 @@ const AI_PROMPT_TEMPLATE = `你是一个智能记账助手。请理解以下内�
 【C. 电商订单（京东/淘宝统一 schema）】
 特征：来自 all_orders_unified.json，有 platform(京东=jd/淘宝=taobao) 和 order_id
 字段：account、platform、order_id、order_time(YYYY-MM-DD HH:MM:SS)、year、shop、status、items[{name,spec,price,qty,amount}]、total_amount、payment、is_master_split
-注意：系统会自动过滤 is_master_split=true 的拆单主单，并把每笔真实订单作为一条"支出"记录归入「记录」Tab
+注意：系统会自动过滤 is_master_split=true 的拆单主单，并把每笔真实订单作为一条"支出"记录归入统一时间线（按金额计入支出）
 
 数组里可以混合三类，系统会自动识别。
 
@@ -521,7 +521,7 @@ const AI_PROMPT_TEMPLATE = `你是一个智能记账助手。请理解以下内�
 
 /** JSON 格式说明 */
 const FORMAT_NOTE = `系统自动识别每条记录是 记账 / 价格 / 订单，支持混合数组：
-- 含 order_id（或 platform + total_amount）→ 电商订单：每笔真实订单解析为一条 type:"order" 记录（仍显示在「记录」页，按金额计入支出）；其商品中「有单价」的条目（主要淘宝，已过滤 0.01 红包占位）同时写入「价格」页（按商品名去重、保留最新报价）
+- 含 order_id（或 platform + total_amount）→ 电商订单：每笔真实订单解析为一条 type:"order" 记录（在统一时间线中显示为流水/订单，按金额计入支出）；其商品中「有单价」的条目（主要淘宝，已过滤 0.01 红包占位）同时写入「报价」记录（按商品名去重、保留最新报价）
 - 含 kind(item/combo/voucher) → 价格记录
 - 含 type + category + amount → 记账记录
 解析失败的行会跳过，Toast 会告诉你跳过了几条。导出的 JSON 可直接当模板交给 AI 生成。`
@@ -529,6 +529,111 @@ const FORMAT_NOTE = `系统自动识别每条记录是 记账 / 价格 / 订单�
 // ───────────────────────────────────────────────────────────
 // 主组件
 // ───────────────────────────────────────────────────────────
+// ── 统一时间线辅助 ──
+function recordHaystack(r: BookkeepingRecord): string {
+  if (r.type === 'price') {
+    const meta = PRICE_TYPES[r.kind]
+    return [meta?.getTitle(r), meta?.getSubtitle(r), 'source' in r ? r.source ?? '' : '']
+      .join(' ')
+      .toLowerCase()
+  }
+  return [
+    r.note,
+    r.category,
+    r.product ?? '',
+    r.platform ? (r.platform === 'jd' ? '京东' : '淘宝') : '',
+    r.account ?? '',
+    r.orderId ?? '',
+    r.status ?? '',
+    r.shop ?? '',
+    r.payment ?? '',
+    r.items?.map((i) => i.name).join(' ') ?? '',
+    r.unit,
+    String(r.amount),
+    r.unitPrice != null ? String(r.unitPrice) : '',
+    r.quantity != null ? String(r.quantity) : '',
+  ]
+    .join(' ')
+    .toLowerCase()
+}
+
+function recordToExport(r: BookkeepingRecord): Record<string, unknown> {
+  return r.type === 'price' ? toPriceExportShape(r) : toExportShape(r as TxRecord | OrderRecord)
+}
+
+function RecordRow({ r, onDelete }: { r: BookkeepingRecord; onDelete: (id: string) => void }) {
+  if (r.type === 'price') {
+    const m = PRICE_TYPES[r.kind]
+    return (
+      <div className="flex items-center gap-3 px-4 py-2.5">
+        <div className="flex-1 min-w-0">
+          <div className="text-white/90 text-sm truncate flex items-center gap-1.5">
+            <span className="inline-block px-1.5 py-0.5 rounded text-[10px] bg-amber-500/20 text-amber-200 align-middle">报价</span>
+            {m?.getTitle(r)}
+          </div>
+          <div className="text-white/40 text-xs">{m?.getSubtitle(r)}</div>
+          <div className="text-white/40 text-xs">
+            {r.date}
+            {'source' in r && r.source ? ` · ${r.source}` : ''}
+          </div>
+          {m?.detail ? m.detail(r) : null}
+        </div>
+        <div className="text-sm font-medium text-white/70">
+          {r.kind === 'voucher' ? `¥${r.cost}` : `¥${m?.getPrice(r)}`}
+        </div>
+        <button
+          onClick={() => onDelete(r.id)}
+          className="w-7 h-7 rounded-lg flex items-center justify-center text-white/30 hover:text-red-300 hover:bg-red-500/10 transition-colors"
+          title="删除"
+        >
+          <Trash2 className="w-4 h-4" />
+        </button>
+      </div>
+    )
+  }
+  const isOrder = r.type === 'order'
+  return (
+    <div className="flex items-center gap-3 px-4 py-2.5">
+      <div className="flex-1 min-w-0">
+        <div className="text-white/90 text-sm truncate flex items-center gap-1.5">
+          {isOrder && r.platform ? (
+            <span
+              className={`inline-block px-1.5 py-0.5 rounded text-[10px] align-middle ${
+                r.platform === 'jd' ? 'bg-red-500/20 text-red-200' : 'bg-orange-500/20 text-orange-200'
+              }`}
+            >
+              {r.platform === 'jd' ? '京东' : '淘宝'}
+            </span>
+          ) : null}
+          {isOrder ? (
+            <span className="inline-block px-1.5 py-0.5 rounded text-[10px] bg-sky-500/20 text-sky-200 align-middle">订单</span>
+          ) : null}
+          {r.category}
+          {r.product ? ` · ${r.product}` : ''}
+          {r.note ? ` · ${r.note}` : ''}
+          {r.unitPrice ? ` · ¥${r.unitPrice}/${r.unit ?? ''}${r.quantity ? ` ×${r.quantity}` : ''}` : ''}
+        </div>
+        <div className="text-white/40 text-xs">
+          {r.date}
+          {r.items?.length ? ` · ${r.items.length} 件` : ''}
+          {r.account ? ` · ${r.account}` : ''}
+        </div>
+      </div>
+      <div className={`text-sm font-medium ${directionOf(r) === 'income' ? 'text-emerald-300' : 'text-rose-300'}`}>
+        {directionOf(r) === 'income' ? '+' : '-'}
+        {r.amount.toFixed(2)}
+      </div>
+      <button
+        onClick={() => onDelete(r.id)}
+        className="w-7 h-7 rounded-lg flex items-center justify-center text-white/30 hover:text-red-300 hover:bg-red-500/10 transition-colors"
+        title="删除"
+      >
+        <Trash2 className="w-4 h-4" />
+      </button>
+    </div>
+  )
+}
+
 export default function BookkeepingApp() {
   const [records, setRecords] = useState<BookkeepingRecord[]>([])
   const [loading, setLoading] = useState(true)
@@ -550,11 +655,13 @@ export default function BookkeepingApp() {
     }
   }, [])
 
-  const [tab, setTab] = useState<'tx' | 'price'>('tx')
+  // 统一时间线筛选：全部 / 流水 / 订单 / 报价
+  const [viewFilter, setViewFilter] = useState<'all' | 'tx' | 'order' | 'price'>('all')
+  // 添加区模式：记流水 / 记价格
+  const [addMode, setAddMode] = useState<'tx' | 'price'>('tx')
 
-  // 搜索与筛选（随 Tab 生效）
+  // 搜索
   const [search, setSearch] = useState('')
-  const [typeFilter, setTypeFilter] = useState<'all' | 'expense' | 'income'>('all')
   // 导入预览
   const [importPreview, setImportPreview] = useState<ImportPreview | null>(null)
   const [importMode, setImportMode] = useState<'merge' | 'replace'>('merge')
@@ -639,53 +746,18 @@ export default function BookkeepingApp() {
     )[0] as Extract<PriceRecord, { kind: 'item' }>
   }, [product, prices])
 
-  // ── 列表筛选 ──
-  const sortedTx = useMemo(
-    () =>
-      [...transactions].sort((a, b) => {
-        if (a.date !== b.date) return a.date < b.date ? 1 : -1
-        return b.createdAt - a.createdAt
-      }),
-    [transactions],
-  )
-  const filteredTx = useMemo(() => {
+  // ── 统一时间线（按日期降序，搜索覆盖所有类型） ──
+  const visibleRecords = useMemo(() => {
     const q = search.trim().toLowerCase()
-    return sortedTx.filter((t) => {
-      if (typeFilter !== 'all' && directionOf(t) !== typeFilter) return false
-      if (!q) return true
-      const hay = [
-        t.note,
-        t.category,
-        t.product ?? '',
-        t.platform ? (t.platform === 'jd' ? '京东' : '淘宝') : '',
-        t.account ?? '',
-        t.orderId ?? '',
-        t.status ?? '',
-        t.shop ?? '',
-        t.payment ?? '',
-        t.items?.map((i) => i.name).join(' ') ?? '',
-        t.unit,
-        String(t.amount),
-        t.unitPrice != null ? String(t.unitPrice) : '',
-        t.quantity != null ? String(t.quantity) : '',
-      ]
-        .join(' ')
-        .toLowerCase()
-      return hay.includes(q)
+    let list: BookkeepingRecord[] = records
+    if (viewFilter !== 'all') list = list.filter((r) => r.type === viewFilter)
+    list = [...list].sort((a, b) => {
+      if (a.date !== b.date) return a.date < b.date ? 1 : -1
+      return b.createdAt - a.createdAt
     })
-  }, [sortedTx, search, typeFilter])
-
-  const filteredPrices = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    if (!q) return prices
-    return prices.filter((r) => {
-      const meta = PRICE_TYPES[r.kind]
-      const hay = [meta?.getTitle(r), meta?.getSubtitle(r), 'source' in r ? r.source ?? '' : '']
-        .join(' ')
-        .toLowerCase()
-      return hay.includes(q)
-    })
-  }, [prices, search])
+    if (!q) return list
+    return list.filter((r) => recordHaystack(r).includes(q))
+  }, [records, viewFilter, search])
 
   // ── 单价×数量自动算金额 ──
   const computedAmount = useMemo(() => {
@@ -780,13 +852,12 @@ export default function BookkeepingApp() {
   }
 
   const handleExport = () => {
-    const payload =
-      tab === 'tx' ? transactions.map(toExportShape) : prices.map(toPriceExportShape)
+    const payload = records.map(recordToExport)
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `bookkeeping-${tab}-${today()}.json`
+    a.download = `bookkeeping-${today()}.json`
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -886,7 +957,7 @@ export default function BookkeepingApp() {
     document.addEventListener('paste', onPaste)
     return () => document.removeEventListener('paste', onPaste)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab])
+  }, [])
 
   if (loading) {
     return <div className="text-center text-white/40 py-10">加载中…</div>
@@ -894,34 +965,58 @@ export default function BookkeepingApp() {
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-5 space-y-5">
-      {/* Tab 切换 */}
+      {/* 筛选 chip：全部 / 流水 / 订单 / 报价 */}
       <div className="flex gap-1 p-1 rounded-xl bg-white/5 border border-white/10">
         {([
-          { k: 'tx', label: '记录' },
-          { k: 'price', label: '价格' },
-        ] as const).map((t) => (
+          { k: 'all', label: '全部' },
+          { k: 'tx', label: '流水' },
+          { k: 'order', label: '订单' },
+          { k: 'price', label: '报价' },
+        ] as const).map((f) => (
           <button
-            key={t.k}
-            onClick={() => setTab(t.k)}
+            key={f.k}
+            onClick={() => setViewFilter(f.k)}
             className={`flex-1 py-2 rounded-lg text-sm transition-colors ${
-              tab === t.k ? 'bg-white/20 text-white' : 'text-white/50 hover:bg-white/10'
+              viewFilter === f.k ? 'bg-white/20 text-white' : 'text-white/50 hover:bg-white/10'
             }`}
           >
-            {t.label}
+            {f.label}
           </button>
         ))}
       </div>
 
-      {tab === 'tx' ? (
-        <>
-          {/* 汇总 */}
-          <div className="grid grid-cols-3 gap-3">
-            <SummaryCard label="收入" value={income} accent="text-emerald-300" icon={<TrendingUp className="w-4 h-4" />} />
-            <SummaryCard label="支出" value={expense} accent="text-rose-300" icon={<TrendingDown className="w-4 h-4" />} />
-            <SummaryCard label="结余" value={balance} accent="text-white" icon={<Wallet className="w-4 h-4" />} />
-          </div>
+      {/* 汇总（仅真实收支：流水 + 订单；报价不计入） */}
+      {viewFilter !== 'price' && (
+        <div className="grid grid-cols-3 gap-3">
+          <SummaryCard label="收入" value={income} accent="text-emerald-300" icon={<TrendingUp className="w-4 h-4" />} />
+          <SummaryCard label="支出" value={expense} accent="text-rose-300" icon={<TrendingDown className="w-4 h-4" />} />
+          <SummaryCard label="结余" value={balance} accent="text-white" icon={<Wallet className="w-4 h-4" />} />
+        </div>
+      )}
 
-          {/* 添加记录 */}
+      {/* 添加区：记流水 / 记价格 切换 */}
+      <div className="flex gap-1 p-1 rounded-xl bg-white/5 border border-white/10">
+        <button
+          onClick={() => setAddMode('tx')}
+          className={`flex-1 py-2 rounded-lg text-sm transition-colors ${
+            addMode === 'tx' ? 'bg-white/20 text-white' : 'text-white/50 hover:bg-white/10'
+          }`}
+        >
+          记流水
+        </button>
+        <button
+          onClick={() => setAddMode('price')}
+          className={`flex-1 py-2 rounded-lg text-sm transition-colors ${
+            addMode === 'price' ? 'bg-white/20 text-white' : 'text-white/50 hover:bg-white/10'
+          }`}
+        >
+          记价格
+        </button>
+      </div>
+
+      {addMode === 'tx' ? (
+        <>
+          {/* 添加记录（流水 / 订单） */}
           <div className="rounded-xl bg-white/5 border border-white/10 p-4 space-y-3">
             <div className="flex gap-2">
               <button
@@ -1232,27 +1327,12 @@ export default function BookkeepingApp() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
           <input
             type="text"
-            placeholder={tab === 'tx' ? '搜索备注 / 分类 / 商品 / 单位 / 金额…' : '搜索名称 / 类型 / 来源…'}
+            placeholder="搜索备注 / 分类 / 商品 / 店铺 / 订单号 / 报价…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full h-9 pl-10 pr-3 rounded-lg bg-white/10 border border-white/20 text-white text-sm outline-none focus:border-white/40"
           />
         </div>
-        {tab === 'tx' && (
-          <div className="flex gap-1">
-            {(['all', 'expense', 'income'] as const).map((f) => (
-              <button
-                key={f}
-                onClick={() => setTypeFilter(f)}
-                className={`px-2.5 py-1.5 rounded-lg text-xs transition-colors ${
-                  typeFilter === f ? 'bg-white/25 text-white' : 'bg-white/5 text-white/50 hover:bg-white/10'
-                }`}
-              >
-                {f === 'all' ? '全部' : f === 'expense' ? '支出' : '收入'}
-              </button>
-            ))}
-          </div>
-        )}
         <div className="flex gap-1">
           <button
             onClick={handleImportClick}
@@ -1340,108 +1420,25 @@ export default function BookkeepingApp() {
         </div>
       )}
 
-      {/* 列表 */}
-      {tab === 'tx' ? (
-        <div className="rounded-xl bg-white/5 border border-white/10 divide-y divide-white/5">
-          {filteredTx.length === 0 && (
-            <p className="text-center text-white/40 py-8 text-sm">
-              {transactions.length === 0 ? '还没有记录，添加第一笔吧' : '没有匹配的记录'}
-            </p>
-          )}
-          {filteredTx.map((t) => (
-            <div key={t.id} className="flex items-center gap-3 px-4 py-2.5">
-              <div className="flex-1 min-w-0">
-                <div className="text-white/90 text-sm truncate">
-                  {t.platform ? (
-                    <span
-                      className={`mr-1 inline-block px-1.5 py-0.5 rounded text-[10px] align-middle ${
-                        t.platform === 'jd'
-                          ? 'bg-red-500/20 text-red-200'
-                          : 'bg-orange-500/20 text-orange-200'
-                      }`}
-                    >
-                      {t.platform === 'jd' ? '京东' : '淘宝'}
-                    </span>
-                  ) : null}
-                  {t.category}
-                  {t.product ? ` · ${t.product}` : ''}
-                  {t.note ? ` · ${t.note}` : ''}
-                  {t.unitPrice ? ` · ¥${t.unitPrice}/${t.unit ?? ''}${t.quantity ? ` ×${t.quantity}` : ''}` : ''}
-                </div>
-                <div className="text-white/40 text-xs">
-                  {t.date}
-                  {t.items?.length ? ` · ${t.items.length} 件` : ''}
-                  {t.account ? ` · ${t.account}` : ''}
-                </div>
-              </div>
-              <div className={`text-sm font-medium ${directionOf(t) === 'income' ? 'text-emerald-300' : 'text-rose-300'}`}>
-                {directionOf(t) === 'income' ? '+' : '-'}
-                {t.amount.toFixed(2)}
-              </div>
-              <button
-                onClick={() => handleDeleteTx(t.id)}
-                className="w-7 h-7 rounded-lg flex items-center justify-center text-white/30 hover:text-red-300 hover:bg-red-500/10 transition-colors"
-                title="删除"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="space-y-4">
-          {PRICE_KINDS.map((k) => {
-            const meta = PRICE_TYPES[k]
-            const list = filteredPrices
-              .filter((p) => p.kind === k)
-              .sort((a, b) => (a.date !== b.date ? (a.date < b.date ? 1 : -1) : b.createdAt - a.createdAt))
-            if (list.length === 0) return null
-            return (
-              <div key={k}>
-                <div className="flex items-center gap-1.5 text-white/50 text-xs px-1 mb-1">
-                  <meta.icon className="w-3.5 h-3.5" />
-                  {meta.label}
-                  <span className="text-white/30">· {list.length}</span>
-                </div>
-                <div className="rounded-xl bg-white/5 border border-white/10 divide-y divide-white/5">
-                  {list.map((r) => {
-                    const m = PRICE_TYPES[r.kind]
-                    return (
-                      <div key={r.id} className="flex items-center gap-3 px-4 py-2.5">
-                        <div className="flex-1 min-w-0">
-                          <div className="text-white/90 text-sm truncate">{m?.getTitle(r)}</div>
-                          <div className="text-white/40 text-xs">{m?.getSubtitle(r)}</div>
-                          <div className="text-white/40 text-xs">
-                            {r.date}
-                            {'source' in r && r.source ? ` · ${r.source}` : ''}
-                          </div>
-                          {m?.detail ? m.detail(r) : null}
-                        </div>
-                        <div className="text-sm font-medium text-white/70">
-                          {r.kind === 'voucher' ? `¥${r.cost}` : `¥${m?.getPrice(r)}`}
-                        </div>
-                        <button
-                          onClick={() => handleDeletePrice(r.id)}
-                          className="w-7 h-7 rounded-lg flex items-center justify-center text-white/30 hover:text-red-300 hover:bg-red-500/10 transition-colors"
-                          title="删除"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-            )
-          })}
-          {prices.length === 0 && (
-            <p className="text-center text-white/40 py-8 text-sm">还没有价格记录，去添加单品 / 套餐 / 代金券吧</p>
-          )}
-          {prices.length > 0 && filteredPrices.length === 0 && (
-            <p className="text-center text-white/40 py-8 text-sm">没有匹配的价格记录</p>
-          )}
-        </div>
-      )}
+      {/* 列表（统一时间线：流水 / 订单 / 报价 同列） */}
+      <div className="rounded-xl bg-white/5 border border-white/10 divide-y divide-white/5">
+        {visibleRecords.length === 0 && (
+          <p className="text-center text-white/40 py-8 text-sm">
+            {records.length === 0
+              ? '还没有记录，去上方添加吧'
+              : viewFilter === 'price'
+                ? '这个筛选下没有报价记录'
+                : '没有匹配的记录'}
+          </p>
+        )}
+        {visibleRecords.map((r) => (
+          <RecordRow
+            key={r.id}
+            r={r}
+            onDelete={r.type === 'price' ? handleDeletePrice : handleDeleteTx}
+          />
+        ))}
+      </div>
 
       {/* 导入预览弹窗 */}
       {importPreview && (

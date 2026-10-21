@@ -131,10 +131,13 @@ type BookkeepingRecord = TxRecord | PriceRecord | OrderRecord
 
 ## 6. UI 映射
 
-- 「记录」Tab：展示 `type in ('tx','order')`；订单行带「京东 / 淘宝」彩色标签、账号、`status`、`shop`，可展开 `items`。
-- 「价格」Tab：展示 `type === 'price'`，按 `kind`（单品 / 套餐 / 代金券）分组，沿用现有 `PRICE_TYPES` 注册表。
-- 搜索：跨全部 `records` 命中 `platform / account / orderId / status / shop / product / category / note`。
-- 汇总：按 `type` + `direction` 统计（收入 / 支出 / 订单总额）。
+> 价格与流水保存在一起、也显示在一起（用户决策：统一 `type` 模型本就同源，无需拆 Tab）。
+
+- **统一时间线**：`records` 按 `date` 倒序合成一个列表（流水 / 订单 / 报价 同列）。顶部筛选 chip：`全部 / 流水 / 订单 / 报价`。
+- **类型徽标**：订单行带「京东 / 淘宝」+「订单」标签、`account`、`status`、`shop`，可展开 `items`；报价行带「报价」标签、按 `kind`（单品 / 套餐 / 代金券）沿用 `PRICE_TYPES` 注册表展示。
+- **添加区**：同一屏内用「记流水 / 记价格」切换两种表单（替代原两个 Tab）。
+- **搜索**：跨全部 `records` 命中 `platform / account / orderId / status / shop / product / category / note / 报价标题`。用 `recordHaystack(r)` 按 `type` 取对应字段。
+- **汇总**：仅统计 `type in ('tx','order')`（即 `directionOf` 为 income/expense 的真实收支），**报价不计入**收入 / 支出 / 结余。选「报价」chip 时隐藏汇总卡。
 
 ## 7. 导入 / 导出
 
@@ -157,6 +160,6 @@ type BookkeepingRecord = TxRecord | PriceRecord | OrderRecord
 
 - [ ] `tsc -b` 通过
 - [ ] `vite build` 通过
-- [ ] 用 `bookkeeping-order-sample.json` 验证：记录 Tab 出现订单、价格 Tab 出现单品报价、拆单主单被过滤
+- [ ] 用 `bookkeeping-order-sample.json` 验证：统一时间线中出现订单（带京东/淘宝标签）与报价（带「报价」标签）、拆单主单被过滤；选「报价」chip 隐藏汇总
 - [ ] 导入 2290 条后 `bk:*` 文档数 ≈ 2250（已排除拆单主单）
 - [ ] 迁移：旧 `app:bookkeeping` 单文档可正确转为 `bk:*` 多文档

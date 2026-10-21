@@ -65,9 +65,9 @@ export interface TxRecord extends BaseRecord {
 
 /** 价格（单品 / 套餐 / 代金券） */
 export type PriceRecord =
-  | (BaseRecord & { kind: 'item'; product: string; unit: string; unitPrice: number })
-  | (BaseRecord & { kind: 'combo'; name: string; unitPrice: number; items: ComboItem[] })
-  | (BaseRecord & { kind: 'voucher'; name: string; cost: number; faceValue: number })
+  | (BaseRecord & { type: 'price'; kind: 'item'; product: string; unit: string; unitPrice: number })
+  | (BaseRecord & { type: 'price'; kind: 'combo'; name: string; unitPrice: number; items: ComboItem[] })
+  | (BaseRecord & { type: 'price'; kind: 'voucher'; name: string; cost: number; faceValue: number })
 
 /** 电商订单（京东 / 淘宝） */
 export interface OrderRecord extends BaseRecord {
