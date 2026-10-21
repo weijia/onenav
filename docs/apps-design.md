@@ -119,7 +119,9 @@ export function isAppVisible(meta: AppMeta, apps?: Record<string, { hidden: bool
 
 ## 8. 已落地示例：记账
 
-`src/components/apps/BookkeepingApp.tsx` 演示完整链路：收支记录的增删与汇总，数据经 `useAppData('bookkeeping', { transactions: [] })` 跨设备同步。其独立入口位于 `apps/bookkeeping/`（`index.html` + `entry.tsx`），清单首项 `id:'bookkeeping'`，`accent: from-emerald-500 to-teal-600`，图标 `Wallet`。
+`src/components/apps/BookkeepingApp.tsx` 演示完整链路：收支记录的增删与汇总。其独立入口位于 `apps/bookkeeping/`（`index.html` + `entry.tsx`），清单首项 `id:'bookkeeping'`，`accent: from-emerald-500 to-teal-600`，图标 `Wallet`。
+
+> 记账的**数据与存储层**已修订为「统一 `type` 模型 + 每条记录独立 `bk:` 文档」，**不再使用** `useAppData('bookkeeping', { transactions: [] })` 单文档形态。详见 [`bookkeeping-data-model.md`](./bookkeeping-data-model.md)。
 
 ## 9. 如何新增一个小应用（扩展指南）
 

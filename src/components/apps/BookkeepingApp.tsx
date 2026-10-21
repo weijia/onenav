@@ -16,78 +16,24 @@ import {
   Check,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { useAppData } from '@/lib/app-data'
+import {
+  type BookkeepingRecord,
+  type TxRecord,
+  type PriceRecord,
+  type OrderRecord,
+  type OrderItem,
+  type ComboItem,
+  type PriceKind,
+  directionOf,
+  loadAllRecords,
+  putRecords,
+  removeRecord,
+  removeRecords,
+} from '@/lib/bookkeeping-store'
 
-// 订单商品明细（与 schema §3.2 对齐）
-interface OrderItem {
-  name: string
-  spec: string | null
-  price: number | null
-  qty: number | null
-  amount: number | null
-}
+// 单据类型（TxRecord / PriceRecord / OrderRecord / BookkeepingRecord）与存储函数
+// 统一 type 模型 + 每条记录一个独立 PouchDB 文档，见 src/lib/bookkeeping-store.ts 与 docs/bookkeeping-data-model.md
 
-// ───────────────────────────────────────────────────────────
-// 交易记录（流水）
-// ───────────────────────────────────────────────────────────
-interface Tx {
-  id: string
-  type: 'income' | 'expense'
-  amount: number
-  category: string
-  note: string
-  date: string // YYYY-MM-DD
-  createdAt: number
-  /** 关联的商品名（可选）：用于"上次报价带入" */
-  product?: string
-  /** 数量（可选） */
-  quantity?: number
-  /** 单位，如 粒 / 斤 / 个 / 件（可选） */
-  unit?: string
-  /** 单价（可选） */
-  unitPrice?: number
-  // ── 电商订单导入扩展字段（来自京东/淘宝统一 schema，缺省不存） ──
-  /** 平台：jd=京东 / taobao=淘宝 */
-  platform?: 'jd' | 'taobao'
-  /** 账号标识（见 schema §1） */
-  account?: string
-  /** 平台订单号 */
-  orderId?: string
-  /** 交易状态（保留各平台原文，如 已完成/交易成功） */
-  status?: string
-  /** 店铺名 */
-  shop?: string
-  /** 支付方式 */
-  payment?: string
-  /** 商品明细（京东仅 name/qty，淘宝有完整 price/qty/amount） */
-  items?: OrderItem[]
-}
-
-// ───────────────────────────────────────────────────────────
-// 价格记录：判别联合（item / combo / voucher）
-//   新增一种类型只需：① 在 PriceRecord 加一个变体
-//                    ② 在 PRICE_TYPES 注册表加一条
-//                    ③ 在价格添加表单的 switch 加一个分支
-//  列表 / 分组 / 排序 / 上次报价带入 都只读注册表，无需改动。
-// ───────────────────────────────────────────────────────────
-interface ComboItem {
-  product: string
-  unit?: string
-  quantity?: number
-  unitPrice?: number
-}
-
-type PriceKind = 'item' | 'combo' | 'voucher'
-
-type PriceRecord =
-  | { kind: 'item'; id: string; product: string; unit: string; unitPrice: number; date: string; source?: string; createdAt: number }
-  | { kind: 'combo'; id: string; name: string; unitPrice: number; date: string; source?: string; createdAt: number; items: ComboItem[] }
-  | { kind: 'voucher'; id: string; name: string; cost: number; faceValue: number; date: string; source?: string; createdAt: number }
-
-interface BookkeepingData {
-  transactions: Tx[]
-  prices: PriceRecord[]
-}
 
 // ───────────────────────────────────────────────────────────
 // 价格类型注册表（可扩展性的核心接缝）
@@ -210,7 +156,7 @@ function parseItems(raw: unknown): OrderItem[] | undefined {
 // ───────────────────────────────────────────────────────────
 // 交易记录（流水）导入导出
 // ───────────────────────────────────────────────────────────
-function normalizeRow(raw: unknown, fallbackDate: string): Tx | null {
+function normalizeRow(raw: unknown, fallbackDate: string): TxRecord | null {
   if (!raw || typeof raw !== 'object') return null
   const r = raw as Record<string, unknown>
   const type = normalizeType(r.type)
@@ -226,16 +172,10 @@ function normalizeRow(raw: unknown, fallbackDate: string): Tx | null {
   const note = typeof r.note === 'string' ? r.note.trim() : ''
   const product = typeof r.product === 'string' ? r.product.trim() : ''
   const unit = typeof r.unit === 'string' ? r.unit.trim() : ''
-  const platform = r.platform === 'jd' || r.platform === 'taobao' ? r.platform : undefined
-  const orderId = typeof r.order_id === 'string' ? r.order_id : undefined
-  const status = typeof r.status === 'string' ? r.status : undefined
-  const shop = typeof r.shop === 'string' ? r.shop : undefined
-  const account = typeof r.account === 'string' ? r.account : undefined
-  const payment = typeof r.payment === 'string' ? r.payment : undefined
-  const items = parseItems(r.items)
   return {
     id: randId(),
-    type,
+    type: 'tx',
+    direction: type,
     amount,
     category,
     note,
@@ -245,17 +185,10 @@ function normalizeRow(raw: unknown, fallbackDate: string): Tx | null {
     quantity: quantity || undefined,
     unit: unit || undefined,
     unitPrice: unitPrice || undefined,
-    platform,
-    account,
-    orderId,
-    status,
-    shop,
-    payment,
-    items,
   }
 }
 
-function normalizeOrderRow(raw: unknown, fallbackDate: string): Tx | null {
+function normalizeOrderRow(raw: unknown, fallbackDate: string): OrderRecord | null {
   if (!raw || typeof raw !== 'object') return null
   const r = raw as Record<string, unknown>
   // 过滤京东拆单主单（schema §5.1：统计真实交易时排除）
@@ -278,7 +211,7 @@ function normalizeOrderRow(raw: unknown, fallbackDate: string): Tx | null {
   const noteParts = [platformLabel, account ? `@${account}` : '', status ?? ''].filter(Boolean)
   return {
     id: randId(),
-    type: 'expense',
+    type: 'order',
     amount: total,
     category: '购物',
     note: noteParts.join(' · '),
@@ -316,29 +249,29 @@ function extractOrderPrices(raw: unknown, fallbackDate: string): PriceRecord[] {
       const name = typeof o.name === 'string' ? o.name.trim() : ''
       const price = toNumber(o.price)
       if (!name || !(price > 0.01)) continue // 跳过无单价 / 红包占位 0.01
-      out.push({ kind: 'item', id: randId(), product: name, unit: '', unitPrice: price, date, source, createdAt })
+      out.push({ type: 'price', kind: 'item', id: randId(), product: name, unit: '', unitPrice: price, date, source, createdAt })
     }
   }
   return out
 }
 
-function toExportShape(t: Tx): Record<string, unknown> {
+function toExportShape(t: TxRecord | OrderRecord): Record<string, unknown> {
   const out: Record<string, unknown> = {
     date: t.date,
-    type: t.type,
-    category: t.category,
+    type: directionOf(t), // 导出 income/expense 语义（订单导出为 expense），导入时按 order_id/platform 再判别
+    category: t.category ?? '',
     amount: t.amount,
-    note: t.note,
+    note: t.note ?? null,
     product: t.product ?? null,
     quantity: t.quantity ?? null,
     unit: t.unit ?? null,
     unitPrice: t.unitPrice ?? null,
   }
   // 订单字段：仅当该记录确实来自电商订单时才写，避免普通记账记录被误判为订单
-  if (t.platform) {
+  if (t.type === 'order') {
     out.platform = t.platform
     out.account = t.account ?? null
-    out.order_id = t.orderId ?? null
+    out.order_id = t.orderId
     out.order_time = `${t.date} 00:00:00`
     out.year = t.date.slice(0, 4)
     out.shop = t.shop ?? null
@@ -378,6 +311,7 @@ function normalizePriceRow(raw: unknown, fallbackDate: string): PriceRecord | nu
   const source = typeof r.source === 'string' ? r.source.trim() : ''
   const base = {
     id: randId(),
+    type: 'price' as const,
     date,
     source: source || undefined,
     createdAt: typeof r.createdAt === 'number' ? r.createdAt : Date.now(),
@@ -440,7 +374,8 @@ function detectRowKind(raw: any): 'tx' | 'price' | 'order' | null {
 }
 
 type ImportPreview = {
-  txs: Tx[]
+  txs: TxRecord[]
+  orders: OrderRecord[]
   prices: PriceRecord[]
   skipped: number
 }
@@ -486,7 +421,8 @@ function parseImport(text: string, target: ImportTarget = 'auto'): ImportPreview
 
   // 3. 遍历所有来源，自动识别
   const fd = today()
-  const txs: Tx[] = []
+  const txs: TxRecord[] = []
+  const orders: OrderRecord[] = []
   const prices: PriceRecord[] = []
   let skipped = 0
 
@@ -503,7 +439,7 @@ function parseImport(text: string, target: ImportTarget = 'auto'): ImportPreview
         // 京东拆单主单按 schema 规定过滤，不计入"无效"
         if (raw && typeof raw === 'object' && (raw as Record<string, unknown>).is_master_split === true) continue
         const r = normalizeOrderRow(raw, fd)
-        r ? txs.push(r) : skipped++
+        r ? orders.push(r) : skipped++
         // 订单里「有单价」的商品同时生成价格记录，导入后会出现在「价格」页
         for (const pr of extractOrderPrices(raw, fd)) prices.push(pr)
       } else {
@@ -516,10 +452,11 @@ function parseImport(text: string, target: ImportTarget = 'auto'): ImportPreview
   if (priceArr) feed(priceArr)
   if (mixedArr) feed(mixedArr)
 
-  if (txs.length === 0 && prices.length === 0) throw new Error('没有可导入的有效记录')
+  if (txs.length === 0 && orders.length === 0 && prices.length === 0)
+    throw new Error('没有可导入的有效记录')
   // 价格记录按 商品名/名称 去重（同款保留最新报价），避免订单批量导入产生大量重复
   const dedupedPrices = mergePrices([], prices, 'replace')
-  return { txs, prices: dedupedPrices, skipped }
+  return { txs, orders, prices: dedupedPrices, skipped }
 }
 
 /**
@@ -584,7 +521,7 @@ const AI_PROMPT_TEMPLATE = `你是一个智能记账助手。请理解以下内�
 
 /** JSON 格式说明 */
 const FORMAT_NOTE = `系统自动识别每条记录是 记账 / 价格 / 订单，支持混合数组：
-- 含 order_id（或 platform + total_amount）→ 电商订单：每笔真实订单解析为一条支出记录（「记录」页）；其商品中「有单价」的条目（主要淘宝，已过滤 0.01 红包占位）同时写入「价格」页（按商品名去重、保留最新报价）
+- 含 order_id（或 platform + total_amount）→ 电商订单：每笔真实订单解析为一条 type:"order" 记录（仍显示在「记录」页，按金额计入支出）；其商品中「有单价」的条目（主要淘宝，已过滤 0.01 红包占位）同时写入「价格」页（按商品名去重、保留最新报价）
 - 含 kind(item/combo/voucher) → 价格记录
 - 含 type + category + amount → 记账记录
 解析失败的行会跳过，Toast 会告诉你跳过了几条。导出的 JSON 可直接当模板交给 AI 生成。`
@@ -593,10 +530,25 @@ const FORMAT_NOTE = `系统自动识别每条记录是 记账 / 价格 / 订单�
 // 主组件
 // ───────────────────────────────────────────────────────────
 export default function BookkeepingApp() {
-  const { data, loading, save } = useAppData<BookkeepingData>('bookkeeping', {
-    transactions: [],
-    prices: [],
-  })
+  const [records, setRecords] = useState<BookkeepingRecord[]>([])
+  const [loading, setLoading] = useState(true)
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    loadAllRecords()
+      .then((r) => {
+        if (!cancelled) setRecords(r)
+      })
+      .catch(() => {
+        // 加载失败保留空列表
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const [tab, setTab] = useState<'tx' | 'price'>('tx')
 
@@ -632,8 +584,11 @@ export default function BookkeepingApp() {
     toastTimer.current = setTimeout(() => setToast(null), 2500)
   }
 
-  const transactions = useMemo(() => data?.transactions || [], [data])
-  const prices = useMemo(() => data?.prices || [], [data])
+  const transactions = useMemo(
+    () => records.filter((r) => r.type === 'tx' || r.type === 'order') as (TxRecord | OrderRecord)[],
+    [records],
+  )
+  const prices = useMemo(() => records.filter((r) => r.type === 'price') as PriceRecord[], [records])
 
   // ── 交易（记录）Tab 表单状态 ──
   const [type, setType] = useState<'income' | 'expense'>('expense')
@@ -663,7 +618,7 @@ export default function BookkeepingApp() {
     let inc = 0
     let exp = 0
     for (const t of transactions) {
-      if (t.type === 'income') inc += t.amount
+      if (directionOf(t) === 'income') inc += t.amount
       else exp += t.amount
     }
     return { income: inc, expense: exp, balance: inc - exp }
@@ -696,7 +651,7 @@ export default function BookkeepingApp() {
   const filteredTx = useMemo(() => {
     const q = search.trim().toLowerCase()
     return sortedTx.filter((t) => {
-      if (typeFilter !== 'all' && t.type !== typeFilter) return false
+      if (typeFilter !== 'all' && directionOf(t) !== typeFilter) return false
       if (!q) return true
       const hay = [
         t.note,
@@ -744,9 +699,10 @@ export default function BookkeepingApp() {
   const handleAddTx = async () => {
     const amt = computedAmount || Number(amount)
     if (!amt || amt <= 0) return
-    const tx: Tx = {
+    const tx: TxRecord = {
       id: randId(),
-      type,
+      type: 'tx',
+      direction: type,
       amount: amt,
       category: category || '其他',
       note: note.trim(),
@@ -757,7 +713,8 @@ export default function BookkeepingApp() {
       unit: unit.trim() || undefined,
       unitPrice: toNumber(unitPrice) || undefined,
     }
-    await save({ transactions: [tx, ...transactions], prices })
+    setRecords((prev) => [tx, ...prev])
+    await putRecords([tx])
     setAmount('')
     setNote('')
     setProduct('')
@@ -776,11 +733,12 @@ export default function BookkeepingApp() {
     if (priceKind === 'item') {
       const up = toNumber(pUnitPrice)
       if (!pName.trim() || !up) return
-      rec = { kind: 'item', id, product: pName.trim(), unit: pUnit.trim() || '份', unitPrice: up, date: pDate, source, createdAt }
+      rec = { type: 'price', kind: 'item', id, product: pName.trim(), unit: pUnit.trim() || '份', unitPrice: up, date: pDate, source, createdAt }
     } else if (priceKind === 'combo') {
       const up = toNumber(pUnitPrice)
       if (!pName.trim() || !up) return
       rec = {
+        type: 'price',
         kind: 'combo',
         id,
         name: pName.trim(),
@@ -794,10 +752,11 @@ export default function BookkeepingApp() {
       const cost = toNumber(pCost)
       const face = toNumber(pFace)
       if (!pName.trim() || !cost || !face) return
-      rec = { kind: 'voucher', id, name: pName.trim(), cost, faceValue: face, date: pDate, source, createdAt }
+      rec = { type: 'price', kind: 'voucher', id, name: pName.trim(), cost, faceValue: face, date: pDate, source, createdAt }
     }
     if (!rec) return
-    await save({ transactions, prices: [rec, ...prices] })
+    setRecords((prev) => [rec, ...prev])
+    await putRecords([rec])
     // 重置表单
     setPName('')
     setPUnitPrice('')
@@ -810,10 +769,14 @@ export default function BookkeepingApp() {
   }
 
   const handleDeleteTx = async (id: string) => {
-    await save({ transactions: transactions.filter((t) => t.id !== id), prices })
+    setRecords((prev) => prev.filter((r) => r.id !== id))
+    const target = records.find((r) => r.id === id)
+    if (target) await removeRecord(target)
   }
   const handleDeletePrice = async (id: string) => {
-    await save({ transactions, prices: prices.filter((p) => p.id !== id) })
+    setRecords((prev) => prev.filter((r) => r.id !== id))
+    const target = records.find((r) => r.id === id)
+    if (target) await removeRecord(target)
   }
 
   const handleExport = () => {
@@ -835,7 +798,8 @@ export default function BookkeepingApp() {
       const preview = parseImport(text, target)
       setImportPreview(preview)
       const parts: string[] = []
-      if (preview.txs.length) parts.push(`${preview.txs.length} 条记录`)
+      if (preview.txs.length + preview.orders.length)
+        parts.push(`${preview.txs.length + preview.orders.length} 条记录`)
       if (preview.prices.length) parts.push(`${preview.prices.length} 条价格`)
       showToast(
         `识别到 ${parts.join('、')}${preview.skipped ? `（跳过 ${preview.skipped} 条无效）` : ''}`,
@@ -878,15 +842,28 @@ export default function BookkeepingApp() {
 
   const confirmImport = async () => {
     if (!importPreview) return
-    const nextTx =
-      importMode === 'replace' && importPreview.txs.length > 0
-        ? importPreview.txs
-        : [...importPreview.txs, ...transactions]
-    const nextPrice =
-      importPreview.prices.length > 0
-        ? mergePrices(prices, importPreview.prices, importMode)
-        : prices
-    await save({ transactions: nextTx, prices: nextPrice })
+    const existingTxOrders = transactions
+    const existingPrices = prices
+    const importedTxOrders: BookkeepingRecord[] = [...importPreview.txs, ...importPreview.orders]
+    const finalTxOrders: BookkeepingRecord[] =
+      importMode === 'replace' && importedTxOrders.length > 0
+        ? importedTxOrders
+        : [...importedTxOrders, ...existingTxOrders]
+    const finalPrices = mergePrices(existingPrices, importPreview.prices, importMode)
+    const existingPriceIds = new Set(existingPrices.map((p) => p.id))
+    const toPut: BookkeepingRecord[] = [
+      ...importedTxOrders,
+      ...finalPrices.filter((p) => !existingPriceIds.has(p.id)),
+    ]
+    const finalPriceIds = new Set(finalPrices.map((p) => p.id))
+    const toRemove: BookkeepingRecord[] = existingPrices.filter((p) => !finalPriceIds.has(p.id))
+    if (importMode === 'replace' && importedTxOrders.length > 0) {
+      toRemove.push(...existingTxOrders)
+    }
+    const nextRecords = [...finalTxOrders, ...finalPrices]
+    setRecords(nextRecords)
+    if (toRemove.length) await removeRecords(toRemove)
+    if (toPut.length) await putRecords(toPut)
     setImportPreview(null)
   }
 
@@ -1397,8 +1374,8 @@ export default function BookkeepingApp() {
                   {t.account ? ` · ${t.account}` : ''}
                 </div>
               </div>
-              <div className={`text-sm font-medium ${t.type === 'income' ? 'text-emerald-300' : 'text-rose-300'}`}>
-                {t.type === 'income' ? '+' : '-'}
+              <div className={`text-sm font-medium ${directionOf(t) === 'income' ? 'text-emerald-300' : 'text-rose-300'}`}>
+                {directionOf(t) === 'income' ? '+' : '-'}
                 {t.amount.toFixed(2)}
               </div>
               <button
@@ -1478,8 +1455,8 @@ export default function BookkeepingApp() {
           >
             <h3 className="text-white font-medium">导入预览</h3>
             <p className="text-sm text-white/70">
-              {importPreview.txs.length > 0 && (
-                <><span className="text-emerald-300 font-medium">{importPreview.txs.length}</span> 条记录 </>
+              {importPreview.txs.length + importPreview.orders.length > 0 && (
+                <><span className="text-emerald-300 font-medium">{importPreview.txs.length + importPreview.orders.length}</span> 条记录 </>
               )}
               {importPreview.prices.length > 0 && (
                 <><span className="text-emerald-300 font-medium">{importPreview.prices.length}</span> 条价格 </>
