@@ -97,6 +97,7 @@ export default function GolfApp() {
   // GPS / 导航
   const [userLocation, setUserLocation] = useState<{ lng: number; lat: number; accuracy: number } | null>(null)
   const [gpsActive, setGpsActive] = useState(false)
+  const [gpsPending, setGpsPending] = useState(false)
   const [gpsError, setGpsError] = useState<string | null>(null)
   const [navTarget, setNavTarget] = useState<{ lng: number; lat: number; label: string } | null>(null)
   const watchIdRef = useRef<number | null>(null)
@@ -372,32 +373,88 @@ export default function GolfApp() {
   }, [provider])
 
   // ── GPS ────────────────────────────────────────────────
+  /** 把浏览器的定位错误码翻译成人能看懂的原因，便于排查「点了没反应」 */
+  const describeGeoError = (err: GeolocationPositionError): string => {
+    switch (err.code) {
+      case err.PERMISSION_DENIED:
+        return '定位权限被拒绝：请在浏览器地址栏/站点设置里允许定位后重试'
+      case err.POSITION_UNAVAILABLE:
+        return '无法获取位置：设备无 GPS 信号或网络定位不可用'
+      case err.TIMEOUT:
+        return '定位超时：请到户外开阔处重试'
+      default:
+        return err.message || '定位失败'
+    }
+  }
+
+  /** 写入一次定位结果（浏览器给的是 WGS-84，统一转 GCJ-02 后再进入业务数据） */
+  const applyPosition = useCallback((pos: GeolocationPosition) => {
+    const [lng, lat] = wgs84ToGcj02(pos.coords.longitude, pos.coords.latitude)
+    console.log('[golf] 定位成功', { lng, lat, accuracy: pos.coords.accuracy })
+    setUserLocation({ lng, lat, accuracy: pos.coords.accuracy ?? 20 })
+    setGpsPending(false)
+    setGpsError(null)
+  }, [])
+
+  /** 持续监听位置变化（用户移动时更新） */
+  const startWatch = useCallback(() => {
+    const id = navigator.geolocation.watchPosition(
+      applyPosition,
+      (err) => {
+        console.warn('[golf] watchPosition 错误:', err.code, err.message)
+        setGpsPending(false)
+        setGpsError(describeGeoError(err))
+      },
+      { enableHighAccuracy: true, maximumAge: 2000, timeout: 20000 },
+    )
+    watchIdRef.current = id
+  }, [applyPosition])
+
   const handleLocate = useCallback(() => {
     if (gpsActive) {
       if (watchIdRef.current !== null) navigator.geolocation.clearWatch(watchIdRef.current)
       watchIdRef.current = null
       setGpsActive(false)
+      setGpsPending(false)
       setUserLocation(null)
       setNavTarget(null)
       return
     }
-    if (!navigator.geolocation) {
-      setGpsError('当前设备不支持定位')
+    if (!('geolocation' in navigator)) {
+      setGpsError('当前浏览器不支持定位')
       return
     }
+    // 浏览器只在安全上下文（HTTPS / localhost）下才允许定位，非 HTTPS 会被直接拒绝
+    if (!window.isSecureContext) {
+      setGpsError('当前页面非 HTTPS，浏览器已禁用定位（请用 https 访问本站）')
+      return
+    }
+
     setGpsError(null)
-    const id = navigator.geolocation.watchPosition(
-      (pos) => {
-        // 浏览器返回 WGS-84，统一转成 GCJ-02 后再进入业务数据
-        const [lng, lat] = wgs84ToGcj02(pos.coords.longitude, pos.coords.latitude)
-        setUserLocation({ lng, lat, accuracy: pos.coords.accuracy ?? 20 })
-      },
-      (err) => setGpsError(err.message || '定位失败'),
-      { enableHighAccuracy: true, maximumAge: 2000, timeout: 20000 },
-    )
-    watchIdRef.current = id
+    setGpsPending(true)
     setGpsActive(true)
-  }, [gpsActive])
+
+    // 先取一次即时定位（比 watchPosition 的首个回调更可靠）
+    navigator.geolocation.getCurrentPosition(
+      applyPosition,
+      (err) => {
+        console.warn('[golf] 高精度定位失败:', err.code, err.message, '→ 降级为低精度重试')
+        // 高精度失败（常见于室内/无 GPS 的桌面设备）时降级再试一次
+        navigator.geolocation.getCurrentPosition(
+          applyPosition,
+          (err2) => {
+            console.warn('[golf] 低精度定位也失败:', err2.code, err2.message)
+            setGpsPending(false)
+            setGpsError(describeGeoError(err2))
+          },
+          { enableHighAccuracy: false, maximumAge: 60000, timeout: 30000 },
+        )
+      },
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 },
+    )
+
+    startWatch()
+  }, [gpsActive, applyPosition, startWatch])
 
   /** GPS 到导航目标的实时距离 */
   const navDistance = useMemo(() => {
@@ -433,6 +490,7 @@ export default function GolfApp() {
   // ── 定位到「我的位置」 ────────────────────────────────
   // GPS 首次回调是异步的，所以先置一个待居中标记，等拿到坐标再飞行过去。
   const pendingCenterOnUserRef = useRef(false)
+  const hasCenteredOnUserRef = useRef(false)
 
   const locateAndCenter = useCallback(() => {
     if (userLocation) {
@@ -444,7 +502,14 @@ export default function GolfApp() {
   }, [userLocation, gpsActive, handleLocate, flyToTarget])
 
   useEffect(() => {
-    if (pendingCenterOnUserRef.current && userLocation) {
+    if (!userLocation) {
+      hasCenteredOnUserRef.current = false
+      return
+    }
+    // 首次拿到位置就一定居中一次（不论 GPS 是从地图按钮还是侧边栏开关启动的），
+    // 之后只在用户主动点定位按钮时才再居中，避免走动过程中视野被反复拽走。
+    if (pendingCenterOnUserRef.current || !hasCenteredOnUserRef.current) {
+      hasCenteredOnUserRef.current = true
       pendingCenterOnUserRef.current = false
       flyToTarget(userLocation.lng, userLocation.lat, 17)
     }
@@ -614,6 +679,18 @@ export default function GolfApp() {
           >
             <Locate className="w-5 h-5" />
           </button>
+
+          {/* GPS 状态：让「点了没反应」变成看得见的等待/精度，便于排查 */}
+          {(gpsPending || (gpsActive && !userLocation)) && (
+            <div className="whitespace-nowrap px-1.5 py-0.5 rounded bg-slate-900/90 border border-white/15 text-[10px] text-white/60 text-center">
+              定位中…
+            </div>
+          )}
+          {gpsActive && userLocation && (
+            <div className="whitespace-nowrap px-1.5 py-0.5 rounded bg-blue-500/25 border border-blue-300/40 text-[10px] text-blue-100 text-center">
+              ±{Math.round(userLocation.accuracy)}m
+            </div>
+          )}
         </div>
 
         {/* 绘制工具栏（管理模式显示完整，浏览模式只给测距） */}
