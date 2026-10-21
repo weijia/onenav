@@ -138,6 +138,7 @@ type BookkeepingRecord = TxRecord | PriceRecord | OrderRecord
 - **添加区**：同一屏内用「记流水 / 记价格」切换两种表单（替代原两个 Tab）。
 - **搜索**：跨全部 `records` 命中 `platform / account / orderId / status / shop / product / category / note / 报价标题`。用 `recordHaystack(r)` 按 `type` 取对应字段。
 - **汇总**：仅统计 `type in ('tx','order')`（即 `directionOf` 为 income/expense 的真实收支），**报价不计入**收入 / 支出 / 结余。选「报价」chip 时隐藏汇总卡。
+- **分页（翻页 / 动态加载）**：统一时间线在内存中按筛选 + 搜索算好 `visibleRecords` 后，按 `PAGE_SIZE`（默认 50）切片只渲染当前页，所有筛选 chip（全部 / 流水 / 订单 / 报价）共用同一套分页器（上一页 / 下一页 / 紧凑页码 + 跳页 + 加载更多）。切换筛选或搜索时回到第 1 页；删除使总页数变少时 `page` 自动收敛到合法范围。数据仍全量载入内存（汇总、上次报价带入、导出预览均依赖全量），分页只控制 DOM 渲染数量。
 
 ## 7. 导入 / 导出
 

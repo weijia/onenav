@@ -105,6 +105,24 @@ const CATEGORIES = ['餐饮', '交通', '购物', '居家', '娱乐', '医疗', 
 const UNIT_SUGGESTIONS = ['粒', '斤', '个', '件', '克', '包', '瓶', '盒', '份', '条', '袋', '次']
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
+/** 统一时间线每页条数（翻页 / 动态加载） */
+const PAGE_SIZE = 50
+
+/** 生成紧凑页码序列（含省略号占位） */
+function buildPages(cur: number, total: number): (number | '...')[] {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1)
+  const anchors = new Set<number>([1, total, cur, cur - 1, cur + 1, cur - 2, cur + 2])
+  const sorted = [...anchors].filter((n) => n >= 1 && n <= total).sort((a, b) => a - b)
+  const out: (number | '...')[] = []
+  let prev = 0
+  for (const n of sorted) {
+    if (prev && n - prev > 1) out.push('...')
+    out.push(n)
+    prev = n
+  }
+  return out
+}
+
 function today(): string {
   const d = new Date()
   const m = String(d.getMonth() + 1).padStart(2, '0')
@@ -662,6 +680,12 @@ export default function BookkeepingApp() {
 
   // 搜索
   const [search, setSearch] = useState('')
+
+  // ── 统一时间线分页：每页 PAGE_SIZE 条，切换筛选 / 搜索时回到第 1 页 ──
+  const [page, setPage] = useState(1)
+  useEffect(() => {
+    setPage(1)
+  }, [viewFilter, search])
   // 导入预览
   const [importPreview, setImportPreview] = useState<ImportPreview | null>(null)
   const [importMode, setImportMode] = useState<'merge' | 'replace'>('merge')
@@ -758,6 +782,17 @@ export default function BookkeepingApp() {
     if (!q) return list
     return list.filter((r) => recordHaystack(r).includes(q))
   }, [records, viewFilter, search])
+
+  // ── 分页切片：所有筛选 Tab（全部/流水/订单/报价）共用同一套翻页 ──
+  const totalCount = visibleRecords.length
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE))
+  const safePage = Math.min(page, totalPages) // 删除后总页数变少时收敛，避免越界
+  const pageStart = (safePage - 1) * PAGE_SIZE
+  const pagedRecords = visibleRecords.slice(pageStart, pageStart + PAGE_SIZE)
+  // 删除导致总页数变少时，把 page 收敛到合法范围
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages)
+  }, [page, totalPages])
 
   // ── 单价×数量自动算金额 ──
   const computedAmount = useMemo(() => {
@@ -1420,7 +1455,7 @@ export default function BookkeepingApp() {
         </div>
       )}
 
-      {/* 列表（统一时间线：流水 / 订单 / 报价 同列） */}
+      {/* 列表（统一时间线：流水 / 订单 / 报价 同列）+ 分页 */}
       <div className="rounded-xl bg-white/5 border border-white/10 divide-y divide-white/5">
         {visibleRecords.length === 0 && (
           <p className="text-center text-white/40 py-8 text-sm">
@@ -1431,7 +1466,7 @@ export default function BookkeepingApp() {
                 : '没有匹配的记录'}
           </p>
         )}
-        {visibleRecords.map((r) => (
+        {pagedRecords.map((r) => (
           <RecordRow
             key={r.id}
             r={r}
@@ -1439,6 +1474,56 @@ export default function BookkeepingApp() {
           />
         ))}
       </div>
+
+      {/* 分页器：所有筛选 Tab 通用，支持翻页 + 动态加载（加载更多） */}
+      {totalCount > 0 && (
+        <div className="flex flex-col items-center gap-3 pt-1">
+          <div className="text-xs text-white/40">
+            共 {totalCount} 条 · 第 {safePage} / {totalPages} 页
+          </div>
+          <div className="flex items-center gap-1 flex-wrap justify-center">
+            <button
+              onClick={() => setPage((p) => Math.max(1, Math.min(totalPages, p - 1)))}
+              disabled={safePage <= 1}
+              className="px-3 py-1.5 rounded-lg text-sm bg-white/5 text-white/70 hover:bg-white/15 disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              上一页
+            </button>
+            {buildPages(safePage, totalPages).map((p, i) =>
+              p === '...' ? (
+                <span key={`e${i}`} className="px-1.5 text-white/30 text-sm select-none">
+                  …
+                </span>
+              ) : (
+                <button
+                  key={p}
+                  onClick={() => setPage(p)}
+                  className={`w-9 h-9 rounded-lg text-sm transition-colors ${
+                    p === safePage ? 'bg-white/25 text-white' : 'bg-white/5 text-white/60 hover:bg-white/15'
+                  }`}
+                >
+                  {p}
+                </button>
+              ),
+            )}
+            <button
+              onClick={() => setPage((p) => Math.min(totalPages, Math.max(1, p + 1)))}
+              disabled={safePage >= totalPages}
+              className="px-3 py-1.5 rounded-lg text-sm bg-white/5 text-white/70 hover:bg-white/15 disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              下一页
+            </button>
+          </div>
+          {safePage < totalPages && (
+            <button
+              onClick={() => setPage((p) => Math.min(totalPages, Math.max(1, p + 1)))}
+              className="px-4 py-1.5 rounded-lg text-xs bg-white/10 text-white/70 hover:bg-white/20"
+            >
+              加载更多（已显示 {Math.min(pageStart + PAGE_SIZE, totalCount)} / {totalCount}）
+            </button>
+          )}
+        </div>
+      )}
 
       {/* 导入预览弹窗 */}
       {importPreview && (
