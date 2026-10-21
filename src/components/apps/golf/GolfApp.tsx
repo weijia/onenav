@@ -143,6 +143,22 @@ export default function GolfApp() {
     }
   }, [])
 
+  // 打开应用自动尝试定位到「我的位置」：桌面/安卓直接生效；
+  // iOS 因系统限制（定位必须由用户手势触发）会自动被忽略，此时页面会在超时后给出「请点击定位按钮」的提示，
+  // 用户点一下右上角定位图标即可（手势触发后 iOS 才会弹授权框）。
+  const autoLocatedRef = useRef(false)
+  useEffect(() => {
+    if (autoLocatedRef.current) return
+    autoLocatedRef.current = true
+    if (!('geolocation' in navigator) || !window.isSecureContext) return
+    const t = window.setTimeout(() => {
+      if (!gpsActive) locateAndCenter()
+    }, 400)
+    return () => window.clearTimeout(t)
+    // 仅挂载时执行一次；locateAndCenter/gpsActive 用初始值即可
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   /** 可见洞：单洞视图只看当前洞（同时仍尊重图层面板里该洞的勾选） */
   const visibleHoles = useMemo(() => {
     if (viewMode === 'hole' && activeHole !== null) {
@@ -394,7 +410,7 @@ export default function GolfApp() {
   }
 
   /** 定位总超时（秒）：超过仍未拿到坐标就明确报错，不再无限转圈 */
-  const GPS_TIMEOUT_S = 25
+  const GPS_TIMEOUT_S = 30
 
   const stopGpsWatchdog = useCallback(() => {
     if (gpsWatchdogRef.current !== null) {
@@ -419,7 +435,7 @@ export default function GolfApp() {
         stopGpsWatchdog()
         setGpsPending(false)
         setGpsError(
-          `定位超时：${GPS_TIMEOUT_S} 秒内未拿到坐标。常见原因：未允许定位授权、室内无 GPS 信号、或非 HTTPS 访问。`,
+          `定位超时：${GPS_TIMEOUT_S} 秒内未拿到坐标。常见原因：未允许定位授权、室内/地下无 GPS 信号、或非 HTTPS 访问。若页面未弹出授权框（iOS 需先点一下定位按钮才会请求授权），请点击右上角定位图标重试。`,
         )
       }
     }, 1000)
@@ -438,19 +454,42 @@ export default function GolfApp() {
     [stopGpsWatchdog],
   )
 
-  /** 持续监听位置变化（用户移动时更新） */
-  const startWatch = useCallback(() => {
-    const id = navigator.geolocation.watchPosition(
-      applyPosition,
-      (err) => {
-        console.warn('[golf] watchPosition 错误:', err.code, err.message)
-        setGpsPending(false)
-        setGpsError(describeGeoError(err))
-      },
-      { enableHighAccuracy: true, maximumAge: 2000, timeout: 20000 },
-    )
-    watchIdRef.current = id
-  }, [applyPosition])
+  /**
+   * 启动 GPS 监听。关键约束：**任意时刻只保留「一个」地理定位请求**。
+   * iOS Safari 的已知坑：同时挂着 getCurrentPosition + watchPosition（或连续多次 getCurrentPosition）
+   * 会永久不回调，界面就卡在「定位中」。所以这里只用一个 watchPosition；
+   * 高精度首定位失败（室内/弱信号的手机常见）时，先 clearWatch 旧请求、再起一个低精度请求，
+   * 保证同一时刻只有一个请求在场，避免移动端卡死。
+   */
+  const startGps = useCallback(
+    (opts: { highAccuracy: boolean; isFirstTry: boolean }) => {
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(watchIdRef.current)
+        watchIdRef.current = null
+      }
+      const id = navigator.geolocation.watchPosition(
+        applyPosition,
+        (err) => {
+          console.warn('[golf] watchPosition 错误:', err.code, err.message, { highAccuracy: opts.highAccuracy })
+          // 高精度首定位失败 → 清掉旧 watch，降一级（关闭高精度）再试一次，仍只保留一个请求
+          if (opts.highAccuracy && opts.isFirstTry) {
+            setGpsError(null)
+            startGps({ highAccuracy: false, isFirstTry: false })
+            return
+          }
+          setGpsPending(false)
+          setGpsError(describeGeoError(err))
+        },
+        {
+          enableHighAccuracy: opts.highAccuracy,
+          maximumAge: opts.highAccuracy ? 0 : 60000,
+          timeout: opts.highAccuracy ? 20000 : 30000,
+        },
+      )
+      watchIdRef.current = id
+    },
+    [applyPosition, describeGeoError],
+  )
 
   const handleLocate = useCallback(
     (opts?: { restart?: boolean }) => {
@@ -477,51 +516,35 @@ export default function GolfApp() {
         setGpsError('当前浏览器不支持定位')
         return
       }
-    // 浏览器只在安全上下文（HTTPS / localhost）下才允许定位，非 HTTPS 会被直接拒绝
-    if (!window.isSecureContext) {
-      setGpsError('当前页面非 HTTPS，浏览器已禁用定位（请用 https 访问本站）')
-      return
-    }
-
-    setGpsError(null)
-    setGpsPermission(null)
-    setGpsPending(true)
-    setGpsActive(true)
-    startGpsWatchdog()
-
-    // 先探测权限状态：prompt 表示浏览器正在等用户点授权（这是最常见的「一直转」原因），
-    // denied 表示之前被拒过、浏览器不会再弹窗（必须去站点设置里改）。
-    navigator.permissions?.query({ name: 'geolocation' })?.then((st) => {
-      console.log('[golf] 定位权限状态:', st.state)
-      setGpsPermission(st.state)
-      if (st.state === 'denied') {
-        stopGpsWatchdog()
-        setGpsPending(false)
-        setGpsError('定位权限已被拒绝：请在浏览器站点设置里把「位置信息」改为允许，然后重试')
+      // 浏览器只在安全上下文（HTTPS / localhost）下才允许定位，非 HTTPS 会被直接拒绝
+      if (!window.isSecureContext) {
+        setGpsError('当前页面非 HTTPS，浏览器已禁用定位（请用 https 访问本站）')
+        return
       }
-    }).catch(() => { /* 不支持 Permissions API 的浏览器忽略 */ })
 
-    // 先取一次即时定位（比 watchPosition 的首个回调更可靠）
-    navigator.geolocation.getCurrentPosition(
-      applyPosition,
-      (err) => {
-        console.warn('[golf] 高精度定位失败:', err.code, err.message, '→ 降级为低精度重试')
-        // 高精度失败（常见于室内/无 GPS 的桌面设备）时降级再试一次
-        navigator.geolocation.getCurrentPosition(
-          applyPosition,
-          (err2) => {
-            console.warn('[golf] 低精度定位也失败:', err2.code, err2.message)
-            setGpsPending(false)
-            setGpsError(describeGeoError(err2))
-          },
-          { enableHighAccuracy: false, maximumAge: 60000, timeout: 30000 },
-        )
-      },
-      { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 },
-    )
+      setGpsError(null)
+      setGpsPermission(null)
+      setGpsPending(true)
+      setGpsActive(true)
+      startGpsWatchdog()
 
-    startWatch()
-  }, [gpsActive, applyPosition, startWatch, startGpsWatchdog, stopGpsWatchdog])
+      // 先探测权限状态：prompt 表示浏览器正在等用户点授权，denied 表示之前被拒过。
+      // 注意：iOS Safari 不支持对 geolocation 调 permissions.query（会 reject），这里 catch 掉即可。
+      navigator.permissions?.query({ name: 'geolocation' as PermissionName })?.then((st) => {
+        console.log('[golf] 定位权限状态:', st.state)
+        setGpsPermission(st.state)
+        if (st.state === 'denied') {
+          stopGpsWatchdog()
+          setGpsPending(false)
+          setGpsError('定位权限已被拒绝：请在浏览器站点设置里把「位置信息」改为允许，然后重试')
+        }
+      }).catch(() => { /* 不支持 Permissions API 的浏览器忽略 */ })
+
+      // 单一 watchPosition：高精度首定位，失败由 startGps 内部降级，绝不并发多个请求
+      startGps({ highAccuracy: true, isFirstTry: true })
+    },
+    [gpsActive, startGps, startGpsWatchdog, stopGpsWatchdog],
+  )
 
   /** GPS 到导航目标的实时距离 */
   const navDistance = useMemo(() => {
