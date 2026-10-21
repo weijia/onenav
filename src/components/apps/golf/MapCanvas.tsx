@@ -148,7 +148,26 @@ export default function MapCanvas(props: MapCanvasProps) {
 
     handlersRef.current.onReady(map)
 
+    // 关键修复：地图创建后延迟重算尺寸，修正「初始化时容器尺寸未就绪 → 点击落点与显示位置不一致」的问题。
+    // 本质：Leaflet 在创建时就按当时容器尺寸算好像素原点(pixelOrigin)，若此时尺寸不对，之后点击换算出的
+    // 经纬度会整体偏移。移动端尤甚——首屏布局未稳定、地址栏收起/展开都会让算出的原点错位。
+    const raf1 = requestAnimationFrame(() => map.invalidateSize())
+    const raf2 = requestAnimationFrame(() => requestAnimationFrame(() => map.invalidateSize()))
+    const t = window.setTimeout(() => map.invalidateSize(), 250)
+
+    // 移动端：地址栏显隐/旋转会改变「可视视口」，但 fixed 容器 CSS 尺寸不变，ResizeObserver 不触发，
+    // 因此单独监听 visualViewport 兜底重算，避免落点偏移焊死在整段会话里。
+    const vv = window.visualViewport ?? null
+    const onVv = () => map.invalidateSize()
+    vv?.addEventListener('resize', onVv)
+    vv?.addEventListener('scroll', onVv)
+
     return () => {
+      cancelAnimationFrame(raf1)
+      cancelAnimationFrame(raf2)
+      window.clearTimeout(t)
+      vv?.removeEventListener('resize', onVv)
+      vv?.removeEventListener('scroll', onVv)
       ro.disconnect()
       map.remove()
       mapRef.current = null
