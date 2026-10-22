@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import type { AppConfig, DisplayBookmark, WebDAVConfig, BookmarksStore, BookmarkEntry, AppVisibility } from '@/types'
-import { loadWebDAVConfig, loadAppConfig, fetchAppConfig, fetchBookmarks, getDefaultAppConfig, saveAppConfig, saveAppConfigToWebDAV, loadAppConfigFromPouchDB, loadBookmarksFromPouchDB } from '@/lib/config'
+import { loadWebDAVConfig, loadAppConfig, fetchAppConfig, fetchBookmarks, getDefaultAppConfig, saveAppConfig, saveAppConfigToWebDAV, loadAppConfigFromPouchDB, loadBookmarksFromPouchDB, isSyncConfigured } from '@/lib/config'
 import { loadFavoritesBookmarks, archiveFavorites, mergeFavoritesIntoStore, mergeFavoritesData, shouldAutoArchive, type FavoritesLoadProgress } from '@/lib/favorites'
 import { loadFavoritesBookmarksFromRS, archiveFavoritesOnRS } from '@/lib/favorites-remotestorage'
 import { filterByTag, getMostVisitedBookmarks, isDeleted, getFaviconUrl, stringToColor } from '@/lib/bookmarks'
@@ -17,7 +17,7 @@ import SettingsDialog from '@/components/SettingsDialog'
 import SetupWizard from '@/components/SetupWizard'
 import AppCard from '@/components/apps/AppCard'
 import { APP_MANIFEST, isAppVisible } from '@/components/apps/manifest'
-import { RefreshCw, Loader2, LayoutGrid, Search, Menu, X } from 'lucide-react'
+import { RefreshCw, Loader2, LayoutGrid, Search, Menu, X, CloudOff } from 'lucide-react'
 import { versionDisplay, buildTimeDisplay } from '@/lib/version'
 
 type SyncStatus = 'idle' | 'pending' | 'syncing' | 'synced' | 'error'
@@ -34,13 +34,18 @@ export function unionAppsVisibility(
   return out
 }
 const PENDING_BOOKMARK_SYNC_KEY = 'onenav:pendingBookmarkSync'
+const SYNC_HINT_DISMISSED_KEY = 'onenav:syncHintDismissed'
 
 export default function MainPage() {
   const [webdavConfig, setWebdavConfig] = useState<WebDAVConfig | null>(null)
   const [appConfig, setAppConfig] = useState<AppConfig>(getDefaultAppConfig())
   const [bookmarks, setBookmarks] = useState<DisplayBookmark[]>([])
   const [activeTag, setActiveTag] = useState<string | null>(() => {
-    return window.location.hash.replace('#', '') || 'onenav'
+    const hash = window.location.hash.replace('#', '')
+    if (hash) return hash
+    // 首次打开且没配过同步（新用户）→ 直接落在「全部书签」；
+    // 已配置过的用户保持原习惯「常用书签」，不做改动。
+    return isSyncConfigured() ? 'onenav' : '._all_'
   })
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -55,6 +60,11 @@ export default function MainPage() {
   const [editingBookmark, setEditingBookmark] = useState<DisplayBookmark | null>(null)
   const [syncStatus, setSyncStatus] = useState<SyncStatus>(() =>
     localStorage.getItem(PENDING_BOOKMARK_SYNC_KEY) === '1' ? 'pending' : 'idle'
+  )
+  // 是否已配置同步来源（WebDAV / RemoteStorage）。未配置时为「本地模式」，主页提示去设置里配置。
+  const [syncConfigured, setSyncConfigured] = useState<boolean>(() => isSyncConfigured())
+  const [syncHintDismissed, setSyncHintDismissed] = useState<boolean>(
+    () => localStorage.getItem(SYNC_HINT_DISMISSED_KEY) === '1'
   )
   const processBookmarksRef = useRef<((store: BookmarksStore, config: AppConfig) => void) | undefined>(undefined)
   const favoritesDataRef = useRef<Record<string, BookmarkEntry> | null>(null)
@@ -132,6 +142,7 @@ export default function MainPage() {
     try {
       const wdav = loadWebDAVConfig()
       setWebdavConfig(wdav)
+      setSyncConfigured(isSyncConfigured())
       let lastStore: BookmarksStore | null = null
 
       // 1. 先从本地加载缓存（快速显示）
@@ -560,8 +571,14 @@ export default function MainPage() {
     )
   }
 
-  if (!initialized) {
-    return <SetupWizard onWebDAVSetup={handleWebDAVSetup} onRemoteStorageSetup={handleRemoteStorageSetup} />
+  // 初始化未完成只显示加载态：此前这里渲染的是 SetupWizard，会让用户（尤其是未配置同步的新用户）
+  // 每次进入主页前先闪一下设置向导。加 !error 保证加载失败时仍能走到下面的错误页。
+  if (!initialized && !error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-900 via-purple-900 to-indigo-900">
+        <Loader2 className="w-6 h-6 text-white/60 animate-spin" />
+      </div>
+    )
   }
 
   if (error) {
@@ -624,6 +641,31 @@ export default function MainPage() {
                 </div>
               </div>
             )}
+            {/* 本地模式同步提示：只针对还没配过 WebDAV / RemoteStorage 的用户 */}
+            {!syncConfigured && !syncHintDismissed && (
+              <div className="mb-5 flex items-start gap-3 rounded-xl border border-amber-300/25 bg-amber-400/10 px-4 py-3">
+                <CloudOff className="w-4 h-4 mt-0.5 shrink-0 text-amber-200/80" />
+                <p className="flex-1 text-xs leading-relaxed text-amber-100/80">
+                  尚未配置同步，书签与设置仅保存在本机 —— 换设备或清理浏览器数据会丢失。
+                </p>
+                <button
+                  onClick={() => setSettingsOpen(true)}
+                  className="shrink-0 rounded-lg border border-amber-200/30 bg-white/5 px-2.5 py-1.5 text-xs text-amber-100 hover:bg-white/10 transition-colors"
+                >
+                  去设置
+                </button>
+                <button
+                  onClick={() => {
+                    localStorage.setItem(SYNC_HINT_DISMISSED_KEY, '1')
+                    setSyncHintDismissed(true)
+                  }}
+                  className="shrink-0 w-6 h-6 rounded-lg flex items-center justify-center text-amber-100/50 hover:text-amber-100 hover:bg-white/10 transition-colors"
+                  title="不再提示"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
             <div className="mb-4 flex items-center justify-between px-2">
               <div>
                 <p className="text-xs uppercase tracking-[0.18em] text-white/35">当前标签</p>
@@ -682,7 +724,21 @@ export default function MainPage() {
         onSave={handleBookmarkEditSave}
         onDelete={handleBookmarkDelete}
       />
-      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} config={appConfig} onConfigSave={handleConfigSave} />
+      <SettingsDialog
+        open={settingsOpen}
+        onOpenChange={(open) => {
+          setSettingsOpen(open)
+          if (!open) {
+            // 关闭设置里可能刚配上 WebDAV / RemoteStorage：让同步提示即时消失
+            const next = isSyncConfigured()
+            setSyncConfigured(next)
+            // 从「未配置」变「已配置」时重新拉一次数据，让新配置无需刷新页面就生效
+            if (!syncConfigured && next) loadAllSources(false)
+          }
+        }}
+        config={appConfig}
+        onConfigSave={handleConfigSave}
+      />
     </div>
   )
 }

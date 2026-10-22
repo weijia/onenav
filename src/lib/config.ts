@@ -11,6 +11,7 @@ import {
 } from '@/lib/pouchdb'
 import { isRemoteStorageConfigured, scheduleAutoSync } from '@/lib/remotestorage-sync'
 import { loadPinnedBookmarks } from '@/lib/stats'
+import { getSavedStorageCredentials } from '@/lib/remotestorage-connection'
 
 const WEBDAV_CONFIG_KEY = 'webDAVConfig'
 const APP_CONFIG_KEY = 'onenavConfig'
@@ -267,4 +268,18 @@ export function getDefaultAppConfig(): AppConfig {
     autoRefreshInterval: 60,
     apps: {},
   }
+}
+
+/**
+ * 是否已配置过至少一个同步来源（WebDAV 或 RemoteStorage）。
+ *
+ * 未配置时应用以「本地模式」运行：书签与设置只落在本机 PouchDB / localStorage，
+ * 换设备或清理浏览器数据会丢失。此时主页应提示用户去设置里配置同步，
+ * 而不是用设置向导把主页挡住。
+ */
+export function isSyncConfigured(): boolean {
+  if (loadWebDAVConfig()) return true
+  if (getSavedStorageCredentials()) return true
+  // 兼容老版本的标记位（设置向导完成 RemoteStorage 接入时写入）
+  return localStorage.getItem('rsConfigured') === 'true'
 }

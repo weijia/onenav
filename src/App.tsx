@@ -1,24 +1,7 @@
 import { useState, useEffect } from 'react'
-import { loadWebDAVConfig, saveWebDAVConfig } from '@/lib/config'
-import { getSavedStorageCredentials } from '@/lib/remotestorage-connection'
-import SetupWizard from '@/components/SetupWizard'
 import MainPage from '@/components/MainPage'
 import UpdateToast from '@/components/UpdateToast'
 import ShareDialog from '@/components/ShareDialog'
-
-const RS_CONFIGURED_KEY = 'rsConfigured'
-
-function isRSConfigured(): boolean {
-  return localStorage.getItem(RS_CONFIGURED_KEY) === 'true' || getSavedStorageCredentials() !== null
-}
-
-function setRSConfigured(val: boolean): void {
-  if (val) {
-    localStorage.setItem(RS_CONFIGURED_KEY, 'true')
-  } else {
-    localStorage.removeItem(RS_CONFIGURED_KEY)
-  }
-}
 
 /** 从 URL 参数解析分享内容 */
 function parseShareParams(): { url: string; title: string } | null {
@@ -54,14 +37,9 @@ function parseShareParams(): { url: string; title: string } | null {
 }
 
 export default function App() {
-  const [configured, setConfigured] = useState<boolean | null>(null)
   const [shareData, setShareData] = useState<{ url: string; title: string } | null>(null)
 
   useEffect(() => {
-    const wdav = loadWebDAVConfig()
-    const rs = isRSConfigured()
-    setConfigured(!!wdav || rs)
-
     // 检测 Web Share Target 分享参数
     const share = parseShareParams()
     if (share) {
@@ -70,30 +48,8 @@ export default function App() {
     }
   }, [])
 
-  // Loading state
-  if (configured === null) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-900 via-purple-900 to-indigo-900">
-        <div className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-      </div>
-    )
-  }
-
-  if (!configured) {
-    return (
-      <SetupWizard
-        onWebDAVSetup={(config) => {
-          saveWebDAVConfig(config)
-          setConfigured(true)
-        }}
-        onRemoteStorageSetup={() => {
-          setRSConfigured(true)
-          setConfigured(true)
-        }}
-      />
-    )
-  }
-
+  // 未配置 WebDAV / RemoteStorage 也不再拦截主页：应用以本地模式运行
+  // （书签与设置存在本机 PouchDB / localStorage），并在主页提示用户去设置里配置同步。
   return (
     <>
       <MainPage />
