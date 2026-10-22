@@ -1,8 +1,8 @@
 /**
  * Gitee 公共收藏源
  *
- * 用 Gitee 公开仓库的 contents API **匿名只读** 一个 Markdown 文件（如 favorites.md），
- * 把里面的链接解析成书签。不需要 access_token —— Gitee 对公开仓库允许匿名访问
+ * 用 Gitee 公开仓库的 contents API **匿名只读** 一个 JSON 文件（favorites.json），
+ * 把它解析成书签。不需要 access_token —— Gitee 对公开仓库允许匿名访问
  * （同一 IP 60 次/小时），且响应带 `Access-Control-Allow-Origin: *`，浏览器可直连，
  * 因此这里不引入任何密钥配置。
  *
@@ -24,7 +24,7 @@ export interface GiteeFavoritesSource {
 export const DEFAULT_GITEE_FAVORITES_SOURCE: GiteeFavoritesSource = {
   owner: 'weijia432',
   repo: 'public-links',
-  path: 'favorites.md',
+  path: 'favorites.json',
   branch: 'master',
 }
 
@@ -68,68 +68,107 @@ function isHttpUrl(url: string): boolean {
   }
 }
 
-export interface ParsedMarkdownLink {
+/** 归一化后的收藏条目 */
+export interface ParsedFavoriteItem {
   url: string
   title: string
-  /** 所属分组（最近一个标题） */
-  group: string
+  /** 所属分组 / 标签，至少一项 */
+  tags: string[]
+}
+
+/** favorites.json 里的一条链接 */
+interface RawLink {
+  title?: unknown
+  name?: unknown
+  url?: unknown
+  href?: unknown
+  link?: unknown
+  tags?: unknown
+}
+
+/** favorites.json 的一个分组 */
+interface RawGroup {
+  title?: unknown
+  name?: unknown
+  tag?: unknown
+  links?: unknown
+  items?: unknown
+}
+
+/** favorites.json 的整体结构 */
+export interface RawFavoritesFile {
+  version?: unknown
+  defaultTag?: unknown
+  groups?: unknown
+  links?: unknown
+}
+
+function str(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function tagList(value: unknown): string[] {
+  const list = Array.isArray(value) ? value : [value]
+  return list
+    .map((t) => str(t))
+    .filter((t): t is string => !!t)
 }
 
 /**
- * 解析 Markdown 里的链接。
+ * 把 favorites.json 的内容归一化成条目列表。
  *
- * - `#` / `##` 标题作为分组标签，其下条目归入该分组
- * - `- [标题](链接)` 是标准写法；`- <链接>` 或 `- 链接` 也支持
- * - 代码块、HTML 注释、空行一律忽略，便于在文件里写格式说明
+ * 支持两种写法，可同时使用：
+ *
+ * ```json
+ * {
+ *   "defaultTag": "收藏",
+ *   "groups": [{ "title": "应用", "links": [{ "title": "MyTodo", "url": "https://..." }] }],
+ *   "links": [{ "title": "独立条目", "url": "https://...", "tags": ["常用"] }]
+ * }
+ * ```
+ *
+ * - `groups`：每条 link 归入所在分组（分组名作为 tag，同时并入 link 自带的 tags）
+ * - `links`：平铺条目，用自带 tags，没有则落到 `defaultTag`（默认「收藏」）
+ * - 非法条目（缺 URL / 不是 http(s)）直接跳过，不会因为一条脏数据整体失败
  */
-export function parseMarkdownLinks(markdown: string): ParsedMarkdownLink[] {
-  const out: ParsedMarkdownLink[] = []
-  let group = '收藏'
-  let inFence = false
+export function parseFavoritesJson(file: RawFavoritesFile): ParsedFavoriteItem[] {
+  const defaultTag = str(file.defaultTag) || '收藏'
+  const out: ParsedFavoriteItem[] = []
 
-  for (const rawLine of markdown.split(/\r?\n/)) {
-    const line = rawLine.trim()
+  const push = (raw: unknown, groupTags: string[]) => {
+    if (!raw || typeof raw !== 'object') return
+    const link = raw as RawLink
+    const url = str(link.url) || str(link.href) || str(link.link)
+    if (!isHttpUrl(url)) return
+    const title = str(link.title) || str(link.name) || hostOf(url)
+    const tags = [...groupTags, ...tagList(link.tags)]
+    const deduped = Array.from(new Set(tags.filter(Boolean)))
+    out.push({ url, title, tags: deduped.length ? deduped : [defaultTag] })
+  }
 
-    // 代码块围栏：```text 也可能带语言，单独判断结尾要注意已经是 trim 后的结果
-    if (line.startsWith('```')) {
-      inFence = !inFence
-      continue
+  if (Array.isArray(file.groups)) {
+    for (const g of file.groups) {
+      if (!g || typeof g !== 'object') continue
+      const group = g as RawGroup
+      const groupTags = tagList([str(group.title) || str(group.name) || str(group.tag)]).filter(Boolean)
+      const links = Array.isArray(group.links)
+        ? group.links
+        : Array.isArray(group.items)
+          ? group.items
+          : []
+      for (const link of links) push(link, groupTags)
     }
-    if (inFence) continue
-    if (!line) continue
-    if (line.startsWith('<!--')) continue
+  }
 
-    const heading = /^#{1,6}\s+(.+?)\s*#*$/.exec(line)
-    if (heading) {
-      const name = heading[1].trim()
-      if (name) group = name
-      continue
-    }
-
-    const item = /^[-*+]\s+(.*)$/.exec(line)
-    if (!item) continue
-    const body = item[1].trim()
-
-    const linked = /^\[([^\]]*)\]\(\s*<?([^)\s>]+)>?/.exec(body)
-    if (linked) {
-      const url = linked[2]
-      if (isHttpUrl(url)) {
-        out.push({ url, title: linked[1].trim() || hostOf(url), group })
-      }
-      continue
-    }
-
-    const bare = /^<?\s*(https?:\/\/[^\s>]+)>?$/.exec(body)
-    if (bare && isHttpUrl(bare[1])) {
-      out.push({ url: bare[1], title: hostOf(bare[1]), group })
-    }
+  if (Array.isArray(file.links)) {
+    for (const link of file.links) push(link, [])
   }
 
   return out
 }
 
 /**
- * 读取 Gitee 公共仓库里的收藏文件，返回以 URL 为 key 的书签表。
+ * 读取 Gitee 公共仓库里的收藏 JSON，返回以 URL 为 key 的书签表。
  * 失败会抛错，由调用方决定如何降级（一般是打个日志后忽略）。
  */
 export async function loadGiteeFavorites(
@@ -147,23 +186,30 @@ export async function loadGiteeFavorites(
   if (!res.ok) {
     throw new Error(`Gitee 读取失败: ${res.status} ${res.statusText}`)
   }
-  const json = await res.json()
-  if (typeof json?.content !== 'string' || json.encoding !== 'base64') {
+  const payload = await res.json()
+  if (typeof payload?.content !== 'string' || payload.encoding !== 'base64') {
     throw new Error('Gitee 返回的内容格式不是预期的 base64')
   }
 
-  const markdown = decodeBase64Utf8(json.content)
-  const links = parseMarkdownLinks(markdown)
+  const text = decodeBase64Utf8(payload.content)
+  let parsed: RawFavoritesFile
+  try {
+    parsed = JSON.parse(text) as RawFavoritesFile
+  } catch (e) {
+    throw new Error(`favorites.json 解析失败: ${(e as Error).message}`)
+  }
+
+  const items = parseFavoritesJson(parsed)
 
   const result: Record<string, BookmarkEntry> = {}
   const now = Date.now()
-  for (const link of links) {
-    if (result[link.url]) continue // 同一 URL 只保留首次出现
-    result[link.url] = {
-      tags: [link.group],
+  for (const item of items) {
+    if (result[item.url]) continue // 同一 URL 只保留首次出现
+    result[item.url] = {
+      tags: item.tags,
       meta: {
-        url: link.url,
-        title: link.title,
+        url: item.url,
+        title: item.title,
         created: now,
         updated: now,
       },
