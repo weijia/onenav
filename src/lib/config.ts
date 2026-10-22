@@ -10,7 +10,7 @@ import {
   type BookmarkDoc,
 } from '@/lib/pouchdb'
 import { isRemoteStorageConfigured, scheduleAutoSync } from '@/lib/remotestorage-sync'
-import { loadPinnedBookmarks } from '@/lib/stats'
+import { loadPinnedBookmarks, savePinnedBookmarks } from '@/lib/stats'
 import { getSavedStorageCredentials } from '@/lib/remotestorage-connection'
 
 const WEBDAV_CONFIG_KEY = 'webDAVConfig'
@@ -268,6 +268,57 @@ export function getDefaultAppConfig(): AppConfig {
     autoRefreshInterval: 60,
     apps: {},
   }
+}
+
+/**
+ * 确保本地已有完整的基础数据——首次打开页面时初始化。
+ *
+ * 不做这一步的话，本机 PouchDB 里既没有配置文档也没有固定书签文档，
+ * 各处按「文档应当存在」去读就会拿到 PouchDB 的 missing
+ * （status 404 / message 'missing'），进而把整个加载流程判定为失败、
+ * 给用户一个错误页。
+ *
+ * 这里在第一次进入时把默认配置与空的固定书签落盘，之后所有读取都能命中
+ * 文档；用户没导入过数据时，书签列表就是空的，页面正常渲染而不是报错。
+ */
+export async function ensureInitialData(): Promise<AppConfig> {
+  const local = loadAppConfig()
+  if (local) return local
+
+  try {
+    const doc = await loadAppConfigFromPouchDB()
+    if (doc) {
+      // 补齐 localStorage 缓存，下次直接命中本地
+      localStorage.setItem(APP_CONFIG_KEY, JSON.stringify(doc))
+      return doc
+    }
+  } catch (err) {
+    console.error('[Config] ensureInitialData: 读取 PouchDB 配置失败:', err)
+  }
+
+  const defaults = getDefaultAppConfig()
+  try {
+    await saveAppConfig(defaults)
+  } catch (err) {
+    console.error('[Config] ensureInitialData: 写入默认配置失败:', err)
+    // 兜底：至少保证 localStorage 里有可用配置，页面不会卡在加载态
+    try {
+      localStorage.setItem(APP_CONFIG_KEY, JSON.stringify(defaults))
+    } catch {
+      // ignore
+    }
+  }
+
+  // 固定书签文档不存在时种一份空的，避免后续读取命中缺失文档
+  try {
+    if (loadPinnedBookmarks().length === 0) {
+      savePinnedBookmarks([])
+    }
+  } catch (err) {
+    console.error('[Config] ensureInitialData: 初始化固定书签失败:', err)
+  }
+
+  return defaults
 }
 
 /**

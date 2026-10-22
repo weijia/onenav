@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import type { AppConfig, DisplayBookmark, WebDAVConfig, BookmarksStore, BookmarkEntry, AppVisibility } from '@/types'
-import { loadWebDAVConfig, loadAppConfig, fetchAppConfig, fetchBookmarks, getDefaultAppConfig, saveAppConfig, saveAppConfigToWebDAV, loadAppConfigFromPouchDB, loadBookmarksFromPouchDB, isSyncConfigured } from '@/lib/config'
+import { loadWebDAVConfig, fetchAppConfig, fetchBookmarks, getDefaultAppConfig, saveAppConfig, saveAppConfigToWebDAV, loadAppConfigFromPouchDB, loadBookmarksFromPouchDB, ensureInitialData, isSyncConfigured } from '@/lib/config'
 import { loadFavoritesBookmarks, archiveFavorites, mergeFavoritesIntoStore, mergeFavoritesData, shouldAutoArchive, type FavoritesLoadProgress } from '@/lib/favorites'
 import { loadFavoritesBookmarksFromRS, archiveFavoritesOnRS } from '@/lib/favorites-remotestorage'
 import { filterByTag, getMostVisitedBookmarks, isDeleted, getFaviconUrl, stringToColor } from '@/lib/bookmarks'
@@ -17,7 +17,7 @@ import SettingsDialog from '@/components/SettingsDialog'
 import SetupWizard from '@/components/SetupWizard'
 import AppCard from '@/components/apps/AppCard'
 import { APP_MANIFEST, isAppVisible } from '@/components/apps/manifest'
-import { RefreshCw, Loader2, LayoutGrid, Search, Menu, X, CloudOff } from 'lucide-react'
+import { RefreshCw, Loader2, LayoutGrid, Search, Menu, X, CloudOff, AlertTriangle } from 'lucide-react'
 import { versionDisplay, buildTimeDisplay } from '@/lib/version'
 
 type SyncStatus = 'idle' | 'pending' | 'syncing' | 'synced' | 'error'
@@ -35,6 +35,15 @@ export function unionAppsVisibility(
 }
 const PENDING_BOOKMARK_SYNC_KEY = 'onenav:pendingBookmarkSync'
 const SYNC_HINT_DISMISSED_KEY = 'onenav:syncHintDismissed'
+
+/** 取 URL 的主机名，非法 URL 时回退为原串（避免渲染配色时抛错） */
+function safeHostname(url: string): string {
+  try {
+    return new URL(url).hostname
+  } catch {
+    return url
+  }
+}
 
 export default function MainPage() {
   const [webdavConfig, setWebdavConfig] = useState<WebDAVConfig | null>(null)
@@ -103,7 +112,8 @@ export default function MainPage() {
           title: e.meta.shortTitle || e.meta.title || url,
           description: e.meta.description || '',
           favicon: e.meta.favicon || getFaviconUrl(url),
-          color: stringToColor(new URL(url).hostname),
+          // 历史数据里可能存在非 URL 的 key（手工导入/旧格式），不能让它把整个列表渲染打穿
+          color: stringToColor(safeHostname(url)),
           tags: e.tags,
           isPinned: pinnedUrls.includes(url),
         }))
@@ -145,13 +155,24 @@ export default function MainPage() {
       setSyncConfigured(isSyncConfigured())
       let lastStore: BookmarksStore | null = null
 
-      // 1. 先从本地加载缓存（快速显示）
-      let config = loadAppConfig() || await loadAppConfigFromPouchDB() || getDefaultAppConfig()
+      // 1. 先初始化/加载本地数据（快速显示）
+      //    首次打开时本机没有任何文档，这里先把默认配置与空的固定书签落盘，
+      //    之后所有读取都能命中文档；没导入过数据就是空列表，不该走到报错。
+      let config: AppConfig
+      try {
+        config = await ensureInitialData()
+      } catch (err) {
+        console.error('[Sync] 本地数据初始化失败，回退默认配置:', err)
+        config = getDefaultAppConfig()
+      }
       // 应用可见性配置跨来源并集合并（任一来源 hidden:true 都保留）
       let mergedApps = { ...(config.apps || {}) }
-      const localStore = await loadBookmarksFromPouchDB()
-      deletedBookmarkUrlsRef.current = await getDeletedBookmarkUrls()
-      const pinned = await loadPinnedBookmarksAsync()
+      const localStore = await loadBookmarksFromPouchDB().catch((err) => {
+        console.error('[Sync] 本地书签读取失败，按空数据处理:', err)
+        return null
+      })
+      deletedBookmarkUrlsRef.current = await getDeletedBookmarkUrls().catch(() => new Set<string>())
+      const pinned = await loadPinnedBookmarksAsync().catch(() => [] as string[])
 
       setAppConfig(config)
       setPinnedUrls(pinned)
@@ -230,9 +251,16 @@ export default function MainPage() {
           }
 
           // 重新加载以显示 RemoteStorage 的数据
-          const rsConfig = await loadAppConfigFromPouchDB()
-          const rsStore = await loadBookmarksFromPouchDB()
-          deletedBookmarkUrlsRef.current = await getDeletedBookmarkUrls()
+          // 与本地读取同理：拉完后重读不能因为单条文档缺失就把整个加载判定为失败
+          const rsConfig = await loadAppConfigFromPouchDB().catch((err) => {
+            console.error('[Sync] pull 后读取配置失败:', err)
+            return null
+          })
+          const rsStore = await loadBookmarksFromPouchDB().catch((err) => {
+            console.error('[Sync] pull 后读取书签失败:', err)
+            return null
+          })
+          deletedBookmarkUrlsRef.current = await getDeletedBookmarkUrls().catch(() => new Set<string>())
           if (rsConfig) {
             // 检查 activeTag 是否还存在
             const tagKeys = rsConfig.tags.flatMap((t: { id: string; tag: string }) => [t.id, t.tag])
@@ -265,8 +293,15 @@ export default function MainPage() {
       }
     } catch (err) {
       console.error('[Sync] 加载失败:', err)
-      setError(`Failed to load data: ${err instanceof Error ? err.message : 'Unknown error'}`)
+      const e = err as any
+      const detail = e?.message
+        ? [e.name, e.message, e?.status != null ? `status=${e.status}` : ''].filter(Boolean).join(' / ')
+        : String(err)
+      setError(`Failed to load data: ${detail}`)
     } finally {
+      // 出错也要标记初始化完成：本地数据通常仍然可用，错误改为页内提示条，
+      // 不用全屏错误页把整个主页挡掉（此前一次加载异常就会只剩下 Retry 按钮）。
+      setInitialized(true)
       setLoading(false)
       // 延迟清除收藏进度，让用户看到"完成"状态
       setTimeout(() => setFavProgress(null), 2000)
@@ -581,19 +616,6 @@ export default function MainPage() {
     )
   }
 
-  if (error) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-900 via-purple-900 to-indigo-900 p-4">
-        <div className="max-w-md text-center">
-          <p className="text-red-300 mb-4">{error}</p>
-          <button onClick={handleRefresh} className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg border border-white/20 transition-colors">
-            Retry
-          </button>
-        </div>
-      </div>
-    )
-  }
-
   return (
     <div className="min-h-screen relative overflow-hidden">
       {renderBackground()}
@@ -615,6 +637,28 @@ export default function MainPage() {
         </div>
 
         <div className="flex-1 flex flex-col items-center justify-center px-4">
+          {/* 加载异常提示：不再用全屏错误页挡住主页，本地数据照常可用，可重试 */}
+          {error && (
+            <div className="w-full mb-5 flex items-start gap-3 rounded-xl border border-red-300/25 bg-red-400/10 px-4 py-3" style={{ maxWidth: `${appConfig.display.maxWidth}px` }}>
+              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-red-200/80" />
+              <p className="flex-1 text-xs leading-relaxed text-red-100/80 break-all">
+                {error} —— 已加载的本地数据仍可正常使用。
+              </p>
+              <button
+                onClick={handleRefresh}
+                className="shrink-0 rounded-lg border border-red-200/30 bg-white/5 px-2.5 py-1.5 text-xs text-red-100 hover:bg-white/10 transition-colors"
+              >
+                Retry
+              </button>
+              <button
+                onClick={() => setError('')}
+                className="shrink-0 w-6 h-6 rounded-lg flex items-center justify-center text-red-100/50 hover:text-red-100 hover:bg-white/10 transition-colors"
+                title="关闭"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
           {bookmarks.length > 0 && (
             <div className="w-full max-w-md mb-6">
               <div className="relative">
@@ -676,6 +720,22 @@ export default function MainPage() {
               </span>
             </div>
             <BookmarkGrid bookmarks={filteredBookmarks} iconSize={appConfig.display.iconSize} borderRadius={appConfig.display.iconBorderRadius} spacing={appConfig.display.iconSpacing} showName={appConfig.display.showName} nameSize={appConfig.display.nameSize} maxWidth={appConfig.display.maxWidth} openInNewTab={appConfig.display.openInNewTab} onItemClick={(bookmark) => recordClick(bookmark, webdavConfig || undefined)} onTogglePin={handleTogglePin} onEditBookmark={setEditingBookmark} />
+            {/* 空状态：刚初始化完还没导入任何数据时给出明确引导，而不是留一片空白 */}
+            {allBookmarks.length === 0 && !searchQuery.trim() && (
+              <div className="mt-4 rounded-xl border border-white/10 bg-white/5 px-6 py-10 text-center">
+                <p className="text-white/60 text-sm mb-1">还没有书签</p>
+                <p className="text-white/35 text-xs leading-relaxed">
+                  在设置里配置 WebDAV 或 RemoteStorage 即可同步已有书签，<br />
+                  之后添加的书签会自动保存在本机。
+                </p>
+                <button
+                  onClick={() => setSettingsOpen(true)}
+                  className="mt-4 rounded-lg border border-white/20 bg-white/5 px-3 py-1.5 text-xs text-white/80 hover:bg-white/10 transition-colors"
+                >
+                  去设置
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
