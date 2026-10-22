@@ -9,6 +9,7 @@ import { clearRemoteStorageLogin, getSavedStorageCredentials, getStorageCredenti
 import { deleteBookmarkFromEdit, getDeletedBookmarkUrls, getPouchDB, updateBookmarkFromEdit, upsertBookmarkEntriesFromExternal, type BookmarkEditInput } from '@/lib/pouchdb'
 import { loadFromRemoteStorage } from '@/lib/remotestorage-load'
 import { syncToRemoteStorage } from '@/lib/remotestorage-sync'
+import { loadGiteeFavorites } from '@/lib/gitee-favorites'
 
 import Sidebar from '@/components/Sidebar'
 import BookmarkGrid from '@/components/BookmarkGrid'
@@ -84,10 +85,16 @@ export default function MainPage() {
 
   // 合并收藏书签后渲染（收藏数据来自 favoritesDataRef）
   const renderStore = useCallback((store: BookmarksStore | null, config: AppConfig) => {
-    if (!store) return
+    // 本机还没有任何书签时，若外部收藏源（如 Gitee 公共收藏）已加载，
+    // 也要用一个空 store 去渲染，否则这些链接一条都显示不出来。
+    const hasExternal = !!favoritesDataRef.current && Object.keys(favoritesDataRef.current).length > 0
+    const base = store ?? (hasExternal
+      ? { data: {}, meta: { databaseVersion: 1, created: Date.now(), updated: Date.now() } }
+      : null)
+    if (!base) return
     const merged = favoritesDataRef.current
-      ? mergeFavoritesIntoStore(store, favoritesDataRef.current, deletedBookmarkUrlsRef.current)
-      : store
+      ? mergeFavoritesIntoStore(base, favoritesDataRef.current, deletedBookmarkUrlsRef.current)
+      : base
     processBookmarksRef.current?.(merged, config)
   }, [])
 
@@ -174,11 +181,28 @@ export default function MainPage() {
       deletedBookmarkUrlsRef.current = await getDeletedBookmarkUrls().catch(() => new Set<string>())
       const pinned = await loadPinnedBookmarksAsync().catch(() => [] as string[])
 
+      // 1.5 Gitee 公共收藏源：公开仓库匿名只读，不需要 token。
+      //     失败只打日志，绝不影响本地书签的正常显示。
+      try {
+        const gitee = await loadGiteeFavorites()
+        const count = Object.keys(gitee).length
+        if (count > 0) {
+          favoritesDataRef.current = mergeFavoritesData(favoritesDataRef.current, gitee)
+          console.log('[Gitee] 公共收藏加载完成:', count, '条')
+        }
+      } catch (err) {
+        console.error('[Gitee] 公共收藏加载失败（已忽略）:', err)
+      }
+
       setAppConfig(config)
       setPinnedUrls(pinned)
       if (localStore) {
         renderStore(localStore, config)
         lastStore = localStore
+      } else {
+        // 本机还没有书签，但可能已拿到 Gitee 公共收藏：
+        // renderStore 内部会判断外部收藏是否存在，有则用空 store 渲染，无则保持空白。
+        renderStore(null, config)
       }
       setInitialized(true)
       if (showLoading) setLoading(false)
@@ -358,9 +382,10 @@ export default function MainPage() {
   // activeTag 变化时重新过滤
   useEffect(() => {
     const loadAndFilter = async () => {
-      const store = await loadBookmarksFromPouchDB()
-      deletedBookmarkUrlsRef.current = await getDeletedBookmarkUrls()
-      if (store) renderStore(store, appConfig)
+      const store = await loadBookmarksFromPouchDB().catch(() => null)
+      deletedBookmarkUrlsRef.current = await getDeletedBookmarkUrls().catch(() => new Set<string>())
+      // 不判断 store 是否存在：renderStore 内部会在「本机无数据但有外部收藏源」时用空 store 渲染
+      renderStore(store, appConfig)
     }
     loadAndFilter()
   }, [activeTag, appConfig, processBookmarks, renderStore])
