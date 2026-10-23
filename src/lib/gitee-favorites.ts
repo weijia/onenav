@@ -187,6 +187,10 @@ export async function loadGiteeFavorites(
     throw new Error(`Gitee 读取失败: ${res.status} ${res.statusText}`)
   }
   const payload = await res.json()
+  // 路径不存在时 Gitee 返回 200 + `[]`（不是 404），这里一并识别成「没这个文件」
+  if (Array.isArray(payload)) {
+    throw new Error(`Gitee 上找不到 ${source.path}（可能还没推送到 ${source.branch} 分支）`)
+  }
   if (typeof payload?.content !== 'string' || payload.encoding !== 'base64') {
     throw new Error('Gitee 返回的内容格式不是预期的 base64')
   }
