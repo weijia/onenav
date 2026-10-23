@@ -17,6 +17,7 @@ import BookmarkEditDialog from '@/components/BookmarkEditDialog'
 import SettingsDialog from '@/components/SettingsDialog'
 import SetupWizard from '@/components/SetupWizard'
 import AppCard from '@/components/apps/AppCard'
+import ExternalLinkCard from '@/components/apps/ExternalLinkCard'
 import { APP_MANIFEST, isAppVisible } from '@/components/apps/manifest'
 import { RefreshCw, Loader2, LayoutGrid, Search, Menu, X, CloudOff, AlertTriangle } from 'lucide-react'
 import { versionDisplay, buildTimeDisplay } from '@/lib/version'
@@ -78,6 +79,8 @@ export default function MainPage() {
   )
   const processBookmarksRef = useRef<((store: BookmarksStore, config: AppConfig) => void) | undefined>(undefined)
   const favoritesDataRef = useRef<Record<string, BookmarkEntry> | null>(null)
+  // 来自 Gitee 公共收藏源的外链，渲染到书签区顶部的「应用」入口，点击在新标签页打开
+  const [giteeApps, setGiteeApps] = useState<{ url: string; title: string; tags: string[] }[]>([])
   const deletedBookmarkUrlsRef = useRef<Set<string>>(new Set())
   const backgroundSyncRunningRef = useRef(false)
   const pendingSyncRevisionRef = useRef(0)
@@ -189,6 +192,11 @@ export default function MainPage() {
         if (count > 0) {
           favoritesDataRef.current = mergeFavoritesData(favoritesDataRef.current, gitee)
           console.log('[Gitee] 公共收藏加载完成:', count, '条')
+          setGiteeApps(Object.values(gitee).map((e) => ({
+            url: e.meta.url ?? '',
+            title: e.meta.title ?? '',
+            tags: e.tags,
+          })))
         }
       } catch (err) {
         console.error('[Gitee] 公共收藏加载失败（已忽略）:', err)
@@ -693,8 +701,9 @@ export default function MainPage() {
             </div>
           )}
           <div className="w-full overflow-visible" style={{ maxWidth: `${appConfig.display.maxWidth}px` }}>
-            {/* 应用入口：默认显示在书签区顶部，可于设置中隐藏；点击跳转到该应用的独立页面 */}
-            {visibleApps.length > 0 && !searchQuery.trim() && (
+            {/* 应用入口：默认显示在书签区顶部，可于设置中隐藏；点击跳转到该应用的独立页面。
+                来自 Gitee 公共收藏的外链（ favorites.json ）也渲染在此，作为可一键打开的「应用」。 */}
+            {(visibleApps.length > 0 || giteeApps.length > 0) && !searchQuery.trim() && (
               <div className="mb-7">
                 <p className="text-xs uppercase tracking-[0.18em] text-white/35 mb-3 px-2">应用</p>
                 <div className="flex flex-wrap gap-4 justify-center">
@@ -702,6 +711,16 @@ export default function MainPage() {
                     <AppCard
                       key={a.id}
                       app={a}
+                      iconSize={appConfig.display.iconSize}
+                      borderRadius={appConfig.display.iconBorderRadius}
+                      nameSize={appConfig.display.nameSize}
+                    />
+                  ))}
+                  {giteeApps.map((link) => (
+                    <ExternalLinkCard
+                      key={link.url}
+                      url={link.url}
+                      title={link.title}
                       iconSize={appConfig.display.iconSize}
                       borderRadius={appConfig.display.iconBorderRadius}
                       nameSize={appConfig.display.nameSize}
