@@ -263,6 +263,7 @@ export default function MainPage() {
 
           // 2.5 RemoteStorage 收藏源：与主 RS 同步同时机加载，避免连接未就绪的竞态（路径 app_data/favorites）
           try {
+            console.log('[FavRS] 开始从 RemoteStorage 加载收藏源（app_data/favorites）')
             if (shouldAutoArchive()) {
               await archiveFavoritesOnRS().catch((e) => {
                 if (isRemoteStorageAuthError(e)) throw e
@@ -274,8 +275,12 @@ export default function MainPage() {
               return null
             })
             if (rsFav) {
-              await upsertBookmarkEntriesFromExternal(rsFav, 'RemoteStorage favorites')
+              console.log(`[FavRS] 已从 RemoteStorage 读取 ${Object.keys(rsFav).length} 条收藏书签，准备写入 PouchDB`)
+              const saved = await upsertBookmarkEntriesFromExternal(rsFav, 'RemoteStorage favorites')
+              console.log(`[FavRS] 写入 PouchDB 完成：${saved} 条新增/更新`)
               favoritesDataRef.current = mergeFavoritesData(favoritesDataRef.current, rsFav)
+            } else {
+              console.log('[FavRS] 未读取到 RemoteStorage 收藏（返回为空或被忽略）')
             }
           } catch (e) {
             if (isRemoteStorageAuthError(e)) throw e

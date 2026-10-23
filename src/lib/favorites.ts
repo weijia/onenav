@@ -103,14 +103,18 @@ export async function listFavoritesMonthsGeneric(fs: FavoritesFs): Promise<Month
  */
 export async function loadFavoritesBookmarksGeneric(
   fs: FavoritesFs,
-  onProgress?: (p: FavoritesLoadProgress) => void
+  onProgress?: (p: FavoritesLoadProgress) => void,
+  sourceLabel = 'Fav'
 ): Promise<Record<string, BookmarkEntry>> {
+  const tag = `[${sourceLabel}]`
   const result: Record<string, BookmarkEntry> = {}
   onProgress?.({ phase: 'listing', message: '正在列举收藏目录...' })
+  console.log(`${tag} 开始读取收藏目录 ${FAVORITES_ROOT} ...`)
   const months = await listFavoritesMonthsGeneric(fs)
   const totalMonths = months.length
   let processedMonths = 0
   let loadedBookmarks = 0
+  console.log(`${tag} 共发现 ${totalMonths} 个月份目录`)
 
   for (const m of months) {
     onProgress?.({
@@ -121,6 +125,7 @@ export async function loadFavoritesBookmarksGeneric(
       loadedBookmarks,
       message: `正在加载 ${m.ym} ...`,
     })
+    console.log(`${tag} 加载月份 ${m.ym}（${m.isCurrent ? '当前月，扫描 bm_*.json' : '优先读取归档快照 archive-${m.ym}.json'}）${m.dirPath}`)
 
     let raws: RawFavoritesBookmark[] = []
 
@@ -141,6 +146,7 @@ export async function loadFavoritesBookmarksGeneric(
       try {
         const children = await fs.listDir(m.dirPath)
         const bmFiles = children.filter((c) => !c.isDir && BM_FILE_RE.test(c.name))
+        console.log(`${tag} 月份 ${m.ym} 找到 ${bmFiles.length} 个 bm_*.json 文件`)
         for (const f of bmFiles) {
           try {
             const raw = await fs.readFile(`${m.dirPath}/${f.name}`)
@@ -149,13 +155,15 @@ export async function loadFavoritesBookmarksGeneric(
             else if (parsed && typeof parsed === 'object') raws.push(parsed as RawFavoritesBookmark)
           } catch (e) {
             if (isRemoteStorageAuthError(e)) throw e
-            // 单个文件失败不影响其余
+            console.warn(`${tag} 读取文件失败 ${m.dirPath}/${f.name}:`, e)
           }
         }
       } catch (e) {
         if (isRemoteStorageAuthError(e)) throw e
-        // 目录不可读，跳过该月
+        console.warn(`${tag} 列举目录失败 ${m.dirPath}:`, e)
       }
+    } else {
+      console.log(`${tag} 月份 ${m.ym} 归档快照解析出 ${raws.length} 条`)
     }
 
     for (const r of raws) {
@@ -177,6 +185,7 @@ export async function loadFavoritesBookmarksGeneric(
     })
   }
 
+  console.log(`${tag} 读取完成，共 ${loadedBookmarks} 条书签（来自 ${totalMonths} 个月份）`)
   onProgress?.({ phase: 'done', totalMonths, processedMonths, loadedBookmarks, message: `收藏书签加载完成（${loadedBookmarks} 条）` })
   return result
 }
@@ -185,9 +194,11 @@ export async function loadFavoritesBookmarksGeneric(
  * 归档：对“上个月及更早”的月份，若不存在 archive-YYYY-MM.json，
  * 则扫描该月 bm_*.json 生成归档快照。严格跳过当前月，天然幂等。
  */
-export async function archiveFavoritesGeneric(fs: FavoritesFs): Promise<ArchiveResult> {
+export async function archiveFavoritesGeneric(fs: FavoritesFs, sourceLabel = 'Fav'): Promise<ArchiveResult> {
+  const tag = `[${sourceLabel}]`
   const result: ArchiveResult = { archived: [], skipped: [], errors: [] }
   const months = await listFavoritesMonthsGeneric(fs)
+  console.log(`${tag} 开始归档检查，共 ${months.length} 个月份目录`)
 
   for (const m of months) {
     if (m.isCurrent) {
@@ -200,6 +211,7 @@ export async function archiveFavoritesGeneric(fs: FavoritesFs): Promise<ArchiveR
       const existing = await fs.exists(`${m.dirPath}/archive-${m.ym}.json`)
       if (existing) {
         result.skipped.push(m.ym)
+        console.log(`${tag} 月份 ${m.ym} 归档已存在，跳过`)
         continue
       }
     } catch (e) {
@@ -219,16 +231,19 @@ export async function archiveFavoritesGeneric(fs: FavoritesFs): Promise<ArchiveR
           else if (parsed && typeof parsed === 'object') bookmarks.push(parsed as RawFavoritesBookmark)
         } catch (e) {
           if (isRemoteStorageAuthError(e)) throw e
-          // 忽略单个文件错误
+          console.warn(`${tag} 读取文件失败 ${m.dirPath}/${f.name}:`, e)
         }
       }
       await fs.writeFile(`${m.dirPath}/archive-${m.ym}.json`, JSON.stringify(bookmarks, null, 2))
       result.archived.push(m.ym)
+      console.log(`${tag} 月份 ${m.ym} 归档完成（${bookmarks.length} 条）`)
     } catch (e) {
       result.errors.push({ ym: m.ym, message: e instanceof Error ? e.message : String(e) })
     }
   }
 
+  if (result.errors.length) console.warn(`${tag} 归档出现 ${result.errors.length} 个错误:`, result.errors)
+  console.log(`${tag} 归档检查结束：已归档 ${result.archived.length}，跳过 ${result.skipped.length}，错误 ${result.errors.length}`)
   return result
 }
 
@@ -247,11 +262,11 @@ export function loadFavoritesBookmarks(
   config: WebDAVConfig,
   onProgress?: (p: FavoritesLoadProgress) => void
 ): Promise<Record<string, BookmarkEntry>> {
-  return loadFavoritesBookmarksGeneric(webdavFavoritesFs(config), onProgress)
+  return loadFavoritesBookmarksGeneric(webdavFavoritesFs(config), onProgress, 'FavWebDAV')
 }
 
 export function archiveFavorites(config: WebDAVConfig): Promise<ArchiveResult> {
-  return archiveFavoritesGeneric(webdavFavoritesFs(config))
+  return archiveFavoritesGeneric(webdavFavoritesFs(config), 'FavWebDAV')
 }
 
 /**

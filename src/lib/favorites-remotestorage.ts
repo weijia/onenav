@@ -73,11 +73,11 @@ function rsFavoritesFs(): FavoritesFs {
 export async function loadFavoritesBookmarksFromRS(
   onProgress?: (p: FavoritesLoadProgress) => void
 ): Promise<Record<string, BookmarkEntry>> {
-  return loadFavoritesBookmarksGeneric(rsFavoritesFs(), onProgress)
+  return loadFavoritesBookmarksGeneric(rsFavoritesFs(), onProgress, 'FavRS')
 }
 
 export async function archiveFavoritesOnRS(): Promise<ArchiveResult> {
-  return archiveFavoritesGeneric(rsFavoritesFs())
+  return archiveFavoritesGeneric(rsFavoritesFs(), 'FavRS')
 }
 
 // 仅用于保持列表接口一致（供需要时调用，当前主流程直接用泛型函数）

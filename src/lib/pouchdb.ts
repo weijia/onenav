@@ -290,10 +290,15 @@ export async function upsertBookmarkEntriesFromExternal(
   source: string,
 ): Promise<number> {
   const items = Object.entries(entries)
-  if (items.length === 0) return 0
+  if (items.length === 0) {
+    console.log(`[PouchDB] ${source}: 无外部书签需要写入`)
+    return 0
+  }
 
+  console.log(`[PouchDB] ${source}: 准备写入 ${items.length} 条外部书签到 PouchDB`)
   return withAutoReset(async (database) => {
     let changed = 0
+    let skipped = 0
 
     for (const [url, entry] of items) {
       const id = PREFIX.BOOKMARK + url
@@ -302,6 +307,7 @@ export async function upsertBookmarkEntriesFromExternal(
       const existingUpdatedAt = Number(existing?.updatedAt || 0)
 
       if (existing && existingUpdatedAt >= incomingUpdatedAt) {
+        skipped++
         continue
       }
 
@@ -330,9 +336,7 @@ export async function upsertBookmarkEntriesFromExternal(
       changed++
     }
 
-    if (changed > 0) {
-      console.log(`[PouchDB] ${source}: 已导入/更新 ${changed} 条外部书签`)
-    }
+    console.log(`[PouchDB] ${source}: 写入完成，新增/更新 ${changed} 条，已是最新跳过 ${skipped} 条`)
 
     return changed
   })
