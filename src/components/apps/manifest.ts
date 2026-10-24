@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react'
-import { Flag, Wallet } from 'lucide-react'
+import { Flag, Server, Wallet } from 'lucide-react'
 
 /**
  * 内置小应用的轻量元信息。
@@ -44,6 +44,14 @@ export const APP_MANIFEST: AppMeta[] = [
     accent: 'from-green-500 to-emerald-600',
     description: '球场地图与码数标注',
     entry: 'apps/golf/index.html',
+  },
+  {
+    id: 'hostmonitor',
+    name: '设备监控',
+    icon: Server,
+    accent: 'from-cyan-500 to-blue-600',
+    description: '主机与磁盘状态监控',
+    entry: 'apps/hostmonitor/index.html',
   },
 ]
 
