@@ -9,6 +9,7 @@
 
 import { describe, it, expect } from 'vitest'
 import { mergePrices } from './bookkeeping-price'
+import { priceTotalOf } from './bookkeeping-store'
 import type { PriceRecord } from './bookkeeping-store'
 
 function makeItem(id: string, product: string, date: string, createdAt: number, time?: string, unitPrice = 5): PriceRecord {
@@ -103,5 +104,29 @@ describe('mergePrices（商品名 + 时间粒度 去重）', () => {
     ]
     const out = mergePrices([], incoming, 'replace')
     expect(out.map((r) => r.id)).toEqual(['a4', 'a1', 'a2', 'a3']) // date 降序；同 date 按 time 降序
+  })
+})
+
+describe('priceTotalOf（单价 × 数量 = 整体价）', () => {
+  it('F-1 有数量 → 整体价 = 单价 × 数量', () => {
+    const r: PriceRecord = { type: 'price', kind: 'item', id: 'x', product: '鸡蛋', unit: '箱', unitPrice: 30, quantity: 1, date: '2026-10-24', createdAt: 1 }
+    expect(priceTotalOf(r)).toBe(30)
+    const r2: PriceRecord = { type: 'price', kind: 'item', id: 'y', product: '鸡蛋', unit: '斤', unitPrice: 3, quantity: 5, date: '2026-10-24', createdAt: 1 }
+    expect(priceTotalOf(r2)).toBe(15)
+  })
+
+  it('F-2 无数量 → 整体价即单价', () => {
+    const r: PriceRecord = { type: 'price', kind: 'item', id: 'z', product: '苹果', unit: '斤', unitPrice: 6.5, date: '2026-10-24', createdAt: 1 }
+    expect(priceTotalOf(r)).toBe(6.5)
+  })
+
+  it('F-3 数量为 0 / 负数 → 视作无数量，返回单价', () => {
+    const r: PriceRecord = { type: 'price', kind: 'item', id: 'q', product: '鸡蛋', unit: '斤', unitPrice: 3, quantity: 0, date: '2026-10-24', createdAt: 1 }
+    expect(priceTotalOf(r)).toBe(3)
+  })
+
+  it('F-4 单价×数量保留两位小数（浮点精度）', () => {
+    const r: PriceRecord = { type: 'price', kind: 'item', id: 'p', product: '牛肉', unit: '斤', unitPrice: 33.3, quantity: 3, date: '2026-10-24', createdAt: 1 }
+    expect(priceTotalOf(r)).toBe(99.9)
   })
 })

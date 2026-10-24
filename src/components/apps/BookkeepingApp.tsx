@@ -29,6 +29,7 @@ import {
   putRecords,
   removeRecord,
   removeRecords,
+  priceTotalOf,
 } from '@/lib/bookkeeping-store'
 import { mergePrices } from '@/lib/bookkeeping-price'
 
@@ -56,9 +57,14 @@ const PRICE_TYPES: Record<PriceKind, PriceTypeMeta> = {
   item: {
     label: '单品',
     icon: Tag,
-    getPrice: (r) => (r.kind === 'item' ? r.unitPrice : 0),
+    getPrice: (r) => (r.kind === 'item' ? priceTotalOf(r) : 0),
     getTitle: (r) => (r.kind === 'item' ? r.product : ''),
-    getSubtitle: (r) => (r.kind === 'item' ? `¥${r.unitPrice}/${r.unit || '—'}` : ''),
+    getSubtitle: (r) =>
+      r.kind === 'item'
+        ? r.quantity && r.quantity > 0
+          ? `¥${r.unitPrice}/${r.unit || '—'} × ${r.quantity} = ¥${priceTotalOf(r)}`
+          : `¥${r.unitPrice}/${r.unit || '—'}`
+        : '',
   },
   combo: {
     label: '套餐',
@@ -103,7 +109,12 @@ const PRICE_KINDS = Object.keys(PRICE_TYPES) as PriceKind[]
 // 通用工具
 // ───────────────────────────────────────────────────────────
 const CATEGORIES = ['餐饮', '交通', '购物', '居家', '娱乐', '医疗', '工资', '理财', '其他']
-const UNIT_SUGGESTIONS = ['粒', '斤', '个', '件', '克', '包', '瓶', '盒', '份', '条', '袋', '次']
+// 单位建议：细分单位（粒/斤/克/个…）优先，利于跨记录比价；整件单位（箱/盒/袋/包…）靠后，
+// 选择整件单位时提示「整件单位不利比价，建议用细分单位」。
+const FINE_UNITS = ['粒', '斤', '克', '个', '条', '块', '只', '毫升', '升', '袋']
+const COARSE_UNITS = ['件', '包', '瓶', '盒', '箱', '桶']
+const UNIT_SUGGESTIONS = [...FINE_UNITS, ...COARSE_UNITS]
+const COARSE_UNIT_SET = new Set(COARSE_UNITS)
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
 /** 统一时间线每页条数（翻页 / 动态加载） */
@@ -268,8 +279,21 @@ function extractOrderPrices(raw: unknown, fallbackDate: string): PriceRecord[] {
       const o = it as Record<string, unknown>
       const name = typeof o.name === 'string' ? o.name.trim() : ''
       const price = toNumber(o.price)
+      const qty = toNumber(o.qty) || toNumber(o.quantity)
       if (!name || !(price > 0.01)) continue // 跳过无单价 / 红包占位 0.01
-      out.push({ type: 'price', kind: 'item', id: randId(), product: name, unit: '', unitPrice: price, date, time, source, createdAt })
+      out.push({
+        type: 'price',
+        kind: 'item',
+        id: randId(),
+        product: name,
+        unit: '',
+        unitPrice: price,
+        quantity: qty > 1 ? qty : undefined, // 数量>1 才保留（体现整体价；默认单份无意义）
+        date,
+        time,
+        source,
+        createdAt,
+      })
     }
   }
   return out
@@ -341,7 +365,7 @@ function normalizePriceRow(raw: unknown, fallbackDate: string): PriceRecord | nu
     const unitPrice = toNumber(r.unitPrice)
     if (!product || !unitPrice) return null
     const unit = typeof r.unit === 'string' ? r.unit.trim() : ''
-    return { ...base, kind: 'item', product, unit, unitPrice }
+    return { ...base, kind: 'item', product, unit, unitPrice, quantity: toNumber(r.quantity) || undefined }
   }
   if (kind === 'combo') {
     const name = typeof r.name === 'string' ? r.name.trim() : ''
@@ -362,7 +386,7 @@ function normalizePriceRow(raw: unknown, fallbackDate: string): PriceRecord | nu
 
 function toPriceExportShape(r: PriceRecord) {
   if (r.kind === 'item') {
-    return { kind: 'item', date: r.date, product: r.product, unit: r.unit || null, unitPrice: r.unitPrice, source: r.source ?? null }
+    return { kind: 'item', date: r.date, product: r.product, unit: r.unit || null, unitPrice: r.unitPrice, quantity: r.quantity ?? null, source: r.source ?? null }
   }
   if (r.kind === 'combo') {
     return { kind: 'combo', date: r.date, name: r.name, unitPrice: r.unitPrice, items: r.items, source: r.source ?? null }
@@ -496,7 +520,7 @@ const AI_PROMPT_TEMPLATE = `你是一个智能记账助手。请理解以下内�
 
 【B. 价格记录（报价/单价/套餐/代金券）】
 特征：描述"X 多少钱一斤"、套餐价格、代金券面值等，用 kind 字段区分
-- kind:"item" 单品：product、unit、unitPrice、date
+- kind:"item" 单品：product、unit、unitPrice、quantity(数量，可选，用于显示整体价=单价×数量)、date
 - kind:"combo" 套餐：name、unitPrice、items[] (product/unit/quantity)、date
 - kind:"voucher" 代金券：name、cost(实付)、faceValue(面值)、date
 
@@ -717,6 +741,7 @@ export default function BookkeepingApp() {
   const [pDate, setPDate] = useState(today())
   const [pSource, setPSource] = useState('')
   const [pUnitPrice, setPUnitPrice] = useState('') // 单品单价 / 套餐总价
+  const [pQuantity, setPQuantity] = useState('') // 单品数量（可选，用于显示整体价）
   const [pUnit, setPUnit] = useState('')
   const [pCost, setPCost] = useState('') // 代金券实付
   const [pFace, setPFace] = useState('') // 代金券面值
@@ -818,7 +843,18 @@ export default function BookkeepingApp() {
     if (priceKind === 'item') {
       const up = toNumber(pUnitPrice)
       if (!pName.trim() || !up) return
-      rec = { type: 'price', kind: 'item', id, product: pName.trim(), unit: pUnit.trim() || '份', unitPrice: up, date: pDate, source, createdAt }
+      rec = {
+        type: 'price',
+        kind: 'item',
+        id,
+        product: pName.trim(),
+        unit: pUnit.trim() || '份',
+        unitPrice: up,
+        quantity: toNumber(pQuantity) || undefined,
+        date: pDate,
+        source,
+        createdAt,
+      }
     } else if (priceKind === 'combo') {
       const up = toNumber(pUnitPrice)
       if (!pName.trim() || !up) return
@@ -845,6 +881,7 @@ export default function BookkeepingApp() {
     // 重置表单
     setPName('')
     setPUnitPrice('')
+    setPQuantity('')
     setPUnit('')
     setPDate(today())
     setPSource('')
@@ -1138,6 +1175,7 @@ export default function BookkeepingApp() {
                 onClick={() => {
                   setUnitPrice(String(lastQuote.unitPrice))
                   setUnit(lastQuote.unit)
+                  setQuantity(lastQuote.quantity ? String(lastQuote.quantity) : '')
                 }}
                 className="text-xs text-emerald-300 hover:text-emerald-200 bg-emerald-500/10 border border-emerald-400/20 rounded-lg px-3 py-1.5 text-left"
               >
@@ -1200,22 +1238,37 @@ export default function BookkeepingApp() {
             </div>
 
             {priceKind === 'item' && (
-              <div className="grid grid-cols-2 gap-2">
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  placeholder="单价 *"
-                  value={pUnitPrice}
-                  onChange={(e) => setPUnitPrice(e.target.value)}
-                  className="h-9 rounded-lg bg-white/10 border border-white/20 text-white text-sm px-3 outline-none focus:border-white/40"
-                />
-                <input
-                  list="unit-suggestions"
-                  placeholder="单位（默认 份）"
-                  value={pUnit}
-                  onChange={(e) => setPUnit(e.target.value)}
-                  className="h-9 rounded-lg bg-white/10 border border-white/20 text-white text-sm px-3 outline-none focus:border-white/40"
-                />
+              <div className="space-y-1.5">
+                <div className="grid grid-cols-3 gap-2">
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    placeholder="单价 *"
+                    value={pUnitPrice}
+                    onChange={(e) => setPUnitPrice(e.target.value)}
+                    className="h-9 rounded-lg bg-white/10 border border-white/20 text-white text-sm px-3 outline-none focus:border-white/40"
+                  />
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    placeholder="数量"
+                    value={pQuantity}
+                    onChange={(e) => setPQuantity(e.target.value)}
+                    className="h-9 rounded-lg bg-white/10 border border-white/20 text-white text-sm px-3 outline-none focus:border-white/40"
+                  />
+                  <input
+                    list="unit-suggestions"
+                    placeholder="单位（默认 份）"
+                    value={pUnit}
+                    onChange={(e) => setPUnit(e.target.value)}
+                    className="h-9 rounded-lg bg-white/10 border border-white/20 text-white text-sm px-3 outline-none focus:border-white/40"
+                  />
+                </div>
+                {COARSE_UNIT_SET.has(pUnit.trim()) && (
+                  <div className="text-amber-300/90 text-xs px-1">
+                    整件单位（{pUnit.trim()}）不利比价，建议用 粒 / 斤 / 克 等细分单位便于跨记录比较。
+                  </div>
+                )}
               </div>
             )}
 

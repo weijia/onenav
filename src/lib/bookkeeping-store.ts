@@ -68,9 +68,19 @@ type PriceBase = BaseRecord & { type: 'price'; time?: string }
 
 /** 价格（单品 / 套餐 / 代金券） */
 export type PriceRecord =
-  | (PriceBase & { kind: 'item'; product: string; unit: string; unitPrice: number })
+  | (PriceBase & { kind: 'item'; product: string; unit: string; unitPrice: number; quantity?: number })
   | (PriceBase & { kind: 'combo'; name: string; unitPrice: number; items: ComboItem[] })
   | (PriceBase & { kind: 'voucher'; name: string; cost: number; faceValue: number })
+
+/**
+ * 单品价格记录的整体价（总价）：单价 × 数量；无数量时即单价。
+ * 用于「显示单价的同时显示整体价格」。
+ */
+export function priceTotalOf(r: Extract<PriceRecord, { kind: 'item' }>): number {
+  return r.quantity && r.quantity > 0
+    ? Math.round(r.unitPrice * r.quantity * 100) / 100
+    : r.unitPrice
+}
 
 /** 电商订单（京东 / 淘宝） */
 export interface OrderRecord extends BaseRecord {
