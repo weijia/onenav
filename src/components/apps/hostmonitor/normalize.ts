@@ -294,3 +294,18 @@ export function normalizeUfsNodes(raws: unknown[]): NormalizeResult {
 
   return { hosts, controlNodes }
 }
+
+/** 磁盘信息过滤模式：全部 / 仅含磁盘信息 / 仅无磁盘信息 */
+export type DiskInfoFilter = 'all' | 'with-disk' | 'no-disk'
+
+/** 判断主机是否含磁盘信息（存在任意磁盘记录：SMART 或明细中的物理盘） */
+export function hostHasDiskInfo(host: HostView): boolean {
+  return host.disks.length > 0
+}
+
+/** 按是否含磁盘信息过滤主机列表（控制节点不参与过滤） */
+export function filterHostsByDiskInfo(hosts: HostView[], mode: DiskInfoFilter): HostView[] {
+  if (mode === 'all') return hosts
+  const keep = mode === 'with-disk' ? hostHasDiskInfo : (h: HostView) => !hostHasDiskInfo(h)
+  return hosts.filter(keep)
+}

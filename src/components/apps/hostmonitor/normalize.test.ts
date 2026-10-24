@@ -4,7 +4,7 @@
 // 不依赖远程存储，使用样本 JSON 直接验证归一化逻辑。
 
 import { describe, it, expect } from 'vitest'
-import { normalizeUfsNodes } from './normalize'
+import { normalizeUfsNodes, filterHostsByDiskInfo, hostHasDiskInfo } from './normalize'
 import type { HostView } from './types'
 
 // ── 样本数据（对齐 my-data 文档格式）──
@@ -193,5 +193,49 @@ describe('normalizeUfsNodes', () => {
     const { hosts, controlNodes } = normalizeUfsNodes([null, 123, 'str', { foo: 'bar' }])
     expect(hosts).toEqual([])
     expect(controlNodes).toEqual([])
+  })
+})
+
+describe('filterHostsByDiskInfo（磁盘信息过滤）', () => {
+  // host-1 有磁盘（SMART+明细融合）；host-2 仅心跳无磁盘
+  const { hosts } = normalizeUfsNodes([heartbeat, diskSmart, hostDetail, heartbeatOffline])
+
+  it('hostHasDiskInfo：按 disks.length 判定有 / 无磁盘信息', () => {
+    const h1 = findHost(hosts, 'host-1')
+    const h2 = findHost(hosts, 'host-2')
+    expect(hostHasDiskInfo(h1!)).toBe(true)
+    expect(hostHasDiskInfo(h2!)).toBe(false)
+  })
+
+  it("mode='all' 返回全部主机", () => {
+    expect(filterHostsByDiskInfo(hosts, 'all')).toHaveLength(hosts.length)
+  })
+
+  it("mode='with-disk' 仅返回含磁盘信息的主机", () => {
+    const r = filterHostsByDiskInfo(hosts, 'with-disk')
+    expect(r).toHaveLength(1)
+    expect(r[0].uuid).toBe('host-1')
+    expect(r.every((h) => h.disks.length > 0)).toBe(true)
+  })
+
+  it("mode='no-disk' 仅返回无磁盘信息的主机", () => {
+    const r = filterHostsByDiskInfo(hosts, 'no-disk')
+    expect(r).toHaveLength(1)
+    expect(r[0].uuid).toBe('host-2')
+    expect(r.every((h) => h.disks.length === 0)).toBe(true)
+  })
+
+  it('过滤不改变原数组，且 counts 之和等于总数', () => {
+    const snapshot = [...hosts]
+    const w = filterHostsByDiskInfo(hosts, 'with-disk')
+    const n = filterHostsByDiskInfo(hosts, 'no-disk')
+    expect(hosts).toEqual(snapshot) // 原数组未被修改
+    expect(w.length + n.length).toBe(hosts.length)
+  })
+
+  it('过滤不含控制节点（控制节点不参与主机过滤）', () => {
+    const { hosts: hs } = normalizeUfsNodes([heartbeat, nodeControl])
+    const r = filterHostsByDiskInfo(hs, 'all')
+    expect(r.find((h) => h.uuid === 'node-ctrl-1')).toBeUndefined()
   })
 })

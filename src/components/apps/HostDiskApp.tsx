@@ -18,7 +18,8 @@ import {
 } from 'lucide-react'
 import { fetchUfsNodesRaw, RsNotConnectedError, RsAuthError } from './hostmonitor/fetch'
 import { reauthorizeForUfsNodes } from '@/lib/remotestorage-connection'
-import { normalizeUfsNodes } from './hostmonitor/normalize'
+import { normalizeUfsNodes, filterHostsByDiskInfo } from './hostmonitor/normalize'
+import type { DiskInfoFilter } from './hostmonitor/normalize'
 import type { ControlNodeView, DiskView, HostView, LogicalDiskView, SensitiveField } from './hostmonitor/types'
 
 type LoadState = 'loading' | 'error' | 'empty' | 'data'
@@ -29,6 +30,7 @@ export default function HostDiskApp() {
   const [controlNodes, setControlNodes] = useState<ControlNodeView[]>([])
   const [errorMsg, setErrorMsg] = useState('')
   const [errorCode, setErrorCode] = useState('')
+  const [diskFilter, setDiskFilter] = useState<DiskInfoFilter>('all')
 
   const load = useCallback(async () => {
     setState('loading')
@@ -69,6 +71,10 @@ export default function HostDiskApp() {
     void load()
   }, [load])
 
+  const withDiskCount = hosts.filter((h) => h.disks.length > 0).length
+  const noDiskCount = hosts.length - withDiskCount
+  const visibleHosts = filterHostsByDiskInfo(hosts, diskFilter)
+
   return (
     <div className="max-w-3xl mx-auto px-4 py-5 space-y-4">
       <div className="flex items-center justify-between">
@@ -90,10 +96,24 @@ export default function HostDiskApp() {
       {state === 'empty' && <EmptyState onRetry={load} />}
       {state === 'data' && (
         <div className="space-y-5">
+          {/* 磁盘信息过滤：区分有 / 无磁盘信息的主机 */}
+          <div className="flex items-center gap-2 text-xs">
+            <span className="text-white/40 shrink-0">筛选</span>
+            <div className="flex items-center gap-1 bg-white/5 rounded-lg p-1">
+              <FilterChip active={diskFilter === 'all'} label={`全部 ${hosts.length}`} onClick={() => setDiskFilter('all')} />
+              <FilterChip active={diskFilter === 'with-disk'} label={`有磁盘 ${withDiskCount}`} onClick={() => setDiskFilter('with-disk')} />
+              <FilterChip active={diskFilter === 'no-disk'} label={`无磁盘 ${noDiskCount}`} onClick={() => setDiskFilter('no-disk')} />
+            </div>
+          </div>
+
           <div className="space-y-3">
-            {hosts.map((h) => (
-              <HostCard key={h.uuid} host={h} />
-            ))}
+            {visibleHosts.length === 0 ? (
+              <div className="text-white/30 text-sm text-center py-8">当前筛选无匹配的主机</div>
+            ) : (
+              visibleHosts.map((h) => (
+                <HostCard key={h.uuid} host={h} />
+              ))
+            )}
           </div>
           {controlNodes.length > 0 && (
             <div className="space-y-2">
@@ -113,6 +133,19 @@ export default function HostDiskApp() {
 }
 
 // ── 状态小组件 ──
+
+function FilterChip({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`px-2.5 py-1 rounded-md transition-colors whitespace-nowrap ${
+        active ? 'bg-sky-500/80 text-white' : 'text-white/55 hover:text-white hover:bg-white/10'
+      }`}
+    >
+      {label}
+    </button>
+  )
+}
 
 function LoadingState() {
   return (

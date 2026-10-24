@@ -44,6 +44,11 @@
 - **控制节点区（Q3+Q8 协调）**：节点控制对象作为独立分组展示（不混入主机监控），其 `mqtt.password`/`secret` 等敏感字段以「密码遮罩 + 点击揭示」呈现，不原样明文暴露、也不硬性剔除。
 - 主机卡片内的 mqtt 敏感字段（兜底）：若某主机心跳意外携带 mqtt，同样遮罩揭示。
 
+## 磁盘信息过滤（区分有 / 无磁盘信息的主机）
+- **判定口径**：主机「有磁盘信息」= `host.disks.length > 0`（存在任意磁盘记录：SMART 或明细物理盘）；「无磁盘信息」= `disks.length === 0`（仅心跳、无任何磁盘数据）。与 UI 卡片中「暂无磁盘数据」的展示口径一致。
+- **实现**：`normalize.ts` 导出纯函数 `hostHasDiskInfo(host)` 与 `filterHostsByDiskInfo(hosts, mode)`，`mode ∈ 'all' | 'with-disk' | 'no-disk'`，便于单测、不依赖 React。
+- **UI**：`HostDiskApp` data 态在主机列表上方加三枚分段按钮「全部 N / 有磁盘 X / 无磁盘 Y」（实时计数），点击切换 `diskFilter`；当前筛选无匹配时提示「当前筛选无匹配的主机」。控制节点不参与主机过滤。
+
 ## 注册方式
 - `src/components/apps/manifest.ts` 的 `APP_MANIFEST` 追加 `hostmonitor` 一项（id=`hostmonitor`、name=`设备监控`、icon 待定、accent、description、entry=`apps/hostmonitor/index.html`）。
 - `apps/hostmonitor/index.html` + `entry.tsx` 照搬 `apps/bookkeeping/` 模板（vite 自动发现 `apps/*/index.html`，无需手改 vite 配置）。
