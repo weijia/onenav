@@ -20,7 +20,7 @@
 | B-2(读失败) | 列得见但读不到的文件 | 拉取 | 该文件跳过 | raws 不含该文件；其余正常 | ✅ 自动化 |
 | B-3 | JSON 非预期形态（缺字段/数字/字符串） | 拉取+归一化 | 降级处理不抛异常 | normalize 返回空 hosts/controlNodes | ✅ 自动化 |
 | B-4 | 未连接 RS（无凭据） | 拉取 | 抛 `RsNotConnectedError`（code=NOT_CONNECTED）→ UI「去连接」引导 | 异常类型/code 正确 | ✅ 自动化（导航层需人工） |
-| B-4(鉴权) | token 失效（401/403） | 拉取 | 抛 `RsAuthError`（code=AUTH） | 异常类型/code 正确 | ✅ 自动化 |
+| B-4(鉴权) | token 失效（401/403）——多为「已连接但缺 ufs-nodes 作用域」 | 拉取 | 抛 `RsAuthError`（code=AUTH）→ **首次自动** disconnect+connectWithUserAddress 跳 OAuth 重新授权（sessionStorage 一次性守卫）；若已尝试过或重连失败则显示「目录权限不足 / 去主页重新连接」 | 异常类型/code 正确；自动重授权仅在首次触发，避免死循环 | ✅ 自动化（跳转交互需人工验证） |
 | B-5 | 节点控制对象混入 | 拉取+分类 | 不误展示为主机/磁盘 | hosts=[]、controlNodes=1 | ✅ 自动化 |
 | B-6 | 节点控制含 mqtt 密码/密钥 | 归一化 | 标记 `sensitive:true`（UI 据此外遮罩，DOM 默认不暴露明文） | sensitive 含「MQTT 密码」「AES 密钥」且 sensitive=true | ✅ 自动化（点击揭示交互需人工） |
 | B-7 | 缺 `{uuid}_disks.json` | 拉取+融合 | 心跳+SMART 仍展示主机，`hasDetail=false` | 主机展示、磁盘来自 SMART | ✅ 自动化 |
@@ -47,3 +47,11 @@
 ## 遗留 / 跨项目项
 - [ ] 人工在真实环境跑「手工 E2E 演练」（需已连接 RS + home_cloud 已产出明细）。
 - [ ] 确认 home_cloud 运行时产出 `ufs-nodes/{uuid}_disks.json`（否则 Q2(b) 明细缺失，非本应用 bug）。
+
+## 运维须知：已连接账号首次出现 401（EAUTH）的处理
+- **现象**：打开设备监控报 `Failed to load data` 或 readdir `ufs-nodes/` 返回 `{"code":"EAUTH","status":401}`。
+- **根因**：RemoteStorage 的目录权限（scope）在 OAuth 授权那一刻写入令牌。本项目在 `claimDefaultAccess()` 加入 `ufs-nodes:r` 之前签发的旧令牌**不会自动获得**该作用域，服务端因此对 `ufs-nodes` 拒绝读取（401）。
+- **解决（一次性）**：在 OneNav 主页「断开 RemoteStorage」，再用同一账号（`user@host`）重新连接一次 —— 触发完整 OAuth，新令牌带上 `ufs-nodes` 读权限；连上后回设备监控点「刷新」即可。
+- **代码侧（自动重授权）**：设备监控检测到 `ufs-nodes` 的 401 时，会**自动**调用 `reauthorizeForUfsNodes()`（`remotestorage-connection.ts`）：先 `disconnect()` 清掉库内旧 token（否则 remotestoragejs 会复用旧令牌跳过 OAuth），再用已保存的 `userAddress` 走 `connectWithUserAddress()` 触发完整 OAuth 重定向；新令牌即带 `ufs-nodes:r`。该自动跳转用 `sessionStorage` 标记 `onenav:rs-ufs-reauth-attempted` 做**一次性守卫**——仅首次 401 自动跳，若服务商未真正升级 scope 而再次 401，则退回「目录权限不足 / 去主页重新连接」手动面板，避免死循环。
+- **跳转落点**：OAuth 重定向是整页跳转，授权完回到 onenav 主页（非设备监控页），需重新点进「设备监控」。
+- **注意**：`claimAccess` 必须在 `rs.connect()` 之前调用（即只在 `connectWithUserAddress/connectWithToken` 走到的 `claimDefaultAccess` 里有效），事后调用无效。

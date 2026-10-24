@@ -17,6 +17,7 @@ import {
   ShieldAlert,
 } from 'lucide-react'
 import { fetchUfsNodesRaw, RsNotConnectedError, RsAuthError } from './hostmonitor/fetch'
+import { reauthorizeForUfsNodes } from '@/lib/remotestorage-connection'
 import { normalizeUfsNodes } from './hostmonitor/normalize'
 import type { ControlNodeView, DiskView, HostView, LogicalDiskView, SensitiveField } from './hostmonitor/types'
 
@@ -40,7 +41,20 @@ export default function HostDiskApp() {
       setControlNodes(cns)
       setState(hs.length > 0 || cns.length > 0 ? 'data' : 'empty')
     } catch (e) {
-      if (e instanceof RsNotConnectedError || e instanceof RsAuthError) {
+      if (e instanceof RsAuthError) {
+        // 一次性自动重授权：仅对「已连接但缺 ufs-nodes 作用域」的 401 触发，防止死循环。
+        // 若服务商未真正升级 scope 而再次 401，flag 已置位 → 退回手动「目录权限不足」面板。
+        const REAUTH_FLAG = 'onenav:rs-ufs-reauth-attempted'
+        if (!sessionStorage.getItem(REAUTH_FLAG)) {
+          sessionStorage.setItem(REAUTH_FLAG, '1')
+          if (reauthorizeForUfsNodes()) {
+            // 已发起完整 OAuth 跳转，页面即将离开，不再设置错误态。
+            return
+          }
+        }
+        setErrorCode('AUTH')
+        setErrorMsg(e.message)
+      } else if (e instanceof RsNotConnectedError) {
         setErrorCode(e.code)
         setErrorMsg(e.message)
       } else {
@@ -126,8 +140,40 @@ function EmptyState({ onRetry }: { onRetry: () => void }) {
 }
 
 function ErrorState({ code, message, onRetry }: { code: string; message: string; onRetry: () => void }) {
-  const needConnect = code === 'NOT_CONNECTED' || code === 'AUTH'
-  if (needConnect) {
+  // 已连接、但当前令牌缺 ufs-nodes 作用域（服务端 401）——需断开重连换取新令牌。
+  if (code === 'AUTH') {
+    return (
+      <div className="rounded-xl bg-amber-500/10 border border-amber-400/30 p-6 text-center space-y-3">
+        <ShieldAlert className="w-8 h-8 text-amber-300/80 mx-auto" />
+        <div className="text-amber-100">目录权限不足</div>
+        <div className="text-white/55 text-sm leading-relaxed">
+          已连接 RemoteStorage，但当前令牌缺少 <span className="font-mono text-amber-200">ufs-nodes</span> 目录的读权限，
+          因此无法读取主机 / 磁盘数据（服务端返回 401）。
+        </div>
+        <div className="text-white/45 text-xs leading-relaxed text-left mx-auto max-w-sm">
+          解决：在 OneNav 主页「断开 RemoteStorage」，再用同一账号（user@host）重新连接一次——
+          OAuth 会请求新的权限范围，新令牌即可读取 ufs-nodes。重新连接后点「刷新」。
+        </div>
+        <div className="flex justify-center gap-2">
+          <button
+            onClick={() => {
+              window.location.href = '../../index.html'
+            }}
+            className="px-4 py-2 rounded-lg bg-sky-500/80 hover:bg-sky-500 text-white text-sm"
+          >
+            去主页重新连接
+          </button>
+          <button
+            onClick={onRetry}
+            className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-white/80 text-sm"
+          >
+            刷新
+          </button>
+        </div>
+      </div>
+    )
+  }
+  if (code === 'NOT_CONNECTED') {
     return (
       <div className="rounded-xl bg-white/5 border border-white/10 p-6 text-center space-y-3">
         <Plug className="w-8 h-8 text-white/40 mx-auto" />

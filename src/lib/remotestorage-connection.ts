@@ -310,6 +310,25 @@ export function disconnect(): void {
 }
 
 /**
+ * 强制重新走完整 OAuth 以更新令牌作用域（用于「已连接但缺 ufs-nodes 作用域」的 401）。
+ *
+ * 关键点：remotestoragejs 在 connect 时若发现已存有该 user 的令牌，会直接复用旧令牌、
+ * 跳过 OAuth。因此必须先 disconnect() 清掉库内旧 token，后续的 connect(userAddress)（不带 token）
+ * 才会真正发起完整 OAuth 重定向；新令牌将带上 claimDefaultAccess() 中的 ufs-nodes:r。
+ *
+ * 调用后页面会跳转到服务商授权页，本函数不会返回。
+ * @returns false 表示无已保存账号、无法自动重连（此时应走手动「去连接」引导）。
+ */
+export function reauthorizeForUfsNodes(): boolean {
+  const saved = getSavedStorageCredentials()
+  if (!saved?.userAddress) return false
+  // 先断开：清掉 remotestoragejs 内部旧 token，确保后续 connect 触发完整 OAuth 而非复用旧令牌
+  disconnect()
+  connectWithUserAddress(saved.userAddress)
+  return true
+}
+
+/**
  * 获取当前连接信息
  */
 export function getConnectionInfo(): RSConnectionInfo {

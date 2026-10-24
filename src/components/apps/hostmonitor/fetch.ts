@@ -30,6 +30,11 @@ export class RsAuthError extends Error {
 // zen-fs 路径约定：无前导斜杠（与 app_data/favorites 一致）。
 const UFS_DIR = 'ufs-nodes'
 
+/** ufs-nodes 读权限不足时的错误说明：已连接，但当前令牌缺作用域，需断开重连换取新令牌 */
+const UFS_AUTH_MSG =
+  'RemoteStorage 已连接，但当前令牌缺少 ufs-nodes 目录的读权限（服务端 401）。' +
+  '请在主页断开 RemoteStorage 并重新连接一次以授予该权限。'
+
 /**
  * 列出并读取 ufs-nodes/ 下全部 .json 文件，返回原始 JSON 数组。
  * 单文件解析/读取失败会被跳过，不导致整页崩溃。
@@ -62,7 +67,7 @@ export async function fetchUfsNodesRaw(): Promise<unknown[]> {
         break
       }
     } catch (e) {
-      if (isRemoteStorageAuthError(e)) throw new RsAuthError(String(e))
+      if (isRemoteStorageAuthError(e)) throw new RsAuthError(UFS_AUTH_MSG)
       // 否则忽略，尝试带斜杠
     }
   }
@@ -82,7 +87,7 @@ export async function fetchUfsNodesRaw(): Promise<unknown[]> {
         // 单文件 JSON 解析失败：跳过该文件
       }
     } catch (e) {
-      if (isRemoteStorageAuthError(e)) throw new RsAuthError(String(e))
+      if (isRemoteStorageAuthError(e)) throw new RsAuthError(UFS_AUTH_MSG)
       // 单文件读取失败：跳过
     }
   }
