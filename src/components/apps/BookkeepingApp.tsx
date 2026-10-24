@@ -521,6 +521,8 @@ const AI_PROMPT_TEMPLATE = `你是一个智能记账助手。请理解以下内�
 【B. 价格记录（报价/单价/套餐/代金券）】
 特征：描述"X 多少钱一斤"、套餐价格、代金券面值等，用 kind 字段区分
 - kind:"item" 单品：product、unit、unitPrice、quantity(数量，可选，用于显示整体价=单价×数量)、date
+  · unit 建议用细分单位（粒/斤/克/个）便于跨记录比价，避免用箱/盒/袋/包等整件单位
+  · 描述含数量时给出 quantity（如 3 斤、5 盒），以便显示整体价
 - kind:"combo" 套餐：name、unitPrice、items[] (product/unit/quantity)、date
 - kind:"voucher" 代金券：name、cost(实付)、faceValue(面值)、date
 
@@ -535,14 +537,15 @@ const AI_PROMPT_TEMPLATE = `你是一个智能记账助手。请理解以下内�
 [
   {"date":"2026-10-20","type":"expense","category":"餐饮","amount":35,"note":"午餐","product":"麻辣烫"},
   {"date":"2026-10-20","type":"expense","category":"交通","amount":6,"note":"地铁"},
-  {"kind":"item","date":"2026-10-20","product":"鸡蛋","unit":"斤","unitPrice":5.8},
+  {"kind":"item","date":"2026-10-20","product":"鸡蛋","unit":"斤","unitPrice":5.8,"quantity":3},
+  {"kind":"item","date":"2026-10-20","product":"西瓜","unit":"斤","unitPrice":2.5},
   {"kind":"voucher","date":"2026-10-20","name":"超市券","cost":75,"faceValue":100}
 ]`
 
 /** JSON 格式说明 */
 const FORMAT_NOTE = `系统自动识别每条记录是 记账 / 价格 / 订单，支持混合数组：
 - 含 order_id（或 platform + total_amount）→ 电商订单：每笔真实订单解析为一条 type:"order" 记录（在统一时间线中显示为流水/订单，按金额计入支出）；其商品中「有单价」的条目（主要淘宝，已过滤 0.01 红包占位）同时写入「报价」记录（完全不去重，同名商品在不同日期/来源的记录各自保留）
-- 含 kind(item/combo/voucher) → 价格记录
+- 含 kind(item/combo/voucher) → 价格记录（item 支持 quantity：显示「单价 × 数量 = 整体价」；unit 建议用粒/斤/克/个等细分单位便于比价，避免箱/盒/袋等整件单位）
 - 含 type + category + amount → 记账记录
 解析失败的行会跳过，Toast 会告诉你跳过了几条。导出的 JSON 可直接当模板交给 AI 生成。`
 
