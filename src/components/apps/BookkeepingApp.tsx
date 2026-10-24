@@ -62,8 +62,8 @@ const PRICE_TYPES: Record<PriceKind, PriceTypeMeta> = {
     getSubtitle: (r) =>
       r.kind === 'item'
         ? r.quantity && r.quantity > 0
-          ? `¥${r.unitPrice}/${r.unit || '—'} × ${r.quantity} = ¥${priceTotalOf(r)}`
-          : `¥${r.unitPrice}/${r.unit || '—'}`
+          ? `单价 ¥${r.unitPrice}/${r.unit || '—'} × ${r.quantity} · 总价 ¥${priceTotalOf(r)}`
+          : `单价 ¥${r.unitPrice}/${r.unit || '—'} · 总价 ¥${priceTotalOf(r)}`
         : '',
   },
   combo: {
