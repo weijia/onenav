@@ -63,11 +63,19 @@ self.addEventListener('fetch', (event) => {
           void cache.put(req, res.clone()).then(() => trimCache(cache, MAX_TILES))
         }
         return res
-      } catch (err) {
-        // 离线且精确未命中：忽略查询串再试一次（瓦片 URL 常带参数），仍无则抛出
+      } catch {
+        // 离线且精确未命中：忽略查询串再试一次（瓦片 URL 常带参数）
         const fallback = await cache.match(req, { ignoreSearch: true })
         if (fallback) return fallback
-        throw err
+        // 网络失败且无任何缓存兜底：返回离线占位响应而非抛错。
+        // 瓦片请求是跨域 no-cors，主机不可达/离线时会抛 `TypeError: Failed to fetch`，
+        // 若在此 throw，会形成 respondWith 里未处理的 promise rejection → Uncaught (in promise)。
+        // 返回占位响应让 respondWith 始终 resolve，仅该块瓦片显示失败，不产生全局报错。
+        return new Response('', {
+          status: 504,
+          statusText: 'Offline',
+          headers: { 'Content-Type': 'image/png' },
+        })
       }
     })(),
   )
