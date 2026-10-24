@@ -63,11 +63,14 @@ export interface TxRecord extends BaseRecord {
   payment?: string
 }
 
+/** 价格记录公共部分：type + 可选时间（HH:MM:SS，订单导入时从 order_time 保留完整时间） */
+type PriceBase = BaseRecord & { type: 'price'; time?: string }
+
 /** 价格（单品 / 套餐 / 代金券） */
 export type PriceRecord =
-  | (BaseRecord & { type: 'price'; kind: 'item'; product: string; unit: string; unitPrice: number })
-  | (BaseRecord & { type: 'price'; kind: 'combo'; name: string; unitPrice: number; items: ComboItem[] })
-  | (BaseRecord & { type: 'price'; kind: 'voucher'; name: string; cost: number; faceValue: number })
+  | (PriceBase & { kind: 'item'; product: string; unit: string; unitPrice: number })
+  | (PriceBase & { kind: 'combo'; name: string; unitPrice: number; items: ComboItem[] })
+  | (PriceBase & { kind: 'voucher'; name: string; cost: number; faceValue: number })
 
 /** 电商订单（京东 / 淘宝） */
 export interface OrderRecord extends BaseRecord {

@@ -30,6 +30,7 @@ import {
   removeRecord,
   removeRecords,
 } from '@/lib/bookkeeping-store'
+import { mergePrices } from '@/lib/bookkeeping-price'
 
 // 单据类型（TxRecord / PriceRecord / OrderRecord / BookkeepingRecord）与存储函数
 // 统一 type 模型 + 每条记录一个独立 PouchDB 文档，见 src/lib/bookkeeping-store.ts 与 docs/bookkeeping-data-model.md
@@ -246,8 +247,7 @@ function normalizeOrderRow(raw: unknown, fallbackDate: string): OrderRecord | nu
   }
 }
 
-/** 从订单商品里提取「有单价」的条目，生成价格记录（item）。按商品名去重在 mergePrices 处理。
- *  京东单价多为 null，淘宝有单价；过滤 0.01 红包占位（schema 说明淘宝大量订单单价为 0.01）。 */
+/** 从订单商品里提取「有单价」的条目，生成价格记录（item）。同名不同时间/来源的记录各自保留（去重键 = 商品名 + 时间，见 bookkeeping-price.ts）。 */
 function extractOrderPrices(raw: unknown, fallbackDate: string): PriceRecord[] {
   if (!raw || typeof raw !== 'object') return []
   const r = raw as Record<string, unknown>
@@ -257,6 +257,8 @@ function extractOrderPrices(raw: unknown, fallbackDate: string): PriceRecord[] {
   const orderTime = typeof r.order_time === 'string' ? r.order_time : ''
   const ymd = orderTime.slice(0, 10)
   const date = DATE_RE.test(ymd) ? ymd : typeof r.year === 'string' && /^\d{4}$/.test(r.year) ? `${r.year}-01-01` : fallbackDate
+  // 保留完整时间（HH:MM:SS）：有日期时间时按「商品名+日期时间」去重，让同一天不同时间点的报价各自保留
+  const time = /^\d{2}:\d{2}:\d{2}$/.test(orderTime.slice(11, 19)) ? orderTime.slice(11, 19) : undefined
   const createdAt = typeof r.createdAt === 'number' ? r.createdAt : Date.now()
   const source = platform === 'jd' ? '京东订单' : '淘宝订单'
   const out: PriceRecord[] = []
@@ -267,7 +269,7 @@ function extractOrderPrices(raw: unknown, fallbackDate: string): PriceRecord[] {
       const name = typeof o.name === 'string' ? o.name.trim() : ''
       const price = toNumber(o.price)
       if (!name || !(price > 0.01)) continue // 跳过无单价 / 红包占位 0.01
-      out.push({ type: 'price', kind: 'item', id: randId(), product: name, unit: '', unitPrice: price, date, source, createdAt })
+      out.push({ type: 'price', kind: 'item', id: randId(), product: name, unit: '', unitPrice: price, date, time, source, createdAt })
     }
   }
   return out
@@ -472,33 +474,9 @@ function parseImport(text: string, target: ImportTarget = 'auto'): ImportPreview
 
   if (txs.length === 0 && orders.length === 0 && prices.length === 0)
     throw new Error('没有可导入的有效记录')
-  // 价格记录按 商品名/名称 去重（同款保留最新报价），避免订单批量导入产生大量重复
-  const dedupedPrices = mergePrices([], prices, 'replace')
-  return { txs, orders, prices: dedupedPrices, skipped }
-}
-
-/**
- * 合并价格记录：按 kind + 名称 去重，保留最新（date 降序，再 createdAt 降序）。
- * mode='replace' 时忽略 prev（仅用 incoming）；'merge' 时 incoming 覆盖 prev 同名。
- */
-function mergePrices(prev: PriceRecord[], incoming: PriceRecord[], mode: 'merge' | 'replace'): PriceRecord[] {
-  const keyOf = (r: PriceRecord) => `${r.kind}:${('product' in r ? r.product : r.name).toLowerCase()}`
-  const byKey = new Map<string, PriceRecord>()
-  const order: string[] = []
-  const put = (r: PriceRecord) => {
-    const k = keyOf(r)
-    const ex = byKey.get(k)
-    if (!ex) {
-      byKey.set(k, r)
-      order.push(k)
-      return
-    }
-    const newer = r.date > ex.date || (r.date === ex.date && r.createdAt >= ex.createdAt)
-    if (newer) byKey.set(k, r)
-  }
-  if (mode === 'merge') for (const r of prev) put(r)
-  for (const r of incoming) put(r)
-  return order.map((k) => byKey.get(k)!)
+  // 价格记录完全不去重：同名商品在不同日期/来源的记录各自保留，仅按时间排序（见 bookkeeping-price.ts）
+  const sortedPrices = mergePrices([], prices, 'replace')
+  return { txs, orders, prices: sortedPrices, skipped }
 }
 
 // ── AI 提示词模板：复制到 AI 里生成记录，然后 Ctrl+V 粘贴导入 ──
@@ -539,7 +517,7 @@ const AI_PROMPT_TEMPLATE = `你是一个智能记账助手。请理解以下内�
 
 /** JSON 格式说明 */
 const FORMAT_NOTE = `系统自动识别每条记录是 记账 / 价格 / 订单，支持混合数组：
-- 含 order_id（或 platform + total_amount）→ 电商订单：每笔真实订单解析为一条 type:"order" 记录（在统一时间线中显示为流水/订单，按金额计入支出）；其商品中「有单价」的条目（主要淘宝，已过滤 0.01 红包占位）同时写入「报价」记录（按商品名去重、保留最新报价）
+- 含 order_id（或 platform + total_amount）→ 电商订单：每笔真实订单解析为一条 type:"order" 记录（在统一时间线中显示为流水/订单，按金额计入支出）；其商品中「有单价」的条目（主要淘宝，已过滤 0.01 红包占位）同时写入「报价」记录（完全不去重，同名商品在不同日期/来源的记录各自保留）
 - 含 kind(item/combo/voucher) → 价格记录
 - 含 type + category + amount → 记账记录
 解析失败的行会跳过，Toast 会告诉你跳过了几条。导出的 JSON 可直接当模板交给 AI 生成。`
