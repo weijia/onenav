@@ -1,9 +1,10 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import type { ComponentType } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import { ArrowLeft } from 'lucide-react'
 import { versionDisplay, buildTimeDisplay } from '@/lib/version'
 import { registerServiceWorker } from '@/lib/sw-register'
+import { bootstrapAppRemoteStorage } from '@/lib/app-host-sync'
 import UpdateToast from '@/components/UpdateToast'
 
 interface AppHostProps {
@@ -32,11 +33,32 @@ interface AppHostProps {
  *  2. 渲染 UpdateToast——与主页一致的「新版本可用 / 点击刷新」提示与重载。
  * 新增应用页只要套 AppHost 即自动获得这两项能力，无需各入口重复接线。
  */
+const RS_BOOTSTRAP_TIMEOUT = 5000 // 应用主体不被 RemoteStorage 同步阻塞超过该毫秒数
+
 export default function AppHost({ name, description, accent, icon: Icon, component: AppComp, onBack }: AppHostProps) {
   // 注册根 SW：../../sw.js 相对 apps/<id>/index.html 解析到根目录，作用域覆盖全站。
   // 幂等——若主页或其他应用页已注册同一 SW，浏览器返回同一 registration。
   useEffect(() => {
     registerServiceWorker('../../sw.js')
+  }, [])
+
+  // 独立应用页的 RemoteStorage 同步引导：挂载时建立连接 + 一次初始双向同步。
+  // 没有本容器，各应用页的 isRemoteStorageConfigured() 恒为 false，写后数据不会 push 到后端。
+  // 用 rsReady 做渲染门控：等初始同步落定（或超时）后再渲染应用主体，
+  // 保证「首次打开即可见远端/跨设备数据」。无凭据时立即就绪，不阻塞本地模式。
+  const [rsReady, setRsReady] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    const timer = setTimeout(() => {
+      if (!cancelled) setRsReady(true) // 安全上限：RS 慢/挂起也不长期阻塞
+    }, RS_BOOTSTRAP_TIMEOUT)
+    bootstrapAppRemoteStorage().then(() => {
+      if (!cancelled) setRsReady(true) // 成功或失败都放行；仅在有凭据时才真正发起同步
+    })
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
   }, [])
 
   return (
@@ -58,7 +80,11 @@ export default function AppHost({ name, description, accent, icon: Icon, compone
         </div>
       </div>
       <div className="flex-1 overflow-y-auto">
-        <AppComp />
+        {rsReady ? (
+          <AppComp />
+        ) : (
+          <div className="flex items-center justify-center h-full text-white/40 text-sm">正在连接 RemoteStorage…</div>
+        )}
       </div>
       <div className="text-center py-2 text-white/20 text-xs shrink-0 flex items-center justify-center gap-2">
         <span>{versionDisplay}</span>
