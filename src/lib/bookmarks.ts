@@ -2,10 +2,12 @@ import type { BookmarksStore, DisplayBookmark } from '@/types'
 import { loadClickStats } from './stats'
 
 // 检查书签是否已被删除
-export function isDeleted(entry: { deletedMeta?: unknown; meta: { deleted?: number }; tags: string[] }): boolean {
+// 注意：运行时数据可能缺少 tags 字段（同步来的旧格式/异常条目），一律按空数组兜底，
+// 否则 entry.tags.includes 会抛 "Cannot read properties of undefined (reading 'includes')"。
+export function isDeleted(entry: { deletedMeta?: unknown; meta?: { deleted?: number }; tags?: string[] }): boolean {
   if (entry.deletedMeta) return true
-  if (entry.meta.deleted) return true
-  if (entry.tags.includes('._DELETED_')) return true
+  if (entry.meta?.deleted) return true
+  if ((entry.tags ?? []).includes('._DELETED_')) return true
   return false
 }
 
@@ -19,7 +21,7 @@ export function filterByTag(store: BookmarksStore, tag: string): DisplayBookmark
     if (isDeleted(entry)) continue
 
     // Check if entry has at least one of the requested tags
-    if (!entry.tags.some((t: string) => tags.includes(t))) {
+    if (!(entry.tags ?? []).some((t: string) => tags.includes(t))) {
       continue
     }
 
@@ -49,7 +51,7 @@ export function filterByMultipleTags(store: BookmarksStore, tags: string[]): Dis
     if (isDeleted(entry)) continue
 
     // Entry must have at least one of the configured tags
-    const hasTag = entry.tags.some((t: string) => tags.includes(t))
+    const hasTag = (entry.tags ?? []).some((t: string) => tags.includes(t))
     if (!hasTag) continue
 
     const url = key
@@ -75,7 +77,7 @@ export function getAllTags(store: BookmarksStore): string[] {
 
   for (const [_key, entry] of Object.entries(store.data)) {
     if (isDeleted(entry)) continue
-    for (const tag of entry.tags) {
+    for (const tag of (entry.tags ?? [])) {
       // Exclude system tags (prefixed with ._)
       if (!tag.startsWith('._')) {
         tagSet.add(tag)
@@ -141,7 +143,7 @@ export function getMostVisitedBookmarks(store: BookmarksStore, limit: number = 3
           description: e.meta.description || '',
           favicon: e.meta.favicon || getFaviconUrl(url),
           color: stringToColor(new URL(url).hostname),
-          tags: e.tags,
+          tags: e.tags ?? [],
           isPinned: false,
         })
       }
@@ -158,7 +160,7 @@ export function getMostVisitedBookmarks(store: BookmarksStore, limit: number = 3
         description: e.meta.description || '',
         favicon: e.meta.favicon || getFaviconUrl(url),
         color: stringToColor(new URL(url).hostname),
-        tags: e.tags,
+        tags: e.tags ?? [],
         isPinned: false,
       }))
     

@@ -211,10 +211,16 @@ export function claimAccess(moduleName: string, mode: string = 'rw'): void {
  * OneNav 默认需要的 RemoteStorage 权限。
  * - onenav: 主应用数据，同步 PouchDB 数据
  * - app_data: 读取 app_data/favorites 收藏书签目录
+ * - ufs-nodes: 设备监控应用读取主机/磁盘遥测（home_cloud 写入，只读）
+ *
+ * 注意：所有 claim 必须在 rs.connect() 之前完成，否则不会进入 OAuth scope。
+ * 新增模块（如 ufs-nodes）后，已连接的老用户需重新走一次完整 OAuth 连接
+ * （断开 → 用 user@host 重新连接），新 scope 才会被写入 token。
  */
 export function claimDefaultAccess(): void {
   claimAccess('onenav', 'rw')
   claimAccess('app_data', 'rw')
+  claimAccess('ufs-nodes', 'r')
 }
 
 /**

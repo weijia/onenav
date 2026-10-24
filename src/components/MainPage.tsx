@@ -124,7 +124,7 @@ export default function MainPage() {
           favicon: e.meta.favicon || getFaviconUrl(url),
           // 历史数据里可能存在非 URL 的 key（手工导入/旧格式），不能让它把整个列表渲染打穿
           color: stringToColor(safeHostname(url)),
-          tags: e.tags,
+          tags: e.tags ?? [],
           isPinned: pinnedUrls.includes(url),
         }))
     } else {
