@@ -153,6 +153,35 @@ export function createSyncSafeDb(db: PouchDB.Database): PouchDB.Database {
 }
 
 /**
+ * 清理本地 PouchDB 中历史遗留的 sync_conflict 文档。
+ *
+ * 背景：旧版冲突解析器对非书签文档的冲突返回 keep-conflict，每个冲突都会生成一个
+ * 存双方完整快照的大 sync_conflict 文档（约 11KB），且该文档本身又是「非书签文档」，
+ * 再次冲突会再次 keep-conflict → 正反馈雪崩（2026-10 在服务器上炸出上万个冲突文档、数百 MB）。
+ * 冲突解析已改为确定性解决不再新生成；这里兜底清除本地存量，避免其在服务器瘦身后
+ * 又被当作「新增文档」重新 push 回服务器。
+ */
+async function purgeLocalSyncConflicts(db: PouchDB.Database): Promise<void> {
+  const res = await db
+    .allDocs({
+      startkey: 'sync_conflict:',
+      endkey: 'sync_conflict:\uffff',
+      include_docs: true,
+    } as any)
+    .catch(() => null)
+  const rows = res?.rows ?? []
+  const docs = rows.map((r: any) => r.doc).filter((d: any) => d && typeof d._rev === 'string')
+  if (docs.length === 0) return
+  for (let i = 0; i < docs.length; i += 200) {
+    const batch = docs
+      .slice(i, i + 200)
+      .map((d: any) => ({ _id: d._id, _rev: d._rev, _deleted: true }))
+    await db.bulkDocs(batch as any).catch((e) => console.warn('[RS Sync] 清理 sync_conflict 失败:', e))
+  }
+  console.log(`[RS Sync] 已清理本地 ${docs.length} 个 sync_conflict 文档`)
+}
+
+/**
  * 将 PouchDB 同步到 RemoteStorage
  */
 export async function syncToRemoteStorage(
@@ -189,6 +218,8 @@ export async function syncToRemoteStorage(
 
     await engine.initialize()
     await engine.sync()
+    // 同步落定后清除本地遗留的 sync_conflict 文档，避免其被再次 push 回服务器
+    await purgeLocalSyncConflicts(db)
   } catch (err) {
     if (options.showToast !== false) {
       showSyncToast('同步失败').error(String(err))

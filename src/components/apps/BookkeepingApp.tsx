@@ -681,6 +681,30 @@ export default function BookkeepingApp() {
     }
   }, [])
 
+  // ── RemoteStorage 同步完成后的重新读取 ──
+  // 修复「能存不能读」：bootstrap 初始同步（拉取远端大量数据文件 / 等待 .sync.lock 锁）常常
+  // 远超 AppHost 的 RS_BOOTSTRAP_TIMEOUT 门控，导致应用挂载时本地 PouchDB 仍为空、
+  // 首次读取拿不到远端数据且永不刷新。AppHost 在 bootstrap 落定后派发 onenav:rs-synced，
+  // 这里据此重新读取，保证远端/跨设备数据在同步完成后出现。
+  useEffect(() => {
+    let cancelled = false
+    const reload = () => {
+      loadAllRecords()
+        .then((r) => {
+          if (!cancelled) setRecords(r)
+        })
+        .catch(() => {
+          // 忽略：后续同步完成仍会再次触发
+        })
+    }
+    const onSynced = () => reload()
+    window.addEventListener('onenav:rs-synced', onSynced)
+    return () => {
+      cancelled = true
+      window.removeEventListener('onenav:rs-synced', onSynced)
+    }
+  }, [])
+
   // 统一时间线筛选：全部 / 流水 / 订单 / 报价
   const [viewFilter, setViewFilter] = useState<'all' | 'tx' | 'order' | 'price'>('all')
   // 添加区模式：记流水 / 记价格

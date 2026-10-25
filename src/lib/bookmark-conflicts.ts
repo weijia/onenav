@@ -49,7 +49,12 @@ export function resolveOneNavSyncConflict(localDoc: any, remoteDoc: any, context
   if (!isBookmarkDoc(localDoc) || !isBookmarkDoc(remoteDoc)) {
     if (context?.reason === 'remote-newer') return { action: 'use-remote', reason: 'remote revision is newer' }
     if (context?.reason === 'local-newer') return { action: 'use-local', reason: 'local revision is newer' }
-    return { action: 'keep-conflict', reason: 'non-bookmark conflict' }
+    // 其余（conflict / unknown / 同代）对非书签文档一律确定性解决，绝不 keep-conflict。
+    // 背景：keep-conflict 会把冲突双方的完整内容写进一个大的 sync_conflict 文档（约 11KB），
+    // 而 sync_conflict 文档本身又是「非书签文档」，再次冲突会再次 keep-conflict → 正反馈雪崩。
+    // 2026-10-16 即因此一次同步生成上万冲突文档、数百 MB，导致 onenav 目录异常膨胀、同步极慢、
+    // 记账页首拉取超时后读到空库（「能存不能读」）。这里改为确定性选择远端，阻断该风暴。
+    return { action: 'use-remote', reason: 'non-bookmark conflict resolved deterministically (prefer remote)' }
   }
 
   const localTime = getBookmarkUpdatedAt(localDoc)
