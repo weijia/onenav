@@ -7,7 +7,7 @@
 import { RemoteStorageFileSystem, type RemoteStorageConfig } from './remotestorage-fs'
 import { resolveOneNavSyncConflict } from './bookmark-conflicts'
 import { showSyncToast, type SyncToast } from './sync-notify'
-import { getStorageCredentials } from './remotestorage-connection'
+import { getStorageCredentials, getSavedStorageCredentials, getRemoteStorage } from './remotestorage-connection'
 
 let SyncEngine: any = null
 
@@ -177,7 +177,11 @@ export async function createSyncEngine(
 }
 
 export function isRemoteStorageConfigured(): boolean {
-  return isConfigured
+  // 「已配置」= 本地存在可恢复的 RemoteStorage 凭据（持久化于 localStorage，跨页面共享）。
+  // 之前依赖模块变量 isConfigured（仅在本会话手动触发过同步才为 true），
+  // 导致独立页面（bookkeeping/golf/hostmonitor）永远判定为未配置而跳过自动 push。
+  // 改用凭据判据后，「是否已配置」跨页面一致，独立页面保存数据后也能自动同步。
+  return getStorageCredentials() !== null || getSavedStorageCredentials() !== null
 }
 
 export function isSyncing(): boolean {
@@ -191,19 +195,65 @@ export function resetRemoteStorageConfig(): void {
 }
 
 /**
- * 保存数据后的「自动同步」：若已配置 RemoteStorage，则 debounce 后自动 push 一次。
- * 这样本地书签/配置保存后会自动上传到服务器（无需手动点同步）。
- * 使用 debounce 合并短时间内多次保存（例如批量导入书签），避免频繁触发同步。
+ * 等待 RemoteStorage 连接就绪并返回 { href, token }。
+ *
+ * 为什么需要它：
+ * 独立页面（bookkeeping/golf/hostmonitor）打开时，remotestoragejs 会从 localStorage
+ * 异步恢复连接；此刻直接读 getStorageCredentials() 往往还是 null（连接尚未完成），
+ * 导致自动 push 被漏掉。本函数保证在「已配置但连接恢复中」的情况下也能等到凭据。
+ *
+ * 三种情况：
+ *  1. 已连接 → 立即返回凭据；
+ *  2. 本地无保存凭据（从未配置过） → 立即返回 null，不空等；
+ *  3. 有保存凭据但连接尚在恢复 → 监听 connected 事件，最多等 8s，超时/失败返回 null。
  */
+async function ensureStorageReady(): Promise<{ href: string; token: string } | null> {
+  const connected = getStorageCredentials()
+  if (connected) return connected
+
+  const saved = getSavedStorageCredentials()
+  if (!saved) return null
+
+  const rs = getRemoteStorage()
+  if (rs.connected) return getStorageCredentials()
+
+  return new Promise((resolve) => {
+    let settled = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const finish = (c: { href: string; token: string } | null) => {
+      if (settled) return
+      settled = true
+      if (timer) clearTimeout(timer)
+      try { (rs as any).off('connected', onConnected) } catch { /* noop */ }
+      try { (rs as any).off('error', onError) } catch { /* noop */ }
+      resolve(c)
+    }
+    const onConnected = () => finish(getStorageCredentials())
+    const onError = () => finish(null)
+    timer = setTimeout(() => finish(null), 8000)
+    rs.on('connected', onConnected)
+    rs.on('error', onError)
+  })
+}
+
 let autoSyncTimer: ReturnType<typeof setTimeout> | null = null
+/**
+ * 保存数据后的「自动同步」：若已配置 RemoteStorage，则 debounce 后自动 push 一次。
+ * 这样本地书签/配置/记账/高尔夫等保存后会自动上传到服务器（无需手动点同步）。
+ * 使用 debounce 合并短时间内多次保存（例如批量导入书签），避免频繁触发同步。
+ * 通过 ensureStorageReady 等待连接恢复，使独立页面（bookkeeping/golf/hostmonitor）
+ * 也能在连接异步恢复完成后自动 push。
+ */
 export async function scheduleAutoSync(db: PouchDB.Database, delay = 1500): Promise<void> {
-  if (!isConfigured) return
   if (autoSyncTimer) clearTimeout(autoSyncTimer)
   autoSyncTimer = setTimeout(async () => {
     autoSyncTimer = null
     try {
-      const creds = getStorageCredentials()
-      if (!creds) return
+      const creds = await ensureStorageReady()
+      if (!creds) {
+        console.log('[RS Sync] 自动同步跳过：RemoteStorage 未连接或不可用')
+        return
+      }
       console.log('[RS Sync] 自动同步（保存后 push）…')
       await syncToRemoteStorage(db, creds, { showToast: true })
     } catch (err) {
