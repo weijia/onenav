@@ -7,7 +7,7 @@
 import { RemoteStorageFileSystem, type RemoteStorageConfig } from './remotestorage-fs'
 import { resolveOneNavSyncConflict } from './bookmark-conflicts'
 import { showSyncToast, type SyncToast } from './sync-notify'
-import { getStorageCredentials, getSavedStorageCredentials, getRemoteStorage } from './remotestorage-connection'
+import { getStorageCredentials, getSavedStorageCredentials, getLibraryStorageCredentials, getRemoteStorage } from './remotestorage-connection'
 
 let SyncEngine: any = null
 
@@ -204,18 +204,26 @@ export function resetRemoteStorageConfig(): void {
  *
  * 三种情况：
  *  1. 已连接 → 立即返回凭据；
- *  2. 本地无保存凭据（从未配置过） → 立即返回 null，不空等；
- *  3. 有保存凭据但连接尚在恢复 → 监听 connected 事件，最多等 8s，超时/失败返回 null。
+ *  2. 本地完全没有任何凭据（从未配置过） → 立即返回 null，不空等；
+ *  3. 有凭据但连接尚在恢复 → 监听 connected 事件，最多等 8s，超时/失败返回 null。
+ *     其中凭据可能只存在 remotestoragejs 自己的 `remotestorage:wireclient`，
+ *     它由库在实例创建后用 setTimeout(0) 异步恢复，因此这种情况最多等 2s。
+ *
+ * 已导出，供 app-host-sync 的 bootstrap 引导复用：先建立实例再等连接就绪，
+ * 覆盖「remotestorage:wireclient 有数据但 onenav:rs-credentials 缺失」的场景。
  */
-async function ensureStorageReady(): Promise<{ href: string; token: string } | null> {
+export async function ensureStorageReady(): Promise<{ href: string; token: string } | null> {
   const connected = getStorageCredentials()
   if (connected) return connected
 
-  const saved = getSavedStorageCredentials()
-  if (!saved) return null
-
+  // 先建立实例，触发 wireclient 的异步恢复（若有库内凭据）
   const rs = getRemoteStorage()
   if (rs.connected) return getStorageCredentials()
+
+  const saved = getSavedStorageCredentials()
+  const library = getLibraryStorageCredentials()
+  // 应用级与库级都没有凭据 → 确实未配置，立即返回（不拖慢本地模式）
+  if (!saved && !library) return null
 
   return new Promise((resolve) => {
     let settled = false
@@ -230,7 +238,8 @@ async function ensureStorageReady(): Promise<{ href: string; token: string } | n
     }
     const onConnected = () => finish(getStorageCredentials())
     const onError = () => finish(null)
-    timer = setTimeout(() => finish(null), 8000)
+    // 库内凭据只需等一个事件循环；应用级凭据的 connect() 会走 WebFinger 发现，给足 8s
+    timer = setTimeout(() => finish(null), saved ? 8000 : 2000)
     rs.on('connected', onConnected)
     rs.on('error', onError)
   })

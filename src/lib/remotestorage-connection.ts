@@ -81,6 +81,27 @@ export function getSavedStorageCredentials(): { userAddress: string; href: strin
   return loadCredentials()
 }
 
+/**
+ * 读取 remotestoragejs 库自身持久化的连接配置（localStorage key: `remotestorage:wireclient`）。
+ *
+ * 老用户（或从主页面授权后直接跳转应用页）的凭据可能只存在这个 key 里，
+ * 而 `onenav:rs-credentials` 尚未写入。wireclient 会在实例创建后用 setTimeout(0)
+ * 异步恢复连接，因此启动引导需要知道「库里有凭据」，才能多等一个事件循环再判定。
+ */
+export function getLibraryStorageCredentials(): { userAddress: string; href: string; token: string } | null {
+  try {
+    const raw = localStorage.getItem('remotestorage:wireclient')
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Partial<{ userAddress: string; href: string; token: string }>
+    if (parsed?.userAddress && parsed.href && parsed.token) {
+      return { userAddress: parsed.userAddress, href: parsed.href, token: parsed.token }
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
 function clearCredentials(): void {
   try {
     localStorage.removeItem(RS_CREDENTIALS_KEY)
@@ -154,7 +175,11 @@ export function getRemoteStorage(): RemoteStorage {
     // 这里无论创建实例时是否已存有凭据，只要 RS 连接成功就保存，确保任意页面都能读到凭据。
     rsInstance.on('connected', () => {
       const remote = rsInstance!.remote as any
-      const ua = (rsInstance as any).userAddress || saved?.userAddress
+      // userAddress 存在于 wireclient（rs.remote）上，而非 rs 实例本身。
+      // 之前误写为 (rsInstance as any).userAddress（恒为 undefined），
+      // 导致 saveCredentials 的条件 `ua` 为假、onenav:rs-credentials 永不写入，
+      // 独立应用页 getSavedStorageCredentials() 恒为 null → 本地模式、零同步。
+      const ua = remote?.userAddress || saved?.userAddress
       if (remote?.href && remote?.token && ua) {
         saveCredentials(ua, remote.href, remote.token)
       }
@@ -173,6 +198,10 @@ export function getRemoteStorage(): RemoteStorage {
     // 尝试自动恢复连接
     if (saved) {
       console.log('[RS Connection] 发现保存的凭证，尝试恢复连接:', saved.userAddress)
+      // 必须在 connect 之前声明访问权限，否则 OAuth scope 不会被记录。
+      // 虽然同步链路用 RemoteStorageFileSystem 直连（不依赖库内部 access），
+      // 但补齐 claim 可避免 _rememberAuthorizedScope 收到空 scope 而误清已授权记录。
+      claimDefaultAccess()
       // remotestoragejs 会从自己的 localStorage 恢复 connected 状态
       if (!rsInstance.connected) {
         rsInstance.connect(saved.userAddress, saved.token)
@@ -195,7 +224,7 @@ export function onStatusChange(callback: StatusChangeCallback): () => void {
     const remote = rs.remote as any
     callback({
       status: 'connected',
-      userAddress: (rs as any).userAddress,
+      userAddress: remote?.userAddress,
       storageHref: remote?.href,
       token: remote?.token,
     })
@@ -249,13 +278,16 @@ export function connectWithUserAddress(userAddress: string): void {
 
   rs.on('connected', () => {
     const remote = rs.remote as any
-    // 保存凭证以便页面刷新后自动恢复
-    if (remote?.href && remote?.token && (rs as any).userAddress) {
-      saveCredentials((rs as any).userAddress, remote.href, remote.token)
+    // 保存凭证以便页面刷新后自动恢复。
+    // 注意：userAddress 在 wireclient（rs.remote）上，(rs as any).userAddress 恒为 undefined。
+    // 优先用 remote.userAddress（连接后由库写入），兜底用入参 userAddress。
+    const ua = remote?.userAddress || userAddress
+    if (remote?.href && remote?.token && ua) {
+      saveCredentials(ua, remote.href, remote.token)
     }
     notifyListeners({
       status: 'connected',
-      userAddress: (rs as any).userAddress,
+      userAddress: ua,
       storageHref: remote?.href,
       token: remote?.token,
     })
@@ -288,7 +320,7 @@ export function connectWithToken(userAddress: string, token: string): void {
     }
     notifyListeners({
       status: 'connected',
-      userAddress: (rs as any).userAddress,
+      userAddress: remote?.userAddress || userAddress,
       storageHref: remote?.href,
       token: remote?.token,
     })
@@ -344,7 +376,7 @@ export function getConnectionInfo(): RSConnectionInfo {
     const remote = rs.remote as any
     return {
       status: 'connected',
-      userAddress: (rs as any).userAddress,
+      userAddress: remote?.userAddress,
       storageHref: remote?.href,
       token: remote?.token,
     }
