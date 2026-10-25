@@ -61,9 +61,9 @@ const PRICE_TYPES: Record<PriceKind, PriceTypeMeta> = {
     getTitle: (r) => (r.kind === 'item' ? r.product : ''),
     getSubtitle: (r) =>
       r.kind === 'item'
-        ? r.quantity && r.quantity > 0
-          ? `单价 ¥${r.unitPrice}/${r.unit || '—'} × ${r.quantity} · 总价 ¥${priceTotalOf(r)}`
-          : `单价 ¥${r.unitPrice}/${r.unit || '—'} · 总价 ¥${priceTotalOf(r)}`
+        ? (r.quantity && r.quantity > 0
+            ? `单价 ¥${r.unitPrice}/${r.unit || '—'} × ${r.quantity} · 总价 ¥${priceTotalOf(r)}`
+            : `单价 ¥${r.unitPrice}/${r.unit || '—'} · 总价 ¥${priceTotalOf(r)}`) + (r.note ? ` · ${r.note}` : '')
         : '',
   },
   combo: {
@@ -71,7 +71,8 @@ const PRICE_TYPES: Record<PriceKind, PriceTypeMeta> = {
     icon: Package,
     getPrice: (r) => (r.kind === 'combo' ? r.unitPrice : 0),
     getTitle: (r) => (r.kind === 'combo' ? r.name : ''),
-    getSubtitle: (r) => (r.kind === 'combo' ? `套餐价 ¥${r.unitPrice} · 含 ${r.items.length} 项` : ''),
+    getSubtitle: (r) =>
+      r.kind === 'combo' ? `套餐价 ¥${r.unitPrice} · 含 ${r.items.length} 项` + (r.note ? ` · ${r.note}` : '') : '',
     detail: (r) =>
       r.kind === 'combo' ? (
         <div className="mt-1 space-y-0.5">
@@ -97,7 +98,7 @@ const PRICE_TYPES: Record<PriceKind, PriceTypeMeta> = {
     getTitle: (r) => (r.kind === 'voucher' ? r.name : ''),
     getSubtitle: (r) =>
       r.kind === 'voucher'
-        ? `花 ¥${r.cost} 得 ¥${r.faceValue}（约 ${(r.cost / r.faceValue * 10).toFixed(1)} 折）`
+        ? `花 ¥${r.cost} 得 ¥${r.faceValue}（约 ${(r.cost / r.faceValue * 10).toFixed(1)} 折）` + (r.note ? ` · ${r.note}` : '')
         : '',
   },
 }
@@ -353,11 +354,13 @@ function normalizePriceRow(raw: unknown, fallbackDate: string): PriceRecord | nu
   if (kind !== 'item' && kind !== 'combo' && kind !== 'voucher') return null
   const date = typeof r.date === 'string' && DATE_RE.test(r.date) ? r.date : fallbackDate
   const source = typeof r.source === 'string' ? r.source.trim() : ''
+  const note = typeof r.note === 'string' ? r.note.trim() : ''
   const base = {
     id: randId(),
     type: 'price' as const,
     date,
     source: source || undefined,
+    note: note || undefined,
     createdAt: typeof r.createdAt === 'number' ? r.createdAt : Date.now(),
   }
   if (kind === 'item') {
@@ -386,12 +389,12 @@ function normalizePriceRow(raw: unknown, fallbackDate: string): PriceRecord | nu
 
 function toPriceExportShape(r: PriceRecord) {
   if (r.kind === 'item') {
-    return { kind: 'item', date: r.date, product: r.product, unit: r.unit || null, unitPrice: r.unitPrice, quantity: r.quantity ?? null, source: r.source ?? null }
+    return { kind: 'item', date: r.date, product: r.product, unit: r.unit || null, unitPrice: r.unitPrice, quantity: r.quantity ?? null, note: r.note ?? null, source: r.source ?? null }
   }
   if (r.kind === 'combo') {
-    return { kind: 'combo', date: r.date, name: r.name, unitPrice: r.unitPrice, items: r.items, source: r.source ?? null }
+    return { kind: 'combo', date: r.date, name: r.name, unitPrice: r.unitPrice, items: r.items, note: r.note ?? null, source: r.source ?? null }
   }
-  return { kind: 'voucher', date: r.date, name: r.name, cost: r.cost, faceValue: r.faceValue, source: r.source ?? null }
+  return { kind: 'voucher', date: r.date, name: r.name, cost: r.cost, faceValue: r.faceValue, note: r.note ?? null, source: r.source ?? null }
 }
 
 // ───────────────────────────────────────────────────────────
@@ -520,11 +523,11 @@ const AI_PROMPT_TEMPLATE = `你是一个智能记账助手。请理解以下内�
 
 【B. 价格记录（报价/单价/套餐/代金券）】
 特征：描述"X 多少钱一斤"、套餐价格、代金券面值等，用 kind 字段区分
-- kind:"item" 单品：product、unit、unitPrice、quantity(数量，可选，用于显示整体价=单价×数量)、date
+- kind:"item" 单品：product、unit、unitPrice、quantity(数量，可选，用于显示整体价=单价×数量)、note(备注，可选)、date
   · unit 建议用细分单位（粒/斤/克/个）便于跨记录比价，避免用箱/盒/袋/包等整件单位
   · 描述含数量时给出 quantity（如 3 斤、5 盒），以便显示整体价
-- kind:"combo" 套餐：name、unitPrice、items[] (product/unit/quantity)、date
-- kind:"voucher" 代金券：name、cost(实付)、faceValue(面值)、date
+- kind:"combo" 套餐：name、unitPrice、items[] (product/unit/quantity)、note(备注，可选)、date
+- kind:"voucher" 代金券：name、cost(实付)、faceValue(面值)、note(备注，可选)、date
 
 【C. 电商订单（京东/淘宝统一 schema）】
 特征：来自 all_orders_unified.json，有 platform(京东=jd/淘宝=taobao) 和 order_id
@@ -545,7 +548,7 @@ const AI_PROMPT_TEMPLATE = `你是一个智能记账助手。请理解以下内�
 /** JSON 格式说明 */
 const FORMAT_NOTE = `系统自动识别每条记录是 记账 / 价格 / 订单，支持混合数组：
 - 含 order_id（或 platform + total_amount）→ 电商订单：每笔真实订单解析为一条 type:"order" 记录（在统一时间线中显示为流水/订单，按金额计入支出）；其商品中「有单价」的条目（主要淘宝，已过滤 0.01 红包占位）同时写入「报价」记录（完全不去重，同名商品在不同日期/来源的记录各自保留）
-- 含 kind(item/combo/voucher) → 价格记录（item 支持 quantity：显示「单价 × 数量 = 整体价」；unit 建议用粒/斤/克/个等细分单位便于比价，避免箱/盒/袋等整件单位）
+- 含 kind(item/combo/voucher) → 价格记录（item 支持 quantity：显示「单价 × 数量 = 整体价」；支持 note 备注；unit 建议用粒/斤/克/个等细分单位便于比价，避免箱/盒/袋等整件单位）
 - 含 type + category + amount → 记账记录
 解析失败的行会跳过，Toast 会告诉你跳过了几条。导出的 JSON 可直接当模板交给 AI 生成。`
 
@@ -748,6 +751,7 @@ export default function BookkeepingApp() {
   const [pUnit, setPUnit] = useState('')
   const [pCost, setPCost] = useState('') // 代金券实付
   const [pFace, setPFace] = useState('') // 代金券面值
+  const [pNote, setPNote] = useState('') // 价格记录备注（可选）
   const [comboItems, setComboItems] = useState<ComboItem[]>([])
 
   // ── 汇总（仅交易） ──
@@ -843,6 +847,7 @@ export default function BookkeepingApp() {
     const createdAt = Date.now()
     const source = pSource.trim() || undefined
     let rec: PriceRecord | null = null
+    const note = pNote.trim() || undefined
     if (priceKind === 'item') {
       const up = toNumber(pUnitPrice)
       if (!pName.trim() || !up) return
@@ -856,6 +861,7 @@ export default function BookkeepingApp() {
         quantity: toNumber(pQuantity) || undefined,
         date: pDate,
         source,
+        note,
         createdAt,
       }
     } else if (priceKind === 'combo') {
@@ -869,6 +875,7 @@ export default function BookkeepingApp() {
         unitPrice: up,
         date: pDate,
         source,
+        note,
         createdAt,
         items: comboItems.filter((i) => i.product.trim()),
       }
@@ -876,7 +883,7 @@ export default function BookkeepingApp() {
       const cost = toNumber(pCost)
       const face = toNumber(pFace)
       if (!pName.trim() || !cost || !face) return
-      rec = { type: 'price', kind: 'voucher', id, name: pName.trim(), cost, faceValue: face, date: pDate, source, createdAt }
+      rec = { type: 'price', kind: 'voucher', id, name: pName.trim(), cost, faceValue: face, date: pDate, source, note, createdAt }
     }
     if (!rec) return
     setRecords((prev) => [rec, ...prev])
@@ -888,6 +895,7 @@ export default function BookkeepingApp() {
     setPUnit('')
     setPDate(today())
     setPSource('')
+    setPNote('')
     setPCost('')
     setPFace('')
     setComboItems([])
@@ -1377,6 +1385,13 @@ export default function BookkeepingApp() {
               placeholder="来源（可选，如 超市/电商）"
               value={pSource}
               onChange={(e) => setPSource(e.target.value)}
+              className="w-full h-9 rounded-lg bg-white/10 border border-white/20 text-white text-sm px-3 outline-none focus:border-white/40"
+            />
+
+            <input
+              placeholder="备注（可选，如 药店买的/活动价）"
+              value={pNote}
+              onChange={(e) => setPNote(e.target.value)}
               className="w-full h-9 rounded-lg bg-white/10 border border-white/20 text-white text-sm px-3 outline-none focus:border-white/40"
             />
 

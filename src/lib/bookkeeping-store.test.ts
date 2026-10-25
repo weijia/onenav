@@ -217,4 +217,35 @@ describe('记账 loadAllRecords 读取路径', () => {
     const all = await loadAllRecords()
     expect(all).toEqual([])
   })
+
+  it('B-4 价格记录带 note：写入 PouchDB 后再读取，note 完整保留', async () => {
+    h.configured = false
+    h.wdav = null
+    const withNote: PriceRecord = {
+      type: 'price',
+      kind: 'item',
+      id: 'p-note',
+      product: '维生素AD',
+      unit: '粒',
+      unitPrice: 0.82,
+      note: '药店买的，活动价',
+      date: '2026-08-20',
+      createdAt: 2,
+    }
+    await putRecords([withNote])
+    // 落库的 PouchDB 文档带 note
+    const stored = await h.db.get('bk:price:p-note')
+    expect(stored.note).toBe('药店买的，活动价')
+    // 读回后 note 仍然在
+    const all = await loadAllRecords()
+    const back = all.find((r) => r.id === 'p-note' && r.type === 'price') as PriceRecord | undefined
+    expect(back).toBeDefined()
+    if (back) {
+      expect(back.kind).toBe('item')
+      if (back.kind === 'item') {
+        expect(back.note).toBe('药店买的，活动价')
+        expect(back.unitPrice).toBe(0.82)
+      }
+    }
+  })
 })

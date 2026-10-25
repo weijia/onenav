@@ -63,8 +63,8 @@ export interface TxRecord extends BaseRecord {
   payment?: string
 }
 
-/** 价格记录公共部分：type + 可选时间（HH:MM:SS，订单导入时从 order_time 保留完整时间） */
-type PriceBase = BaseRecord & { type: 'price'; time?: string }
+/** 价格记录公共部分：type + 可选时间（HH:MM:SS，订单导入时从 order_time 保留完整时间）+ 可选备注 */
+type PriceBase = BaseRecord & { type: 'price'; time?: string; note?: string }
 
 /** 价格（单品 / 套餐 / 代金券） */
 export type PriceRecord =
