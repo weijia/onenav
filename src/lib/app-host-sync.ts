@@ -25,14 +25,20 @@ import { getPouchDB } from '@/lib/pouchdb'
 
 export async function bootstrapAppRemoteStorage(): Promise<boolean> {
   const saved = getSavedStorageCredentials()
-  if (!saved) return true // 无凭据：应用按本地/WebDAV 模式工作
+  console.log('[app-host-sync] 启动引导；已保存的 RemoteStorage 凭据:', saved ? saved.userAddress : '无')
+  if (!saved) {
+    console.log('[app-host-sync] 无 RemoteStorage 凭据 → 本地模式，不发起同步（如需同步请先在设置页连接 RemoteStorage）')
+    return true // 无凭据：应用按本地/WebDAV 模式工作
+  }
 
   try {
     // 建立 remotestoragejs 实例连接（供后续 scheduleAutoSync 的 getStorageCredentials() 使用）
     getRemoteStorage()
     // 初始双向同步：置 isConfigured=true + pull + push
     const db = await getPouchDB()
+    console.log('[app-host-sync] 开始初始双向同步（pull + push）…')
     await syncToRemoteStorage(db, { href: saved.href, token: saved.token }, { showToast: false })
+    console.log('[app-host-sync] 初始同步完成')
     return true
   } catch (e) {
     console.error('[app-host-sync] RemoteStorage 初始同步失败（已忽略，继续本地模式）:', e)

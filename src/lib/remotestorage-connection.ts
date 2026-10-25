@@ -143,31 +143,38 @@ export function clearRemoteStorageLogin(): void {
 export function getRemoteStorage(): RemoteStorage {
   if (!rsInstance) {
     rsInstance = new RemoteStorage({ logging: false, cache: true })
-    
-    // 尝试自动恢复连接
+
     const saved = loadCredentials()
+
+    // 统一在「连接成功」时持久化应用级凭据（onenav:rs-credentials）。
+    // 关键修复：之前只有 connectWithUserAddress/connectWithToken 的 connected 回调会保存凭据，
+    // 而 OAuthCallback 可能在 connected 前就跳转主页、或 RS 自动重连不经过这两个函数，
+    // 导致 onenav:rs-credentials 缺失 → 独立应用页 getSavedStorageCredentials() 恒为 null →
+    // bootstrapAppRemoteStorage 直接 return（本地模式），写后同步永不发起。
+    // 这里无论创建实例时是否已存有凭据，只要 RS 连接成功就保存，确保任意页面都能读到凭据。
+    rsInstance.on('connected', () => {
+      const remote = rsInstance!.remote as any
+      const ua = (rsInstance as any).userAddress || saved?.userAddress
+      if (remote?.href && remote?.token && ua) {
+        saveCredentials(ua, remote.href, remote.token)
+      }
+      notifyListeners({
+        status: 'connected',
+        userAddress: ua,
+        storageHref: remote?.href,
+        token: remote?.token,
+      })
+    })
+    rsInstance.on('error', (err: any) => {
+      console.error('[RS Connection] 连接失败:', err)
+      if (isRemoteStorageAuthError(err)) clearRemoteStorageLogin()
+    })
+
+    // 尝试自动恢复连接
     if (saved) {
       console.log('[RS Connection] 发现保存的凭证，尝试恢复连接:', saved.userAddress)
       // remotestoragejs 会从自己的 localStorage 恢复 connected 状态
-      // 如果已经 connected，不需要额外操作
       if (!rsInstance.connected) {
-        // 使用 connectWithToken 恢复
-        rsInstance.on('connected', () => {
-          console.log('[RS Connection] 连接恢复成功')
-          notifyListeners({
-            status: 'connected',
-            userAddress: saved.userAddress,
-            storageHref: saved.href,
-            token: saved.token,
-          })
-          void triggerAutoSyncAfterConnect()
-        })
-        rsInstance.on('error', (err: any) => {
-          console.error('[RS Connection] 连接恢复失败:', err)
-          if (isRemoteStorageAuthError(err)) {
-            clearRemoteStorageLogin()
-          }
-        })
         rsInstance.connect(saved.userAddress, saved.token)
       } else {
         console.log('[RS Connection] remotestoragejs 已自动恢复连接')
