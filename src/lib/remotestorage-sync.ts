@@ -98,6 +98,61 @@ export async function configureRemoteStorage(config: RemoteStorageConnectionConf
 }
 
 /**
+ * 为同步引擎包装 PouchDB 的 allDocs。
+ *
+ * universal-sync-v2 的 filterPushDiff 直接调用 `doc._id.startsWith(...)`，
+ * 只要库里存在一个缺少字符串 _id 的 doc（历史脏数据 / PouchDB 偶发不一致），
+ * 整次同步就会抛 `TypeError: Cannot read properties of undefined (reading 'startsWith')` 中断，
+ * 表现为「独立应用页永远同步失败」。
+ *
+ * 处理策略：
+ *  1. 正常 row 原样返回；
+ *  2. 缺 _id 的 row 用 row.id 重新 get 一次，能取回完整文档就替换（不丢用户记录）；
+ *  3. 仍取不回才跳过，并打印 row.id 便于定位脏数据。
+ *
+ * 用 Proxy 只拦截 allDocs，其余方法与属性（get/put/bulkDocs/info 等，
+ * LocalCache 还会用 get/put 写缓存文档）全部原样转发给真实 db。
+ */
+export function createSyncSafeDb(db: PouchDB.Database): PouchDB.Database {
+  const guardedAllDocs = async (opts: any = {}) => {
+    const res: any = await db.allDocs(opts)
+    if (!opts?.include_docs || !Array.isArray(res?.rows)) return res
+
+    const rows: any[] = []
+    let repaired = 0
+    for (const row of res.rows) {
+      const doc = row?.doc
+      if (!doc || typeof doc._id === 'string') {
+        rows.push(row)
+        continue
+      }
+      // include_docs 返回的 doc 缺 _id：用 row.id 重新读取一次
+      const real = await db.get(row.id, { revs: true } as any).catch(() => null)
+      if (real && typeof (real as any)._id === 'string') {
+        rows.push({ ...row, doc: real })
+        repaired++
+      } else {
+        console.warn('[RS Sync] 跳过缺少 _id 的异常文档:', row.id, Object.keys(doc))
+      }
+    }
+    if (repaired > 0) {
+      console.warn(`[RS Sync] 修复 ${repaired} 个 allDocs 返回的异常文档（缺 _id，已用 row.id 重新读取）`)
+    }
+    res.rows = rows
+    return res
+  }
+
+  // 用 Proxy 只拦截 allDocs，其余方法/属性全部转发到真实 db（LocalCache 还会用 get/put）
+  return new Proxy(db, {
+    get(target, prop) {
+      if (prop === 'allDocs') return guardedAllDocs
+      const value = Reflect.get(target, prop, target)
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  }) as PouchDB.Database
+}
+
+/**
  * 将 PouchDB 同步到 RemoteStorage
  */
 export async function syncToRemoteStorage(
@@ -123,7 +178,7 @@ export async function syncToRemoteStorage(
     const toast = options.showToast === false ? null : showSyncToast('准备同步…')
     const onProgress = toast ? bindProgressToast(toast, options.onProgress) : options.onProgress
 
-    const engine = new Engine(db, currentFs as any, {
+    const engine = new Engine(createSyncSafeDb(db), currentFs as any, {
       basePath: '/onenav',
       maxFileSize: options.maxFileSize ?? 500 * 1024,
       mergeThreshold: options.mergeThreshold ?? 50 * 1024,
@@ -163,7 +218,7 @@ export async function createSyncEngine(
   const toast = options.showToast === false ? null : showSyncToast('准备同步…')
   const onProgress = toast ? bindProgressToast(toast, options.onProgress) : options.onProgress
 
-  const engine = new Engine(db, currentFs as any, {
+  const engine = new Engine(createSyncSafeDb(db), currentFs as any, {
     basePath: '/onenav',
     maxFileSize: options.maxFileSize ?? 500 * 1024,
     mergeThreshold: options.mergeThreshold ?? 50 * 1024,
