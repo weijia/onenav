@@ -14,6 +14,7 @@ import {
   Plus,
   Copy,
   Check,
+  Pencil,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import {
@@ -29,9 +30,11 @@ import {
   putRecords,
   removeRecord,
   removeRecords,
+  updateRecord,
   priceTotalOf,
 } from '@/lib/bookkeeping-store'
 import { mergePrices } from '@/lib/bookkeeping-price'
+import SyncStatusChip from '@/components/apps/SyncStatusChip'
 
 // 单据类型（TxRecord / PriceRecord / OrderRecord / BookkeepingRecord）与存储函数
 // 统一 type 模型 + 每条记录一个独立 PouchDB 文档，见 src/lib/bookkeeping-store.ts 与 docs/bookkeeping-data-model.md
@@ -587,7 +590,7 @@ function recordToExport(r: BookkeepingRecord): Record<string, unknown> {
   return r.type === 'price' ? toPriceExportShape(r) : toExportShape(r as TxRecord | OrderRecord)
 }
 
-function RecordRow({ r, onDelete }: { r: BookkeepingRecord; onDelete: (id: string) => void }) {
+function RecordRow({ r, onDelete, onEdit }: { r: BookkeepingRecord; onDelete: (id: string) => void; onEdit: (r: BookkeepingRecord) => void }) {
   if (r.type === 'price') {
     const m = PRICE_TYPES[r.kind]
     return (
@@ -607,6 +610,13 @@ function RecordRow({ r, onDelete }: { r: BookkeepingRecord; onDelete: (id: strin
         <div className="text-sm font-medium text-white/70">
           {r.kind === 'voucher' ? `¥${r.cost}` : `¥${m?.getPrice(r)}`}
         </div>
+        <button
+          onClick={() => onEdit(r)}
+          className="w-7 h-7 rounded-lg flex items-center justify-center text-white/30 hover:text-sky-300 hover:bg-sky-500/10 transition-colors"
+          title="编辑"
+        >
+          <Pencil className="w-4 h-4" />
+        </button>
         <button
           onClick={() => onDelete(r.id)}
           className="w-7 h-7 rounded-lg flex items-center justify-center text-white/30 hover:text-red-300 hover:bg-red-500/10 transition-colors"
@@ -650,12 +660,328 @@ function RecordRow({ r, onDelete }: { r: BookkeepingRecord; onDelete: (id: strin
         {r.amount.toFixed(2)}
       </div>
       <button
+        onClick={() => onEdit(r)}
+        className="w-7 h-7 rounded-lg flex items-center justify-center text-white/30 hover:text-sky-300 hover:bg-sky-500/10 transition-colors"
+        title="编辑"
+      >
+        <Pencil className="w-4 h-4" />
+      </button>
+      <button
         onClick={() => onDelete(r.id)}
         className="w-7 h-7 rounded-lg flex items-center justify-center text-white/30 hover:text-red-300 hover:bg-red-500/10 transition-colors"
         title="删除"
       >
         <Trash2 className="w-4 h-4" />
       </button>
+    </div>
+  )
+}
+
+/**
+ * 编辑已有记录的弹窗：按 type / kind 渲染对应字段，保存时回传更新后的完整记录。
+ * 复用与新增表单一致的样式；本地 state 以 record 初始化（弹窗以 record.id 作 key，
+ * 每次打开都重新挂载，天然重置表单）。
+ */
+function RecordEditModal({
+  record,
+  onClose,
+  onSave,
+  notify,
+}: {
+  record: BookkeepingRecord
+  onClose: () => void
+  onSave: (r: BookkeepingRecord) => void
+  notify?: (text: string, kind: 'ok' | 'err') => void
+}) {
+  const isPrice = record.type === 'price'
+  const priceName = isPrice ? (record.kind === 'combo' || record.kind === 'voucher' ? record.name : record.product) : ''
+  const [name, setName] = useState(priceName)
+  const [date, setDate] = useState(record.date)
+  const [note, setNote] = useState(record.note ?? '')
+  const [source, setSource] = useState(isPrice && 'source' in record && record.source ? record.source : '')
+  const [unitPrice, setUnitPrice] = useState(
+    isPrice ? String((record as Extract<PriceRecord, { kind: 'item' | 'combo' }>).unitPrice ?? '') : '',
+  )
+  const [quantity, setQuantity] = useState(
+    isPrice && record.kind === 'item' && record.quantity != null ? String(record.quantity) : '',
+  )
+  const [unit, setUnit] = useState(isPrice && record.kind === 'item' ? record.unit ?? '' : '')
+  const [cost, setCost] = useState(isPrice && record.kind === 'voucher' ? String(record.cost) : '')
+  const [face, setFace] = useState(isPrice && record.kind === 'voucher' ? String(record.faceValue) : '')
+  const [comboItems, setComboItems] = useState<ComboItem[]>(
+    isPrice && record.kind === 'combo' ? record.items : [],
+  )
+
+  const [direction, setDirection] = useState<'income' | 'expense'>(
+    record.type === 'tx' ? record.direction : 'expense',
+  )
+  const [amount, setAmount] = useState(record.type !== 'price' ? String(record.amount) : '')
+  const [category, setCategory] = useState(
+    record.type === 'tx'
+      ? record.category
+      : record.type === 'order'
+      ? record.category ?? ''
+      : '',
+  )
+  const [product, setProduct] = useState(
+    record.type !== 'price' && 'product' in record && record.product ? record.product : '',
+  )
+
+  const inputCls =
+    'h-9 rounded-lg bg-white/10 border border-white/20 text-white text-sm px-3 outline-none focus:border-white/40'
+  const labelCls = 'text-xs text-white/50 mb-1 block'
+
+  const buildUpdated = (): BookkeepingRecord | null => {
+    if (record.type === 'price') {
+      const base = {
+        id: record.id,
+        type: 'price' as const,
+        date,
+        createdAt: record.createdAt,
+        source: source.trim() || undefined,
+        note: note.trim() || undefined,
+        time: 'time' in record ? (record as { time?: string }).time : undefined,
+      }
+      if (record.kind === 'item') {
+        const up = Number(unitPrice)
+        if (!name.trim() || !up) return null
+        return {
+          ...base,
+          kind: 'item',
+          product: name.trim(),
+          unit: unit.trim() || '份',
+          unitPrice: up,
+          quantity: toNumber(quantity) || undefined,
+        }
+      }
+      if (record.kind === 'combo') {
+        const up = Number(unitPrice)
+        if (!name.trim() || !up) return null
+        return {
+          ...base,
+          kind: 'combo',
+          name: name.trim(),
+          unitPrice: up,
+          items: comboItems.filter((i) => i.product.trim()),
+        }
+      }
+      const c = Number(cost)
+      const f = Number(face)
+      if (!name.trim() || !c || !f) return null
+      return { ...base, kind: 'voucher', name: name.trim(), cost: c, faceValue: f }
+    }
+    const amt = Number(amount)
+    if (!amt || amt <= 0) return null
+    const common = {
+      id: record.id,
+      date,
+      createdAt: record.createdAt,
+      amount: amt,
+      note: note.trim() || undefined,
+      category: category.trim() || '其他',
+      product: product.trim() || undefined,
+      quantity: toNumber(quantity) || undefined,
+      unit: unit.trim() || undefined,
+      unitPrice: toNumber(unitPrice) || undefined,
+    }
+    if (record.type === 'tx') {
+      return { ...common, type: 'tx', direction }
+    }
+    return {
+      ...common,
+      type: 'order',
+      platform: record.platform,
+      account: record.account,
+      orderId: record.orderId,
+      status: record.status,
+      shop: record.shop,
+      payment: record.payment,
+      items: record.items,
+    }
+  }
+
+  const handleSave = () => {
+    const updated = buildUpdated()
+    if (!updated) {
+      notify?.('请填写必填项（名称 / 金额）', 'err')
+      return
+    }
+    onSave(updated)
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-sm max-h-[85vh] overflow-y-auto rounded-xl bg-zinc-900 border border-white/15 p-5 space-y-3"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between">
+          <h3 className="text-white font-medium">
+            编辑{record.type === 'price' ? '价格' : record.type === 'order' ? '订单' : '流水'}
+          </h3>
+          <button onClick={onClose} className="text-white/40 hover:text-white text-sm">
+            关闭
+          </button>
+        </div>
+
+        {/* 价格：名称 / 商品 */}
+        {isPrice && (
+          <div>
+            <label className={labelCls}>{record.kind === 'item' ? '商品名 *' : '名称 *'}</label>
+            <input value={name} onChange={(e) => setName(e.target.value)} className={`w-full ${inputCls}`} />
+          </div>
+        )}
+
+        <div className="flex gap-2">
+          <div className="flex-1">
+            <label className={labelCls}>日期</label>
+            <input
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              className={`w-full ${inputCls} [color-scheme:dark]`}
+            />
+          </div>
+          {record.type !== 'price' && (
+            <div className="w-28">
+              <label className={labelCls}>方向</label>
+              <select
+                value={direction}
+                onChange={(e) => setDirection(e.target.value as 'income' | 'expense')}
+                className={`w-full ${inputCls}`}
+              >
+                <option value="expense">支出</option>
+                <option value="income">收入</option>
+              </select>
+            </div>
+          )}
+        </div>
+
+        {/* 价格 item：单价 / 数量 / 单位 */}
+        {isPrice && record.kind === 'item' && (
+          <div className="grid grid-cols-3 gap-2">
+            <div>
+              <label className={labelCls}>单价 *</label>
+              <input type="number" inputMode="decimal" value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} className={`w-full ${inputCls}`} />
+            </div>
+            <div>
+              <label className={labelCls}>数量</label>
+              <input type="number" inputMode="decimal" value={quantity} onChange={(e) => setQuantity(e.target.value)} className={`w-full ${inputCls}`} />
+            </div>
+            <div>
+              <label className={labelCls}>单位</label>
+              <input value={unit} onChange={(e) => setUnit(e.target.value)} className={`w-full ${inputCls}`} />
+            </div>
+          </div>
+        )}
+
+        {/* 价格 combo：套餐总价 + 菜品 */}
+        {isPrice && record.kind === 'combo' && (
+          <div className="space-y-2">
+            <div>
+              <label className={labelCls}>套餐总价 *</label>
+              <input type="number" inputMode="decimal" value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} className={`w-full ${inputCls}`} />
+            </div>
+            <div className="space-y-1.5">
+              {comboItems.map((it, i) => (
+                <div key={i} className="grid grid-cols-[1fr_0.7fr_0.7fr_0.7fr_auto] gap-1.5 items-center">
+                  <input
+                    placeholder="菜品名"
+                    value={it.product}
+                    onChange={(e) => setComboItems((l) => l.map((x, idx) => (idx === i ? { ...x, product: e.target.value } : x)))}
+                    className="h-8 rounded-lg bg-white/10 border border-white/20 text-white text-xs px-2 outline-none focus:border-white/40"
+                  />
+                  <input
+                    placeholder="单位"
+                    value={it.unit ?? ''}
+                    onChange={(e) => setComboItems((l) => l.map((x, idx) => (idx === i ? { ...x, unit: e.target.value } : x)))}
+                    className="h-8 rounded-lg bg-white/10 border border-white/20 text-white text-xs px-2 outline-none focus:border-white/40"
+                  />
+                  <input
+                    type="number"
+                    placeholder="数量"
+                    value={it.quantity ?? ''}
+                    onChange={(e) => setComboItems((l) => l.map((x, idx) => (idx === i ? { ...x, quantity: toNumberOrNull(e.target.value) ?? undefined } : x)))}
+                    className="h-8 rounded-lg bg-white/10 border border-white/20 text-white text-xs px-2 outline-none focus:border-white/40"
+                  />
+                  <input
+                    type="number"
+                    placeholder="单价"
+                    value={it.unitPrice ?? ''}
+                    onChange={(e) => setComboItems((l) => l.map((x, idx) => (idx === i ? { ...x, unitPrice: toNumberOrNull(e.target.value) ?? undefined } : x)))}
+                    className="h-8 rounded-lg bg-white/10 border border-white/20 text-white text-xs px-2 outline-none focus:border-white/40"
+                  />
+                  <button
+                    onClick={() => setComboItems((l) => l.filter((_, idx) => idx !== i))}
+                    className="w-7 h-8 rounded-lg flex items-center justify-center text-white/30 hover:text-red-300 hover:bg-red-500/10"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+              <button
+                onClick={() => setComboItems((l) => [...l, { product: '' }])}
+                className="text-xs text-white/50 hover:text-white/80 flex items-center gap-1"
+              >
+                <Plus className="w-3.5 h-3.5" /> 添加菜品
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* 价格 voucher：实付 / 面值 */}
+        {isPrice && record.kind === 'voucher' && (
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className={labelCls}>实付 *</label>
+              <input type="number" inputMode="decimal" value={cost} onChange={(e) => setCost(e.target.value)} className={`w-full ${inputCls}`} />
+            </div>
+            <div>
+              <label className={labelCls}>面值 *</label>
+              <input type="number" inputMode="decimal" value={face} onChange={(e) => setFace(e.target.value)} className={`w-full ${inputCls}`} />
+            </div>
+          </div>
+        )}
+
+        {/* 流水 / 订单：金额 / 分类 / 商品 */}
+        {record.type !== 'price' && (
+          <>
+            <div className="flex gap-2">
+              <div className="flex-1">
+                <label className={labelCls}>金额 *</label>
+                <input type="number" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} className={`w-full ${inputCls}`} />
+              </div>
+              <div className="flex-1">
+                <label className={labelCls}>分类</label>
+                <input value={category} onChange={(e) => setCategory(e.target.value)} className={`w-full ${inputCls}`} />
+              </div>
+            </div>
+            <div>
+              <label className={labelCls}>商品（可选）</label>
+              <input value={product} onChange={(e) => setProduct(e.target.value)} className={`w-full ${inputCls}`} />
+            </div>
+          </>
+        )}
+
+        <div>
+          <label className={labelCls}>来源（可选）</label>
+          <input value={source} onChange={(e) => setSource(e.target.value)} className={`w-full ${inputCls}`} />
+        </div>
+        <div>
+          <label className={labelCls}>备注（可选）</label>
+          <input value={note} onChange={(e) => setNote(e.target.value)} className={`w-full ${inputCls}`} />
+        </div>
+
+        <button
+          onClick={handleSave}
+          className="w-full py-2 rounded-lg bg-sky-500/80 hover:bg-sky-500 text-white text-sm"
+        >
+          保存修改
+        </button>
+      </div>
     </div>
   )
 }
@@ -678,6 +1004,30 @@ export default function BookkeepingApp() {
       })
     return () => {
       cancelled = true
+    }
+  }, [])
+
+  // ── RemoteStorage 同步完成后的重新读取 ──
+  // 修复「能存不能读」：bootstrap 初始同步（拉取远端大量数据文件 / 等待 .sync.lock 锁）常常
+  // 远超 AppHost 的 RS_BOOTSTRAP_TIMEOUT 门控，导致应用挂载时本地 PouchDB 仍为空、
+  // 首次读取拿不到远端数据且永不刷新。AppHost 在 bootstrap 落定后派发 onenav:rs-synced，
+  // 这里据此重新读取，保证远端/跨设备数据在同步完成后出现。
+  useEffect(() => {
+    let cancelled = false
+    const reload = () => {
+      loadAllRecords()
+        .then((r) => {
+          if (!cancelled) setRecords(r)
+        })
+        .catch(() => {
+          // 忽略：后续同步完成仍会再次触发
+        })
+    }
+    const onSynced = () => reload()
+    window.addEventListener('onenav:rs-synced', onSynced)
+    return () => {
+      cancelled = true
+      window.removeEventListener('onenav:rs-synced', onSynced)
     }
   }, [])
 
@@ -722,6 +1072,9 @@ export default function BookkeepingApp() {
     setToast({ text, kind })
     toastTimer.current = setTimeout(() => setToast(null), 2500)
   }
+
+  // 编辑弹窗：当前正在编辑的记录（null 表示未打开）
+  const [editing, setEditing] = useState<BookkeepingRecord | null>(null)
 
   const transactions = useMemo(
     () => records.filter((r) => r.type === 'tx' || r.type === 'order') as (TxRecord | OrderRecord)[],
@@ -910,6 +1263,19 @@ export default function BookkeepingApp() {
     setRecords((prev) => prev.filter((r) => r.id !== id))
     const target = records.find((r) => r.id === id)
     if (target) await removeRecord(target)
+  }
+
+  // ── 编辑：保存更新已有记录 ──
+  const handleSaveRecord = async (updated: BookkeepingRecord) => {
+    setRecords((prev) => prev.map((r) => (r.id === updated.id && r.type === updated.type ? updated : r)))
+    setEditing(null)
+    try {
+      await updateRecord(updated)
+      showToast('已保存修改')
+    } catch (e) {
+      console.error('[bookkeeping] 更新记录失败:', e)
+      showToast('保存失败，请重试', 'err')
+    }
   }
 
   const handleExport = () => {
@@ -1520,6 +1886,7 @@ export default function BookkeepingApp() {
             key={r.id}
             r={r}
             onDelete={r.type === 'price' ? handleDeletePrice : handleDeleteTx}
+            onEdit={setEditing}
           />
         ))}
       </div>
@@ -1572,6 +1939,17 @@ export default function BookkeepingApp() {
             </button>
           )}
         </div>
+      )}
+
+      {/* 编辑记录弹窗 */}
+      {editing && (
+        <RecordEditModal
+          key={editing.id}
+          record={editing}
+          notify={showToast}
+          onClose={() => setEditing(null)}
+          onSave={handleSaveRecord}
+        />
       )}
 
       {/* 导入预览弹窗 */}
@@ -1648,6 +2026,9 @@ export default function BookkeepingApp() {
           {toast.text}
         </div>
       )}
+
+      {/* 同步进度胶囊（常驻显示 RemoteStorage 同步进度） */}
+      <SyncStatusChip />
 
     </div>
   )

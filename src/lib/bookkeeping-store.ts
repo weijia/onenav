@@ -278,3 +278,14 @@ export async function removeRecords(records: BookkeepingRecord[]): Promise<void>
   }
   await afterWrite(db)
 }
+
+/** 更新已有记录（按 id + type 精确 upsert，保留 _rev 避免版本冲突） */
+export async function updateRecord(record: BookkeepingRecord): Promise<void> {
+  const db = await getPouchDB()
+  const existing = await db.get(bkId(record.type, record.id)).catch(() => null)
+  const doc = existing
+    ? { _id: existing._id, _rev: existing._rev, ...record }
+    : { _id: bkId(record.type, record.id), ...record }
+  await db.put(doc as any)
+  await afterWrite(db)
+}

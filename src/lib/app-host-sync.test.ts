@@ -83,7 +83,10 @@ describe('bootstrapAppRemoteStorage（AppHost 挂载时的 RS 同步引导）', 
     expect(h.syncCalls).toHaveLength(1)
     expect(h.syncCalls[0].href).toBe('https://rs.test/me')
     expect(h.syncCalls[0].token).toBe('tok-abc')
-    expect(h.syncCalls[0].opts).toEqual({ showToast: false })
+    // 额外传入 onProgress：独立页无 toast，靠它把 pull/push 进度打到控制台便于排查
+    const opts = h.syncCalls[0].opts as Record<string, unknown>
+    expect(opts.showToast).toBe(false)
+    expect(typeof opts.onProgress).toBe('function')
     expect(h.pouchCalls).toBe(1)
   })
 

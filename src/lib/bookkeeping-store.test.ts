@@ -62,6 +62,7 @@ import {
   putRecords,
   removeRecord,
   loadAllRecords,
+  updateRecord,
   type TxRecord,
   type PriceRecord,
 } from './bookkeeping-store'
@@ -70,6 +71,10 @@ import {
 function makeFakeDb() {
   const docs = new Map<string, any>()
   const db = {
+    async put(doc: any) {
+      docs.set(doc._id, { ...doc })
+      return { ok: true, id: doc._id, rev: '1' }
+    },
     async bulkDocs(list: any[]) {
       for (const d of list) docs.set(d._id, { ...d })
       return list.map(() => ({ ok: true }))
@@ -247,5 +252,66 @@ describe('记账 loadAllRecords 读取路径', () => {
         expect(back.unitPrice).toBe(0.82)
       }
     }
+  })
+})
+
+describe('记账 updateRecord 更新已有记录', () => {
+  it('U-1 更新价格记录的单价与备注，本地文档被覆盖且保留 id/type/createdAt', async () => {
+    const p = makePrice() as Extract<PriceRecord, { kind: 'item' }> // bk:price:p-1，单价 5.8
+    await putRecords([p])
+
+    const updated: PriceRecord = {
+      ...p,
+      unitPrice: 6.5,
+      note: '涨价了',
+      quantity: 2,
+    }
+    await updateRecord(updated)
+
+    const stored = await h.db.get('bk:price:p-1')
+    expect(stored.unitPrice).toBe(6.5)
+    expect(stored.note).toBe('涨价了')
+    expect(stored.quantity).toBe(2)
+    // 身份字段不变
+    expect(stored.id).toBe('p-1')
+    expect(stored.type).toBe('price')
+    expect(stored.createdAt).toBe(1)
+
+    const all = await loadAllRecords()
+    expect(all).toHaveLength(1)
+    const back = all[0] as PriceRecord
+    expect(back.kind).toBe('item')
+    if (back.kind === 'item') expect(back.unitPrice).toBe(6.5)
+  })
+
+  it('U-2 更新不存在的记录时按新增兜底（不抛错）', async () => {
+    const missing: PriceRecord = {
+      type: 'price',
+      kind: 'item',
+      id: 'p-x',
+      product: '缺文件',
+      unit: '份',
+      unitPrice: 9,
+      date: '2026-10-25',
+      createdAt: 3,
+    }
+    await expect(updateRecord(missing)).resolves.toBeUndefined()
+    const stored = await h.db.get('bk:price:p-x')
+    expect(stored.unitPrice).toBe(9)
+  })
+
+  it('U-3 未配置 RemoteStorage 时更新仍触发 afterWrite（WebDAV 兜底写）', async () => {
+    h.configured = false
+    h.wdav = { url: 'https://wdav.test', username: 'u', password: 'p' }
+    const tx = makeTx()
+    await putRecords([tx])
+    h.webdavWrites = []
+
+    await updateRecord({ ...tx, amount: 88, note: '改后' })
+
+    const stored = await h.db.get('bk:tx:tx-1')
+    expect(stored.amount).toBe(88)
+    // afterWrite 的 WebDAV 兜底应再次触发
+    expect(h.webdavWrites).toHaveLength(1)
   })
 })

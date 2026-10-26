@@ -53,7 +53,14 @@ export default function AppHost({ name, description, accent, icon: Icon, compone
       if (!cancelled) setRsReady(true) // 安全上限：RS 慢/挂起也不长期阻塞
     }, RS_BOOTSTRAP_TIMEOUT)
     bootstrapAppRemoteStorage().then(() => {
-      if (!cancelled) setRsReady(true) // 成功或失败都放行；仅在有凭据时才真正发起同步
+      if (!cancelled) {
+        setRsReady(true) // 成功或失败都放行；仅在有凭据时才真正发起同步
+        // 初始同步落定后通知应用主体重新读取远端数据。
+        // 关键：bootstrap 的同步（拉取 RemoteStorage 大量数据文件 / 等待 .sync.lock 锁）常常远超
+        // 上面的 RS_BOOTSTRAP_TIMEOUT 门控，应用此时已挂载并读到空库。若不在此重新通知，
+        // 同步完成后应用永远不会刷新，表现为「能存不能读」。应用挂载时监听本事件并重新 loadAllRecords。
+        window.dispatchEvent(new CustomEvent('onenav:rs-synced'))
+      }
     })
     return () => {
       cancelled = true

@@ -7,6 +7,7 @@
 import { RemoteStorageFileSystem, type RemoteStorageConfig } from './remotestorage-fs'
 import { resolveOneNavSyncConflict } from './bookmark-conflicts'
 import { showSyncToast, type SyncToast } from './sync-notify'
+import { updateSyncStatus, type SyncStatusState } from './sync-status'
 import { getStorageCredentials, getSavedStorageCredentials, getLibraryStorageCredentials, getRemoteStorage } from './remotestorage-connection'
 
 let SyncEngine: any = null
@@ -44,6 +45,46 @@ export interface RemoteStorageSyncOptions {
   onProgress?: (progress: any) => void
   /** 是否显示内置进度 toast（默认 true）；若自行传入 onProgress 处理展示可设 false */
   showToast?: boolean
+}
+
+/**
+ * 将 universal-sync-v2 的 SyncProgress 转成全局同步状态 store 的增量。
+ * 与 bindProgressToast 并行：toast 负责一次性浮层，store 负责页面内常驻同步胶囊。
+ */
+function syncProgressToStatus(p: any): Partial<SyncStatusState> {
+  const s: Partial<SyncStatusState> = {}
+  if (p?.phase === 'pull') {
+    s.status = 'syncing'
+    s.phase = 'pull'
+    if (p.remoteFilesTotal) {
+      s.filesRead = p.remoteFilesRead ?? 0
+      s.filesTotal = p.remoteFilesTotal
+      s.ratio = Math.min(1, (p.remoteFilesRead ?? 0) / p.remoteFilesTotal)
+      s.message = p.message || `读取 ${p.remoteFilesRead ?? 0}/${p.remoteFilesTotal} 个文件`
+    } else {
+      s.message = p.message || '拉取远端数据…'
+    }
+  } else if (p?.phase === 'push') {
+    s.status = 'syncing'
+    s.phase = 'push'
+    if (p.localFilesTotal) {
+      s.filesRead = p.localFilesWritten ?? 0
+      s.filesTotal = p.localFilesTotal
+      s.ratio = Math.min(1, (p.localFilesWritten ?? 0) / p.localFilesTotal)
+      s.message = p.message || `上传 ${p.localFilesWritten ?? 0}/${p.localFilesTotal} 个文件`
+    } else {
+      s.message = p.message || '上传本地数据…'
+    }
+  } else if (p?.phase === 'done' || p?.phase === 'skip') {
+    s.status = 'synced'
+    s.ratio = 1
+    s.message = p.message || '已同步'
+  } else if (p?.phase === 'error') {
+    s.status = 'error'
+    s.ratio = 1
+    s.message = p.message || '同步失败'
+  }
+  return s
 }
 
 /**
@@ -153,6 +194,35 @@ export function createSyncSafeDb(db: PouchDB.Database): PouchDB.Database {
 }
 
 /**
+ * 清理本地 PouchDB 中历史遗留的 sync_conflict 文档。
+ *
+ * 背景：旧版冲突解析器对非书签文档的冲突返回 keep-conflict，每个冲突都会生成一个
+ * 存双方完整快照的大 sync_conflict 文档（约 11KB），且该文档本身又是「非书签文档」，
+ * 再次冲突会再次 keep-conflict → 正反馈雪崩（2026-10 在服务器上炸出上万个冲突文档、数百 MB）。
+ * 冲突解析已改为确定性解决不再新生成；这里兜底清除本地存量，避免其在服务器瘦身后
+ * 又被当作「新增文档」重新 push 回服务器。
+ */
+async function purgeLocalSyncConflicts(db: PouchDB.Database): Promise<void> {
+  const res = await db
+    .allDocs({
+      startkey: 'sync_conflict:',
+      endkey: 'sync_conflict:\uffff',
+      include_docs: true,
+    } as any)
+    .catch(() => null)
+  const rows = res?.rows ?? []
+  const docs = rows.map((r: any) => r.doc).filter((d: any) => d && typeof d._rev === 'string')
+  if (docs.length === 0) return
+  for (let i = 0; i < docs.length; i += 200) {
+    const batch = docs
+      .slice(i, i + 200)
+      .map((d: any) => ({ _id: d._id, _rev: d._rev, _deleted: true }))
+    await db.bulkDocs(batch as any).catch((e) => console.warn('[RS Sync] 清理 sync_conflict 失败:', e))
+  }
+  console.log(`[RS Sync] 已清理本地 ${docs.length} 个 sync_conflict 文档`)
+}
+
+/**
  * 将 PouchDB 同步到 RemoteStorage
  */
 export async function syncToRemoteStorage(
@@ -175,8 +245,16 @@ export async function syncToRemoteStorage(
 
     const Engine = await getSyncEngine()
 
+    // 通知全局同步状态 store：开始同步（页面内的同步胶囊据此出现）
+    updateSyncStatus({ status: 'syncing', phase: undefined, message: '准备同步…', ratio: 0 })
+
     const toast = options.showToast === false ? null : showSyncToast('准备同步…')
-    const onProgress = toast ? bindProgressToast(toast, options.onProgress) : options.onProgress
+    const toastHandler = toast ? bindProgressToast(toast, options.onProgress) : options.onProgress
+    // 统一的进度回调：既更新全局 store（常驻胶囊），也驱动 toast（一次性浮层）与业务回调。
+    const onProgress = (p: any) => {
+      updateSyncStatus(syncProgressToStatus(p))
+      toastHandler?.(p)
+    }
 
     const engine = new Engine(createSyncSafeDb(db), currentFs as any, {
       basePath: '/onenav',
@@ -187,12 +265,23 @@ export async function syncToRemoteStorage(
       onProgress,
     })
 
+    // 每次同步前先清除远端目录列表缓存，确保本次 pull 能枚举到最新远端结构
+    // （zen-fs-cache 写文件只失效直接父目录，祖先链不被失效，会导致新目录枚举不到、拉不到远端数据）
+    await currentFs.invalidateDirListing().catch((e) =>
+      console.warn('[RS Sync] 清除远端目录列表缓存失败（已忽略）:', e)
+    )
+
     await engine.initialize()
     await engine.sync()
+    // 同步落定后清除本地遗留的 sync_conflict 文档，避免其被再次 push 回服务器
+    await purgeLocalSyncConflicts(db)
+    // 收尾：置为已同步（done/skip 阶段已置过，幂等覆盖）
+    updateSyncStatus({ status: 'synced', message: '已同步', ratio: 1 })
   } catch (err) {
     if (options.showToast !== false) {
       showSyncToast('同步失败').error(String(err))
     }
+    updateSyncStatus({ status: 'error', message: '同步失败', ratio: 1 })
     throw err
   } finally {
     syncInProgress = false

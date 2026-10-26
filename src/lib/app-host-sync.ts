@@ -25,6 +25,9 @@ import { getRemoteStorage } from '@/lib/remotestorage-connection'
 import { syncToRemoteStorage, ensureStorageReady } from '@/lib/remotestorage-sync'
 import { getPouchDB } from '@/lib/pouchdb'
 
+/** 应用页面监听的事件名：RemoteStorage 同步完成后触发，用于重新加载数据 */
+export const DATA_CHANGED_EVENT = 'onenav:rs-data-changed'
+
 export async function bootstrapAppRemoteStorage(): Promise<boolean> {
   // 先建立 remotestoragejs 实例：wireclient 会从自己的 localStorage（remotestorage:wireclient）
   // 异步恢复 href+token 并触发 connected，从而让 getStorageCredentials() 有值。
@@ -53,11 +56,42 @@ export async function bootstrapAppRemoteStorage(): Promise<boolean> {
     // 初始双向同步：pull 远端数据进 PouchDB + push 本地数据到远端
     const db = await getPouchDB()
     console.log('[app-host-sync] 开始初始双向同步（pull + push）…')
-    await syncToRemoteStorage(db, creds, { showToast: false })
+    // 显式传 onProgress：本处 showToast=false，若不传 onProgress 则 pull 阶段
+    // （远端发现多少文件、读入多少、待写入多少）完全没有日志，无法判断是否真的拉到了数据。
+    await syncToRemoteStorage(db, creds, {
+      showToast: false,
+      onProgress: (p: any) => {
+        if (p?.phase === 'pull') {
+          if (p.message) console.log(`[app-host-sync][pull] ${p.message}`)
+        } else if (p?.phase === 'push') {
+          if (p.message) console.log(`[app-host-sync][push] ${p.message}`)
+        } else if (p?.phase === 'done' || p?.phase === 'skip' || p?.phase === 'error') {
+          console.log(`[app-host-sync][${p.phase}] ${p.message ?? ''}`)
+        }
+      },
+    })
     console.log('[app-host-sync] 初始同步完成')
+    // 通知应用主体重新读取：初始同步可能晚于 AppHost 的 5s 渲染超时完成，
+    // 此时应用已按「本地旧数据」渲染完毕，需要主动触发一次重新加载才能看到远端数据。
+    notifyDataChanged()
     return true
   } catch (e) {
     console.error('[app-host-sync] RemoteStorage 初始同步失败（已忽略，继续本地模式）:', e)
     return false
+  }
+}
+
+/**
+ * 广播「远端数据已同步到本地」事件，应用页面监听后重新读取即可看到远端数据。
+ *
+ * 为什么需要它：AppHost 用 5s 超时做渲染门控，远端文件较多时 pull 可能超过 5s，
+ * 应用主体会带着「尚未 pull 完」的本地数据先行渲染，而多数应用（如记账）只在挂载时
+ * 读一次 PouchDB、不订阅 changes，导致 pull 完成后界面仍是旧数据。
+ */
+function notifyDataChanged(): void {
+  try {
+    window.dispatchEvent(new CustomEvent(DATA_CHANGED_EVENT))
+  } catch {
+    // 非浏览器环境（单测等）忽略
   }
 }

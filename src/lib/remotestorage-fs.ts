@@ -45,6 +45,10 @@ export interface IFileSystem {
  */
 export class RemoteStorageFileSystem implements IFileSystem {
   private adapter: IFileSystem
+  /** 目录列表缓存的存储层：用于在同步前清掉陈旧的 readdir 结果 */
+  private cacheStore: IdbCacheStore
+  /** 缓存键前缀，keys() 返回的是带前缀的键，剥离后才能交给 delete() */
+  private cachePrefix = 'onenav-rs:'
 
   constructor(config: RemoteStorageConfig) {
     const rsfs = new ZenRsFileSystem({
@@ -57,11 +61,50 @@ export class RemoteStorageFileSystem implements IFileSystem {
     // ttlMs 设为 2 分钟——2 分钟内直接命中 IndexedDB 缓存零网络往返，
     // 超时后再发一次条件请求（未变更则廉价 304），写操作会立即失效对应键，
     // 因此多端写入的可见延迟 ≈ 2 分钟，对书签同步完全可接受。
-    const cached = new CachedFileSystem(rsfs, new IdbCacheStore('onenav-rs:'), {
+    this.cacheStore = new IdbCacheStore(this.cachePrefix)
+    const cached = new CachedFileSystem(rsfs, this.cacheStore, {
       ttlMs: 2 * 60 * 1000,
     })
 
     this.adapter = adaptFileSystem(cached) as unknown as IFileSystem
+  }
+
+  /**
+   * 清除所有「目录列表（readdir）」缓存。
+   *
+   * 为什么需要它：
+   * CachedFileSystem.readdir 会把目录清单（dir:<path>）持久化到 IndexedDB 并按 ttlMs 缓存。
+   * 而写入文件只会失效**直接父目录**的 dir 键（内部 invalidateMeta 的行为），
+   * 祖先目录链（如 /onenav/data、/onenav/data/2026、/onenav/data/2026/10）不会被失效。
+   * 后果：push 新建了「新的月份/日期目录」后，紧接着的 pull 仍会命中旧的目录清单，
+   * 看不到新目录 → `listAllDataFiles()` 拿不到新文件 → 表现为「能 push 但 pull 不到」。
+   *
+   * 因此每次同步开始前清一次目录缓存，保证 pull 总能枚举到最新的远端目录结构。
+   * 只删 dir: 键、保留 file: 键，所以不会让已缓存的文件内容白白重读。
+   */
+  async invalidateDirListing(): Promise<void> {
+    try {
+      // keys() 在实现中存在，但包的 .d.ts 未声明，故做能力检测后再用
+      const store = this.cacheStore as unknown as { keys?: () => Promise<string[]> }
+      if (typeof store.keys !== 'function') {
+        console.warn('[RS FS] 缓存 store 不支持枚举键，跳过目录缓存清理')
+        return
+      }
+      const keys = (await store.keys()) ?? []
+      let removed = 0
+      for (const raw of keys) {
+        const key = raw.startsWith(this.cachePrefix) ? raw.slice(this.cachePrefix.length) : raw
+        if (!key.startsWith('dir:')) continue
+        await this.cacheStore.delete(key)
+        removed++
+      }
+      if (removed > 0) {
+        console.log(`[RS FS] 已清除 ${removed} 项远端目录列表缓存，确保本次 pull 能看到最新文件`)
+      }
+    } catch (err) {
+      // 清缓存失败不应阻断同步：最坏情况是沿用旧目录清单
+      console.warn('[RS FS] 清除目录列表缓存失败（已忽略）:', err)
+    }
   }
 
   readFile(path: string, encoding: string): Promise<string> {
