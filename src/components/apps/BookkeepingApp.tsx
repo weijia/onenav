@@ -32,6 +32,7 @@ import {
   priceTotalOf,
 } from '@/lib/bookkeeping-store'
 import { mergePrices } from '@/lib/bookkeeping-price'
+import SyncStatusChip from '@/components/apps/SyncStatusChip'
 
 // 单据类型（TxRecord / PriceRecord / OrderRecord / BookkeepingRecord）与存储函数
 // 统一 type 模型 + 每条记录一个独立 PouchDB 文档，见 src/lib/bookkeeping-store.ts 与 docs/bookkeeping-data-model.md
@@ -1672,6 +1673,9 @@ export default function BookkeepingApp() {
           {toast.text}
         </div>
       )}
+
+      {/* 同步进度胶囊（常驻显示 RemoteStorage 同步进度） */}
+      <SyncStatusChip />
 
     </div>
   )

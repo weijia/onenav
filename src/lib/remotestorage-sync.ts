@@ -7,6 +7,7 @@
 import { RemoteStorageFileSystem, type RemoteStorageConfig } from './remotestorage-fs'
 import { resolveOneNavSyncConflict } from './bookmark-conflicts'
 import { showSyncToast, type SyncToast } from './sync-notify'
+import { updateSyncStatus, type SyncStatusState } from './sync-status'
 import { getStorageCredentials, getSavedStorageCredentials, getLibraryStorageCredentials, getRemoteStorage } from './remotestorage-connection'
 
 let SyncEngine: any = null
@@ -44,6 +45,46 @@ export interface RemoteStorageSyncOptions {
   onProgress?: (progress: any) => void
   /** 是否显示内置进度 toast（默认 true）；若自行传入 onProgress 处理展示可设 false */
   showToast?: boolean
+}
+
+/**
+ * 将 universal-sync-v2 的 SyncProgress 转成全局同步状态 store 的增量。
+ * 与 bindProgressToast 并行：toast 负责一次性浮层，store 负责页面内常驻同步胶囊。
+ */
+function syncProgressToStatus(p: any): Partial<SyncStatusState> {
+  const s: Partial<SyncStatusState> = {}
+  if (p?.phase === 'pull') {
+    s.status = 'syncing'
+    s.phase = 'pull'
+    if (p.remoteFilesTotal) {
+      s.filesRead = p.remoteFilesRead ?? 0
+      s.filesTotal = p.remoteFilesTotal
+      s.ratio = Math.min(1, (p.remoteFilesRead ?? 0) / p.remoteFilesTotal)
+      s.message = p.message || `读取 ${p.remoteFilesRead ?? 0}/${p.remoteFilesTotal} 个文件`
+    } else {
+      s.message = p.message || '拉取远端数据…'
+    }
+  } else if (p?.phase === 'push') {
+    s.status = 'syncing'
+    s.phase = 'push'
+    if (p.localFilesTotal) {
+      s.filesRead = p.localFilesWritten ?? 0
+      s.filesTotal = p.localFilesTotal
+      s.ratio = Math.min(1, (p.localFilesWritten ?? 0) / p.localFilesTotal)
+      s.message = p.message || `上传 ${p.localFilesWritten ?? 0}/${p.localFilesTotal} 个文件`
+    } else {
+      s.message = p.message || '上传本地数据…'
+    }
+  } else if (p?.phase === 'done' || p?.phase === 'skip') {
+    s.status = 'synced'
+    s.ratio = 1
+    s.message = p.message || '已同步'
+  } else if (p?.phase === 'error') {
+    s.status = 'error'
+    s.ratio = 1
+    s.message = p.message || '同步失败'
+  }
+  return s
 }
 
 /**
@@ -204,8 +245,16 @@ export async function syncToRemoteStorage(
 
     const Engine = await getSyncEngine()
 
+    // 通知全局同步状态 store：开始同步（页面内的同步胶囊据此出现）
+    updateSyncStatus({ status: 'syncing', phase: undefined, message: '准备同步…', ratio: 0 })
+
     const toast = options.showToast === false ? null : showSyncToast('准备同步…')
-    const onProgress = toast ? bindProgressToast(toast, options.onProgress) : options.onProgress
+    const toastHandler = toast ? bindProgressToast(toast, options.onProgress) : options.onProgress
+    // 统一的进度回调：既更新全局 store（常驻胶囊），也驱动 toast（一次性浮层）与业务回调。
+    const onProgress = (p: any) => {
+      updateSyncStatus(syncProgressToStatus(p))
+      toastHandler?.(p)
+    }
 
     const engine = new Engine(createSyncSafeDb(db), currentFs as any, {
       basePath: '/onenav',
@@ -220,10 +269,13 @@ export async function syncToRemoteStorage(
     await engine.sync()
     // 同步落定后清除本地遗留的 sync_conflict 文档，避免其被再次 push 回服务器
     await purgeLocalSyncConflicts(db)
+    // 收尾：置为已同步（done/skip 阶段已置过，幂等覆盖）
+    updateSyncStatus({ status: 'synced', message: '已同步', ratio: 1 })
   } catch (err) {
     if (options.showToast !== false) {
       showSyncToast('同步失败').error(String(err))
     }
+    updateSyncStatus({ status: 'error', message: '同步失败', ratio: 1 })
     throw err
   } finally {
     syncInProgress = false
