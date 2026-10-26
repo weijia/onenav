@@ -125,6 +125,7 @@ export interface HostView {
 /**
  * 控制节点视图（来自 ufs-nodes 中的节点控制对象，含 capabilities/inbox/mqtt）。
  * 按 Q3 不并入主机监控列表，但按 Q8 单独展示其敏感 mqtt 凭证（密码遮罩 + 点击揭示）。
+ * 若存在同 device_uuid 的 {uuid}_disks.json 明细，则关联展示其磁盘/分区。
  */
 export interface ControlNodeView {
   uuid: string
@@ -134,4 +135,7 @@ export interface ControlNodeView {
   lastAccessStr: string | null
   /** 来自 mqtt 的敏感字段（Q8） */
   sensitive: SensitiveField[]
+  /** 关联 {uuid}_disks.json 明细得到的磁盘视图（可能为空） */
+  disks: DiskView[]
+  hasDetail: boolean
 }

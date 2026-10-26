@@ -428,6 +428,15 @@ function ControlNodeCard({ node }: { node: ControlNodeView }) {
       ) : (
         <div className="text-white/30 text-xs">无敏感凭证</div>
       )}
+      {node.disks.length > 0 ? (
+        <div className="space-y-2">
+          {node.disks.map((d) => (
+            <DiskCard key={d.serial} disk={d} />
+          ))}
+        </div>
+      ) : (
+        <div className="text-white/30 text-xs">暂无磁盘数据</div>
+      )}
     </div>
   )
 }

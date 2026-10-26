@@ -199,6 +199,24 @@ function buildDiskView(serial: string, smart: DiskSmartRaw | undefined, detail: 
   }
 }
 
+/** 构建设备的磁盘视图：命中 host_uuid 的 SMART + 明细物理盘补充（主机与控制节点共用） */
+function buildDiskViews(uuid: string, detail: HostDetailRaw | undefined, disks: Map<string, DiskSmartRaw>): DiskView[] {
+  const smartDisks: DiskSmartRaw[] = []
+  for (const d of disks.values()) {
+    if (asString(d['host_uuid']) === uuid) smartDisks.push(d)
+  }
+  const diskViews: DiskView[] = smartDisks.map((d) => buildDiskView(asString(d['serial'])!, d, detail))
+  // 明细里有物理盘但无对应 SMART：补充展示
+  if (detail && Array.isArray(detail['physical_disks'])) {
+    for (const p of detail['physical_disks'] as RawNodeFile[]) {
+      const serial = asString(p['SerialNumber'])
+      if (!serial || diskViews.some((dv) => dv.serial === serial)) continue
+      diskViews.push(buildDiskView(serial, undefined, detail))
+    }
+  }
+  return diskViews
+}
+
 function buildHostView(
   uuid: string,
   hb: HostHeartbeatRaw | undefined,
@@ -211,21 +229,7 @@ function buildHostView(
   const info = detail?.['host_info']
   const name = asString(info?.['device_name']) ?? (hb ? asString(hb['name']) : null)
 
-  // SMART 磁盘（host_uuid 命中）
-  const smartDisks: DiskSmartRaw[] = []
-  for (const d of disks.values()) {
-    if (asString(d['host_uuid']) === uuid) smartDisks.push(d)
-  }
-  const diskViews: DiskView[] = smartDisks.map((d) => buildDiskView(asString(d['serial'])!, d, detail))
-
-  // 明细里有物理盘但无对应 SMART：补充展示
-  if (detail && Array.isArray(detail['physical_disks'])) {
-    for (const p of detail['physical_disks'] as RawNodeFile[]) {
-      const serial = asString(p['SerialNumber'])
-      if (!serial || diskViews.some((dv) => dv.serial === serial)) continue
-      diskViews.push(buildDiskView(serial, undefined, detail))
-    }
-  }
+  const diskViews = buildDiskViews(uuid, detail, disks)
 
   return {
     uuid,
@@ -245,16 +249,24 @@ function buildHostView(
   }
 }
 
-function buildControlNode(raw: RawNodeFile): ControlNodeView {
+function buildControlNode(
+  raw: RawNodeFile,
+  detail: HostDetailRaw | undefined,
+  disks: Map<string, DiskSmartRaw>,
+): ControlNodeView {
   const nc = raw as unknown as HostHeartbeatRaw
   const lastAccessMs = toMs(nc['last_access'])
+  const uuid = asString(nc['uuid']) ?? ''
   return {
-    uuid: asString(nc['uuid']) ?? '',
+    uuid,
     name: asString(nc['name']),
     online: isOnline(lastAccessMs),
     lastAccessMs,
     lastAccessStr: asString(nc['last_access_str']),
     sensitive: buildSensitiveFields(nc),
+    // 关联同 device_uuid 的 {uuid}_disks.json 明细，展示磁盘/分区（此前被丢弃）
+    disks: buildDiskViews(uuid, detail, disks),
+    hasDetail: !!detail,
   }
 }
 
@@ -271,7 +283,8 @@ export function normalizeUfsNodes(raws: unknown[]): NormalizeResult {
   const heartbeats = new Map<string, HostHeartbeatRaw>()
   const disks = new Map<string, DiskSmartRaw>() // key: serial
   const details = new Map<string, HostDetailRaw>() // key: device_uuid
-  const controlNodes: ControlNodeView[] = []
+  const controlRaws: RawNodeFile[] = []
+  const controlUuids = new Set<string>()
 
   for (const p of parsed) {
     if (p.kind === 'heartbeat') {
@@ -287,19 +300,18 @@ export function normalizeUfsNodes(raws: unknown[]): NormalizeResult {
       const du = asString(dt['host_info']?.['device_uuid'])
       if (du) details.set(du, dt)
     } else if (p.kind === 'node-control') {
-      controlNodes.push(buildControlNode(p.raw))
+      controlRaws.push(p.raw)
+      const u = asString((p.raw as RawNodeFile)['uuid'])
+      if (u) controlUuids.add(u)
     }
   }
 
-  // 节点控制对象（capabilities/inbox/mqtt）不并入主机列表（Q3）。
-  // 修复：控制节点即便另有 {uuid}_disks.json 明细，也不该以主机身份重复出现——
-  // 其心跳文件已被归为控制节点，主机侧取不到 last_access，会永久显示离线。
-  const controlUuids = new Set<string>()
-  for (const p of parsed) {
-    if (p.kind !== 'node-control') continue
-    const u = asString((p.raw as RawNodeFile)['uuid'])
-    if (u) controlUuids.add(u)
-  }
+  // 控制节点构建放主循环之后：此时 details 已完整，可按同一 device_uuid 关联 {uuid}_disks.json。
+  // 节点控制对象（capabilities/inbox/mqtt）不并入主机列表（Q3）；同一设备只在控制节点区出现一次。
+  const controlNodes: ControlNodeView[] = controlRaws.map((raw) => {
+    const u = asString((raw as RawNodeFile)['uuid']) ?? ''
+    return buildControlNode(raw, details.get(u), disks)
+  })
 
   // 主机集合：心跳 + 明细 + 仅出现在磁盘 host_uuid 中的主机（防御：尚未写入心跳时也能展示）
   // 排除控制节点 UUID，避免 {uuid}.json（控制节点）+ {uuid}_disks.json（明细）导致同一设备

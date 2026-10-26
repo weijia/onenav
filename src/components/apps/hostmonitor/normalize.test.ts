@@ -173,6 +173,12 @@ describe('normalizeUfsNodes', () => {
     expect(controlNodes).toHaveLength(1)
     expect(controlNodes[0].uuid).toBe('node-ctrl-1')
     expect(controlNodes[0].online).toBe(true)
+    // 关联同一 device_uuid 的 _disks.json：控制节点卡片也能展示磁盘（此前明细被丢弃）
+    expect(controlNodes[0].hasDetail).toBe(true)
+    expect(controlNodes[0].disks).toHaveLength(1)
+    expect(controlNodes[0].disks[0].serial).toBe('3333_ABC')
+    expect(controlNodes[0].disks[0].hasDetail).toBe(true)
+    expect(controlNodes[0].disks[0].hasSmart).toBe(false)
   })
 
   it('仅心跳无明细时，主机仍展示，磁盘来自 SMART（且仅有磁盘 host_uuid 的主机也被纳入）', () => {
