@@ -291,14 +291,28 @@ export function normalizeUfsNodes(raws: unknown[]): NormalizeResult {
     }
   }
 
+  // 节点控制对象（capabilities/inbox/mqtt）不并入主机列表（Q3）。
+  // 修复：控制节点即便另有 {uuid}_disks.json 明细，也不该以主机身份重复出现——
+  // 其心跳文件已被归为控制节点，主机侧取不到 last_access，会永久显示离线。
+  const controlUuids = new Set<string>()
+  for (const p of parsed) {
+    if (p.kind !== 'node-control') continue
+    const u = asString((p.raw as RawNodeFile)['uuid'])
+    if (u) controlUuids.add(u)
+  }
+
   // 主机集合：心跳 + 明细 + 仅出现在磁盘 host_uuid 中的主机（防御：尚未写入心跳时也能展示）
-  const hostUuids = new Set<string>([
-    ...heartbeats.keys(),
-    ...details.keys(),
-    ...[...disks.values()]
-      .map((d) => asString(d['host_uuid']))
-      .filter((u): u is string => !!u),
-  ])
+  // 排除控制节点 UUID，避免 {uuid}.json（控制节点）+ {uuid}_disks.json（明细）导致同一设备
+  // 同时出现在「控制节点」与「主机」两处、且主机侧因无心跳而永远离线。
+  const hostUuids = new Set<string>(
+    [
+      ...heartbeats.keys(),
+      ...details.keys(),
+      ...[...disks.values()]
+        .map((d) => asString(d['host_uuid']))
+        .filter((u): u is string => !!u),
+    ].filter((u) => !controlUuids.has(u)),
+  )
 
   const hosts: HostView[] = []
   for (const uuid of hostUuids) {

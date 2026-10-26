@@ -147,6 +147,34 @@ describe('normalizeUfsNodes', () => {
     expect(controlNodes[0].uuid).toBe('node-ctrl-1')
   })
 
+  it('控制节点即使另有 {uuid}_disks.json 明细，也不以主机身份重复出现（避免永久离线副本）', () => {
+    // 复现线上 bug：设备 {uuid}.json 是控制节点（含 capabilities/inbox/mqtt），
+    // 但同时存在 {uuid}_disks.json（host_info.device_uuid=node-ctrl-1）。
+    // 修复前：details 会把它并入主机列表，但主机侧取不到心跳 → lastAccessMs=null → 永远离线；
+    // 同时它又在 controlNodes 正确显示在线。修复后：只出现在控制节点，不出现离线主机副本。
+    const nodeControlWithDetail = {
+      uuid: 'node-ctrl-1',
+      name: 'surface',
+      status: 'online',
+      last_access: Date.now() - 10 * 1000,
+      last_access_str: '2026/10/26 17:40:07',
+      capabilities: [{ id: 'power', type: 'action', label: '电源控制' }],
+      inbox: [],
+      mqtt: { enabled: true, broker: 'tcp://broker.emqx.io:1883', topic: 'ufsd/cmd', secret: 'aes-key' },
+    }
+    const controlNodeDetail = {
+      host_info: { device_uuid: 'node-ctrl-1', device_name: 'surface', hostname: 'RICHARD', platform: 'Windows' },
+      physical_disks: [{ DeviceID: '\\\\.\\PHYSICALDRIVE0', SerialNumber: '3333_ABC' }],
+      logical_disks: [],
+      disk_partition_mappings: [],
+    }
+    const { hosts, controlNodes } = normalizeUfsNodes([nodeControlWithDetail, controlNodeDetail])
+    expect(hosts.find((h) => h.uuid === 'node-ctrl-1')).toBeUndefined()
+    expect(controlNodes).toHaveLength(1)
+    expect(controlNodes[0].uuid).toBe('node-ctrl-1')
+    expect(controlNodes[0].online).toBe(true)
+  })
+
   it('仅心跳无明细时，主机仍展示，磁盘来自 SMART（且仅有磁盘 host_uuid 的主机也被纳入）', () => {
     const { hosts } = normalizeUfsNodes([heartbeatOffline, diskSmart])
     const h1 = findHost(hosts, 'host-1')
