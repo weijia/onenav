@@ -343,11 +343,11 @@ export async function syncToRemoteStorage(
       basePath: '/onenav',
       maxFileSize: options.maxFileSize ?? 500 * 1024,
       mergeThreshold: options.mergeThreshold ?? 50 * 1024,
-      // 默认关闭 autoMerge：后台每 60s 的合并会把服务器上仍含 sync_conflict 文档的 data 文件
-      // 重新合并成新的 merged 文件——这正是“删了文件但文件反而更多”的来源之一，
-      // 且它与下方 sweepRemoteStorageConflicts 互相竞争（合并可能在清扫前把冲突又写回）。
-      // 关掉后，冲突只能由 purgedAfter>0 触发的服务器清扫单向剔除，不再被合并重新生成。
-      autoMerge: options.autoMerge ?? false,
+      // 关闭 autoMerge 的“后台定时器”，改由下方在服务器清扫干净后手动触发一次 performMerge：
+      // 若仍用引擎内置的每 60s 自动合并，它会把服务器上尚未清扫的 sync_conflict 文档
+      // 重新合并成新的 merged 文件（“删了文件反而更多”的来源之一），并与清扫互相竞争。
+      // 手动控制在清扫之后合并，保证合并到的都是干净文件，既不重新生成冲突、又保留文件精简功能。
+      autoMerge: false,
       conflictResolver: resolveOneNavSyncConflict,
       onProgress,
     })
@@ -364,15 +364,26 @@ export async function syncToRemoteStorage(
     await purgeLocalSyncConflicts(db)
 
     await engine.initialize()
+    // 你的流程（pull → 清理本地 conflict → 删除服务器冲突文件 → 推送本地清理后的文件）：
+    // 1) engine.sync() 内部顺序为 pull → push：先拉取服务器改动，再把本地（已清理）推送上去；
+    //    push 阶段因 remote-rev-cache 已含 pull 拉入文档的 rev，冲突文档会被跳过、不会重传。
     await engine.sync()
-    // 同步落定后再清一次：把本次从服务器拉到的 sync_conflict 文档也清掉，并统计数量
+    // 2) 清理 pull 阶段拉进本地的 sync_conflict 文档（服务器上若仍残留冲突，本次会拉进来），并统计数量
     const purgedAfter = await purgeLocalSyncConflicts(db)
-    // 若清掉了冲突文档，说明服务器上可能仍残留冲突垃圾（来自旧设备/旧版代码的 push），
-    // 触发一次服务器清扫，剔除 data/merged 文件里的 sync_conflict 文档并删空文件，实现自愈。
-    if (purgedAfter > 0 && currentFs) {
-      await sweepRemoteStorageConflicts(currentFs, '/onenav').catch((e) =>
-        console.warn('[RS Sync] 服务器清扫失败:', e)
-      )
+    // 3) 若清到了冲突，说明服务器上仍残留冲突垃圾（来自旧设备/旧版代码的 push），
+    //    清扫服务器：剔除 data/merged 里所有 sync_conflict 文档；纯冲突文件整体删除，混合文件剔除冲突后写回。
+    const sweepStats =
+      purgedAfter > 0 && currentFs
+        ? await sweepRemoteStorageConflicts(currentFs, '/onenav').catch((e) => {
+            console.warn('[RS Sync] 服务器清扫失败:', e)
+            return null
+          })
+        : null
+    // 4) 服务器已干净（无冲突），手动合并一次：把清扫后剩余的文件合并成更少的 merged 文件，
+    //    恢复 autoMerge 原本的“减少文件数量”功能；因先清扫后合并，不会再重新生成冲突。
+    //    （performMerge 内部有“当月已合并过则跳过”的去重，重复调用也安全。）
+    if (sweepStats && sweepStats.dropped > 0 && currentFs) {
+      await engine.performMerge().catch((e: unknown) => console.warn('[RS Sync] 清扫后合并失败（已忽略）:', e))
     }
     // 收尾：置为已同步（done/skip 阶段已置过，幂等覆盖）
     updateSyncStatus({ status: 'synced', message: '已同步', ratio: 1 })
