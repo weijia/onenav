@@ -343,7 +343,11 @@ export async function syncToRemoteStorage(
       basePath: '/onenav',
       maxFileSize: options.maxFileSize ?? 500 * 1024,
       mergeThreshold: options.mergeThreshold ?? 50 * 1024,
-      autoMerge: options.autoMerge ?? true,
+      // 默认关闭 autoMerge：后台每 60s 的合并会把服务器上仍含 sync_conflict 文档的 data 文件
+      // 重新合并成新的 merged 文件——这正是“删了文件但文件反而更多”的来源之一，
+      // 且它与下方 sweepRemoteStorageConflicts 互相竞争（合并可能在清扫前把冲突又写回）。
+      // 关掉后，冲突只能由 purgedAfter>0 触发的服务器清扫单向剔除，不再被合并重新生成。
+      autoMerge: options.autoMerge ?? false,
       conflictResolver: resolveOneNavSyncConflict,
       onProgress,
     })
@@ -406,7 +410,7 @@ export async function createSyncEngine(
     basePath: '/onenav',
     maxFileSize: options.maxFileSize ?? 500 * 1024,
     mergeThreshold: options.mergeThreshold ?? 50 * 1024,
-    autoMerge: options.autoMerge ?? true,
+    autoMerge: options.autoMerge ?? false, // 关闭 autoMerge，避免后台合并重新生成冲突文件
     conflictResolver: resolveOneNavSyncConflict,
     onProgress,
   })
