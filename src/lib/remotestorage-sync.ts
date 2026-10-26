@@ -202,7 +202,7 @@ export function createSyncSafeDb(db: PouchDB.Database): PouchDB.Database {
  * 冲突解析已改为确定性解决不再新生成；这里兜底清除本地存量，避免其在服务器瘦身后
  * 又被当作「新增文档」重新 push 回服务器。
  */
-async function purgeLocalSyncConflicts(db: PouchDB.Database): Promise<void> {
+async function purgeLocalSyncConflicts(db: PouchDB.Database): Promise<number> {
   const res = await db
     .allDocs({
       startkey: 'sync_conflict:',
@@ -212,7 +212,7 @@ async function purgeLocalSyncConflicts(db: PouchDB.Database): Promise<void> {
     .catch(() => null)
   const rows = res?.rows ?? []
   const docs = rows.map((r: any) => r.doc).filter((d: any) => d && typeof d._rev === 'string')
-  if (docs.length === 0) return
+  if (docs.length === 0) return 0
   for (let i = 0; i < docs.length; i += 200) {
     const batch = docs
       .slice(i, i + 200)
@@ -220,6 +220,89 @@ async function purgeLocalSyncConflicts(db: PouchDB.Database): Promise<void> {
     await db.bulkDocs(batch as any).catch((e) => console.warn('[RS Sync] 清理 sync_conflict 失败:', e))
   }
   console.log(`[RS Sync] 已清理本地 ${docs.length} 个 sync_conflict 文档`)
+  return docs.length
+}
+
+/**
+ * 清扫服务器上遗留的 sync_conflict 文档（自愈服务器，防止目录再次膨胀）。
+ *
+ * 背景：旧版解析器 / 老设备可能已把大量 sync_conflict 文档 push 到服务器的 data/merged 文件里，
+ * 而仅清本地 PouchDB 不会删除这些服务器文件。本函数在同步后按需运行：
+ * 递归列出 data/ + merged/ 下所有 .json 文件，剔除 _id 以 sync_conflict: 开头的文档；
+ * 若某文件剩余文档为空则删除整文件，否则写回过滤后的内容。
+ *
+ * 返回本次清扫的统计（供日志 / 上报）。
+ */
+async function sweepRemoteStorageConflicts(
+  fs: RemoteStorageFileSystem,
+  basePath = '/onenav'
+): Promise<{ files: number; dropped: number; deleted: number; filtered: number }> {
+  const stats = { files: 0, dropped: 0, deleted: 0, filtered: 0 }
+  const jsonFiles: string[] = []
+  const seen = new Set<string>()
+
+  const join = (dir: string, name: string) => `${dir.replace(/\/+$/, '')}/${name}`
+
+  async function walk(dir: string): Promise<void> {
+    let entries: string[] = []
+    try {
+      entries = await fs.readdir(dir)
+    } catch {
+      return
+    }
+    for (const name of entries) {
+      if (name === '.' || name === '..' || name === '.keep' || name === 'manifest.json') continue
+      const full = join(dir, name)
+      if (seen.has(full)) continue
+      seen.add(full)
+      let isDir = false
+      try {
+        const st = await fs.stat(full)
+        isDir = st.isDirectory()
+      } catch {
+        continue
+      }
+      if (isDir) {
+        await walk(full)
+      } else if (/\.json$/.test(name)) {
+        jsonFiles.push(full)
+      }
+    }
+  }
+
+  await walk(join(basePath, 'data'))
+  await walk(join(basePath, 'merged'))
+
+  for (const path of jsonFiles) {
+    try {
+      const content = await fs.readFile(path, 'utf8')
+      const data = JSON.parse(content)
+      const docs = Array.isArray(data?.documents) ? data.documents : []
+      const keep = docs.filter(
+        (d: any) => !(d && typeof d._id === 'string' && d._id.startsWith('sync_conflict:'))
+      )
+      const dropped = docs.length - keep.length
+      if (dropped === 0) continue
+      stats.dropped += dropped
+      stats.files++
+      if (keep.length === 0) {
+        await fs.unlink(path).catch(() => {})
+        stats.deleted++
+      } else {
+        data.documents = keep
+        await fs.writeFile(path, JSON.stringify(data)).catch(() => {})
+        stats.filtered++
+      }
+    } catch {
+      // 单个文件失败不影响整体清扫
+    }
+  }
+  if (stats.files > 0) {
+    console.log(
+      `[RS Sync] 服务器清扫完成：处理 ${stats.files} 个文件，剔除 ${stats.dropped} 个冲突文档（删 ${stats.deleted} 个空文件，改写 ${stats.filtered} 个）`
+    )
+  }
+  return stats
 }
 
 /**
@@ -271,10 +354,22 @@ export async function syncToRemoteStorage(
       console.warn('[RS Sync] 清除远端目录列表缓存失败（已忽略）:', e)
     )
 
+    // 关键：在任何 push 之前先清除本地遗留的 sync_conflict 文档。
+    // 若不先清，engine.sync() 内部 push 阶段会把这些冲突文档当作普通新增文档上传到服务器
+    // （这正是此前“服务器目录又长回去/从别处同步过去”的根因——purge 放在 sync 之后已来不及）。
+    await purgeLocalSyncConflicts(db)
+
     await engine.initialize()
     await engine.sync()
-    // 同步落定后清除本地遗留的 sync_conflict 文档，避免其被再次 push 回服务器
-    await purgeLocalSyncConflicts(db)
+    // 同步落定后再清一次：把本次从服务器拉到的 sync_conflict 文档也清掉，并统计数量
+    const purgedAfter = await purgeLocalSyncConflicts(db)
+    // 若清掉了冲突文档，说明服务器上可能仍残留冲突垃圾（来自旧设备/旧版代码的 push），
+    // 触发一次服务器清扫，剔除 data/merged 文件里的 sync_conflict 文档并删空文件，实现自愈。
+    if (purgedAfter > 0 && currentFs) {
+      await sweepRemoteStorageConflicts(currentFs, '/onenav').catch((e) =>
+        console.warn('[RS Sync] 服务器清扫失败:', e)
+      )
+    }
     // 收尾：置为已同步（done/skip 阶段已置过，幂等覆盖）
     updateSyncStatus({ status: 'synced', message: '已同步', ratio: 1 })
   } catch (err) {
