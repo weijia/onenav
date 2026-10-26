@@ -30,7 +30,7 @@
   - 状态机：`loading` / `error` / `empty` / `data`。
   - 未连接 / 鉴权失败（Q5）→「去连接」引导，按钮跳回主页 `../../index.html` 完成连接 + 重试。
   - 手动刷新按钮（Q6，无自动刷新）。
-  - 主机卡片：名称、在线/离线徽标、局域网 IP、平台/主机名/架构、采集时间。
+  - 主机卡片：名称、在线/离线徽标、局域网 IP、平台/主机名/架构、采集时间（取自 `last_access`，可选 `last_access_str` 优先）；控制节点卡片同样展示采集时间。
   - 磁盘子卡片：型号、序列号、容量、接口、介质、温度、健康徽标（PASSED→绿 / 否则红 / 无 SMART→灰）、分区映射（物理盘→逻辑盘，使用率进度条，>=90% 红 / >=70% 黄 / 否则绿）。
   - 敏感字段（Q8）：密码遮罩 `•••` + 点击眼睛图标揭示/隐藏。
 
@@ -38,7 +38,7 @@
 - [x] `npm run build` 通过（exit 0）；`dist/apps/hostmonitor/index.html` 与 `dist/assets/app-hostmonitor-*.js` 已产出；首页「应用」区出现「设备监控」卡片（经 `AppCard` 用 `app.entry` 跳转）。
 
 ## 4.6 单元测试 (P5) ✅
-- [x] `src/components/apps/hostmonitor/normalize.test.ts`：用样本 JSON 覆盖分类(Q3)、融合、30min 在线判定(Q6)、敏感字段(Q8)、节点控制跳过、空输入健壮性。
+- [x] `src/components/apps/hostmonitor/normalize.test.ts`：用样本 JSON 覆盖分类(Q3)、融合、30min 在线判定(Q6)、敏感字段(Q8)、节点控制跳过、空输入健壮性；新增 `formatLastAccess` 6 项单测（优先 `last_access_str`、空值回退 `last_access`、秒级时间戳、vue-element-admin 节点对象端到端）。
 - [x] 引入 `vitest`（devDependency）并新增 `test` 脚本（见 package.json）。
 
 ## 跨项目前置（非本应用任务，需另行跟进）

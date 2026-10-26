@@ -18,7 +18,7 @@ import {
 } from 'lucide-react'
 import { fetchUfsNodesRaw, RsNotConnectedError, RsAuthError } from './hostmonitor/fetch'
 import { reauthorizeForUfsNodes } from '@/lib/remotestorage-connection'
-import { normalizeUfsNodes, filterHostsByDiskInfo } from './hostmonitor/normalize'
+import { normalizeUfsNodes, filterHostsByDiskInfo, formatLastAccess } from './hostmonitor/normalize'
 import type { DiskInfoFilter } from './hostmonitor/normalize'
 import type { ControlNodeView, DiskView, HostView, LogicalDiskView, SensitiveField } from './hostmonitor/types'
 
@@ -360,6 +360,7 @@ function DiskCard({ disk }: { disk: DiskView }) {
 }
 
 function HostCard({ host }: { host: HostView }) {
+  const lastAccessText = formatLastAccess(host)
   return (
     <div className="rounded-xl bg-white/5 border border-white/10 p-4 space-y-3">
       <div className="min-w-0">
@@ -379,7 +380,7 @@ function HostCard({ host }: { host: HostView }) {
               {host.machine ? ` · ${host.machine}` : ''}
             </div>
           )}
-          {host.lastAccessStr && <div>采集时间: {host.lastAccessStr}</div>}
+          {lastAccessText && <div>采集时间: {lastAccessText}</div>}
         </div>
       </div>
 
@@ -408,6 +409,7 @@ function HostCard({ host }: { host: HostView }) {
 }
 
 function ControlNodeCard({ node }: { node: ControlNodeView }) {
+  const lastAccessText = formatLastAccess(node)
   return (
     <div className="rounded-xl bg-amber-500/[0.07] border border-amber-400/20 p-4 space-y-2">
       <div className="flex items-center gap-2 min-w-0">
@@ -416,6 +418,7 @@ function ControlNodeCard({ node }: { node: ControlNodeView }) {
         <OnlineBadge online={node.online} />
       </div>
       <div className="text-white/40 text-xs font-mono break-all">UUID: {node.uuid}</div>
+      {lastAccessText && <div>采集时间: {lastAccessText}</div>}
       {node.sensitive.length > 0 ? (
         <div className="rounded-lg bg-amber-500/10 border border-amber-400/20 p-2 space-y-1">
           {node.sensitive.map((s) => (

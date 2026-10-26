@@ -4,7 +4,12 @@
 // 不依赖远程存储，使用样本 JSON 直接验证归一化逻辑。
 
 import { describe, it, expect } from 'vitest'
-import { normalizeUfsNodes, filterHostsByDiskInfo, hostHasDiskInfo } from './normalize'
+import {
+  normalizeUfsNodes,
+  filterHostsByDiskInfo,
+  hostHasDiskInfo,
+  formatLastAccess,
+} from './normalize'
 import type { HostView } from './types'
 
 // ── 样本数据（对齐 my-data 文档格式）──
@@ -237,5 +242,51 @@ describe('filterHostsByDiskInfo（磁盘信息过滤）', () => {
     const { hosts: hs } = normalizeUfsNodes([heartbeat, nodeControl])
     const r = filterHostsByDiskInfo(hs, 'all')
     expect(r.find((h) => h.uuid === 'node-ctrl-1')).toBeUndefined()
+  })
+})
+
+describe('formatLastAccess (采集时间展示文本兜底)', () => {
+  it('优先使用 last_access_str（人类可读字符串）', () => {
+    expect(
+      formatLastAccess({ lastAccessStr: '2024-07-02 12:09:03', lastAccessMs: 1719876543210 }),
+    ).toBe('2024-07-02 12:09:03')
+  })
+
+  it('last_access_str 为空时回退到 last_access 本地化格式化', () => {
+    const t = formatLastAccess({ lastAccessStr: '', lastAccessMs: 1719876543210 })
+    expect(typeof t).toBe('string')
+    expect(t).not.toBeNull()
+    expect((t as string).length).toBeGreaterThan(0)
+  })
+
+  it('仅有 last_access（无 last_access_str，如 vue-element-admin 节点对象）也能显示时间', () => {
+    const t = formatLastAccess({ lastAccessMs: 1719876543210 })
+    expect(t).not.toBeNull()
+  })
+
+  it('秒级时间戳（< 1e12）同样能格式化', () => {
+    const t = formatLastAccess({ lastAccessMs: 1719876543 })
+    expect(t).not.toBeNull()
+  })
+
+  it('两者皆无时返回 null（UI 据此不渲染该行）', () => {
+    expect(formatLastAccess({})).toBeNull()
+    expect(formatLastAccess({ lastAccessStr: '', lastAccessMs: null })).toBeNull()
+  })
+
+  it('端到端：vue-element-admin 节点对象（无 last_access_str）经归一化后仍能在卡片显示采集时间', () => {
+    // 节点控制对象通常只含 last_access，不含 last_access_str
+    const { controlNodes } = normalizeUfsNodes([
+      {
+        uuid: 'node-x',
+        name: '客厅控制板',
+        status: 'online',
+        last_access: 1719876543210,
+        capabilities: [{ id: 'power', type: 'action', label: '电源控制' }],
+      },
+    ])
+    expect(controlNodes).toHaveLength(1)
+    const text = formatLastAccess(controlNodes[0])
+    expect(text).not.toBeNull()
   })
 })

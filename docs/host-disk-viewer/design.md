@@ -39,7 +39,9 @@
 - 状态机：`loading` / `error` / `empty` / `data`。
 - **未连接（Q5）**：显示「去连接」引导，跳转回主页 `../../index.html` 完成 onenav 现有 RemoteStorage OAuth 连接，并提供重试。
 - **刷新（Q6）**：无自动刷新；提供手动刷新按钮，重新拉取 `/ufs-nodes/`。
-- 主机卡片：名称、在线/离线徽标、局域网 IP、平台/主机名/架构、采集时间。
+- 主机卡片：名称、在线/离线徽标、局域网 IP、平台/主机名/架构、采集时间（取自 `last_access`，可选 `last_access_str` 优先）；控制节点卡片同样展示采集时间。
+  - 采集时间展示规则：优先 `last_access_str`（可选，home_cloud 心跳）；若缺失则用必填的 `last_access` 毫秒时间戳经 `new Date(ms).toLocaleString()` 本地化格式化兜底。原因：`ufs-nodes/` 可能同时含 vue-element-admin 的节点控制对象（**无** `last_access_str`，仅 `last_access`）与省略该字段的 home_cloud 心跳；二者 `last_access` 均为必填，故展示时间必须以 `last_access` 为准，不能依赖可能缺失的 `last_access_str`（详见 `host-disk-info-format.md` 与 `ufs-nodes-remotestorage-format.md`）。
+  - 实现：`normalize.ts` 导出纯函数 `formatLastAccess({ lastAccessStr, lastAccessMs })`，UI 两处卡片统一调用。
 - 磁盘区：型号、序列号、容量、温度、健康（PASSED→绿 / 否则红 / 无 SMART→灰）、接口、介质、分区数；分区映射（来自 `{uuid}_disks.json`）：物理盘 → 逻辑盘（盘符/文件系统/已用% 进度条，>=90% 红 / >=70% 黄 / 否则绿）。
 - **控制节点区（Q3+Q8 协调）**：节点控制对象作为独立分组展示（不混入主机监控），其 `mqtt.password`/`secret` 等敏感字段以「密码遮罩 + 点击揭示」呈现，不原样明文暴露、也不硬性剔除。
 - 主机卡片内的 mqtt 敏感字段（兜底）：若某主机心跳意外携带 mqtt，同样遮罩揭示。

@@ -45,6 +45,29 @@ function toMs(v: unknown): number | null {
   return n < 1e12 ? n * 1000 : n
 }
 
+/**
+ * 生成「最后更新 / 采集时间」展示文本。
+ * 优先使用生产方提供的 last_access_str（人类可读字符串，格式 "YYYY-MM-DD HH:MM:SS"）；
+ * 若缺失，则用必填的 last_access 毫秒时间戳本地化格式化兜底。
+ *
+ * 必要性（见 my-data 两份格式文档）：
+ *   - home_cloud 心跳的 last_access_str 为「可选」字段，可能省略；
+ *   - vue-element-admin 节点控制对象根本没有 last_access_str，仅含 last_access。
+ * 而 last_access 在两个文档里都是「必填」数值字段，因此展示时间必须以它为准，
+ * 不能依赖可能缺失 / 不存在的 last_access_str，否则 vue-element-admin 节点或
+ * 省略该字段的 home_cloud 心跳会整行不显示时间。
+ */
+export function formatLastAccess(view: {
+  lastAccessStr?: string | null
+  lastAccessMs?: number | null
+}): string | null {
+  if (view.lastAccessStr && view.lastAccessStr.trim() !== '') return view.lastAccessStr
+  if (view.lastAccessMs != null && Number.isFinite(view.lastAccessMs)) {
+    return new Date(view.lastAccessMs).toLocaleString()
+  }
+  return null
+}
+
 /** 把原始对象数组分类为带 kind 的解析结果 */
 function classify(raws: unknown[], knownHostUuids: Set<string>): Array<{ kind: FileKind; raw: RawNodeFile }> {
   const out: Array<{ kind: FileKind; raw: RawNodeFile }> = []
