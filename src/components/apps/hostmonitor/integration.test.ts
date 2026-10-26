@@ -21,6 +21,8 @@ const h = vi.hoisted(() => ({
   authError: false,
   // 模拟未连接：getStorageCredentials 返回 null
   noCredentials: false,
+  // fetch 拉取前调用 invalidateDirListing 的次数（用于断言缓存清理行为）
+  invalidateCalls: 0,
 }))
 
 vi.mock('@/lib/remotestorage-connection', () => ({
@@ -45,6 +47,10 @@ vi.mock('@/lib/remotestorage-fs', () => {
       const v = h.files[name]
       return typeof v === 'string' ? v : JSON.stringify(v)
     }
+    // 对应远端目录列表缓存清理（方案 A）：真实实现会清掉 readdir 的 2 分钟缓存
+    async invalidateDirListing(): Promise<void> {
+      h.invalidateCalls++
+    }
   }
   return { RemoteStorageFileSystem: FakeRemoteStorageFileSystem }
 })
@@ -63,6 +69,7 @@ beforeEach(() => {
   h.readFileError = null
   h.authError = false
   h.noCredentials = false
+  h.invalidateCalls = 0
 })
 
 // ── 样本数据（对齐 my-data 文档格式）──
@@ -297,5 +304,15 @@ describe('设备监控 集成测试：fetch → normalize 数据管线', () => {
     const second = normalizeUfsNodes(await fetchUfsNodesRaw())
     expect(first.hosts[0].uuid).toBe(second.hosts[0].uuid)
     expect(first.hosts[0].disks[0].serial).toBe(second.hosts[0].disks[0].serial)
+  })
+
+  it('B-9 拉取前清目录缓存（方案 A）：每次 fetch 都先调用 invalidateDirListing，确保远端新增/删除节点立即可见，而非等 2 分钟缓存 TTL', async () => {
+    seedFiles({ 'host-1.json': heartbeatHost1 })
+    h.invalidateCalls = 0
+    await fetchUfsNodesRaw()
+    expect(h.invalidateCalls).toBe(1)
+    // 手动刷新也应再次清缓存
+    await fetchUfsNodesRaw()
+    expect(h.invalidateCalls).toBe(2)
   })
 })

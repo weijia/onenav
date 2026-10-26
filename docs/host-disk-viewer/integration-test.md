@@ -2,6 +2,7 @@
 
 > 关联：`open-questions.md`、`design.md`、`fetch.ts`、`normalize.ts`、`HostDiskApp.tsx`
 > 运行方式：`npm test`（=`vitest run`）已覆盖「远程存储获取层 → 归一化层」真实代码路径（mock 掉 `@/lib/remotestorage-fs` 与 `@/lib/remotestorage-connection`）。
+> 数据来源说明：设备监控**只读 RemoteStorage 的 `ufs-nodes/` 目录**（直连 `zen-fs-remotestoragejs`），不经过 PouchDB；中间一层 `zen-fs-cache` 把目录列表按 2 分钟 TTL 缓存到 IndexedDB。因此 fetch 在拉取前先调 `invalidateDirListing()` 清掉目录缓存，保证远端新增/删除节点立即可见（方案 A）。
 
 ## 自动化范围说明
 - **可自动化（已执行）**：数据管线 `fetchUfsNodesRaw() → normalizeUfsNodes()`。通过 mock 远程存储文件系统，用受控文件清单/内容驱动真实 `fetch.ts`，再交给真实 `normalize.ts`，断言端到端结果。覆盖 E2E-1 与 B-1~B-8 中除「纯浏览器交互」外的全部判定点。见 `src/components/apps/hostmonitor/integration.test.ts`（11 个集成用例）；磁盘信息过滤（B-8）的纯逻辑在 `normalize.test.ts` 单测覆盖（`hostHasDiskInfo` / `filterHostsByDiskInfo`）。
@@ -25,6 +26,7 @@
 | B-6 | 节点控制含 mqtt 密码/密钥 | 归一化 | 标记 `sensitive:true`（UI 据此外遮罩，DOM 默认不暴露明文） | sensitive 含「MQTT 密码」「AES 密钥」且 sensitive=true | ✅ 自动化（点击揭示交互需人工） |
 | B-7 | 缺 `{uuid}_disks.json` | 拉取+融合 | 心跳+SMART 仍展示主机，`hasDetail=false` | 主机展示、磁盘来自 SMART | ✅ 自动化 |
 | B-8 | 混合主机：有的有磁盘信息、有的仅心跳无磁盘 | 拉取+归一化+过滤 | 磁盘信息过滤器正确区分两类主机 | `hostHasDiskInfo`/`filterHostsByDiskInfo` 三模式（全部/有磁盘/无磁盘）结果正确，counts 之和=总数，不改变原数组，控制节点不参与过滤 | ✅ 自动化 |
+| B-9 | 远端目录缓存（zen-fs-cache 2 分钟 TTL） | 拉取 | 每次 fetch 先调 `invalidateDirListing()` 清目录缓存，确保新增/删除节点无需等 TTL 即见 | 集成测试断言每次 fetch 调用 `invalidateDirListing` 一次；失败时自吞异常不阻断读取 | ✅ 自动化 |
 
 ## 手工 E2E 演练（需人工，浏览器 + 已连接账号）
 1. **连接与未连接（B-4/Q5）**：在已退出 onenav RemoteStorage 的状态下打开「设备监控」→ 应见「去连接」引导；点按钮回主页完成 OAuth 连接后刷新本页 → 数据出现。
@@ -45,7 +47,8 @@
 | B-6 | ✅ PASS | 数据层 sensitive 已断言；DOM 揭示待人工 |
 | B-7 | ✅ PASS | 自动化 |
 | B-8（磁盘信息过滤） | ✅ PASS | 单测 6 用例覆盖三模式 + 计数 + 不可变性 + 控制节点隔离 |
-| 汇总 | **27 用例全绿**（单测 12 + 集成 11 + bookmarks 4），`npm test` 稳定通过 | 沙箱已用 `vitest.config.ts` 单线程池规避 brokered-fs EPERM |
+| B-9（拉取前清目录缓存） | ✅ PASS | 集成测试断言每次 fetch 调 `invalidateDirListing`；failure 不阻断 |
+| 汇总 | **64 用例全绿**（`npm test` 全工程通过），hostmonitor 子集含集成 13 + 单测 12、bookmarks 4 | 沙箱已用 `vitest.config.ts` 单线程池规避 brokered-fs EPERM |
 
 ## 遗留 / 跨项目项
 - [ ] 人工在真实环境跑「手工 E2E 演练」（需已连接 RS + home_cloud 已产出明细）。

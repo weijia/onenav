@@ -57,6 +57,16 @@ export async function fetchUfsNodesRaw(): Promise<unknown[]> {
 
   const fs = new RemoteStorageFileSystem({ href: credentials.href, token: credentials.token })
 
+  // 清掉目录列表缓存，确保本次能枚举到最新远端的 ufs-nodes 结构。
+  // 背景：zen-fs-cache 写文件只失效直接父目录、不失效祖先链；本页只读不写，
+  // 若不主动清，远端新增/删除的节点文件最多要等 2 分钟目录缓存 TTL 才可见。
+  // invalidateDirListing 内部已自吞异常，这里再兜一层防止任何意外阻断读取。
+  try {
+    await fs.invalidateDirListing()
+  } catch (e) {
+    console.warn('[hostmonitor] 清除 ufs-nodes 目录缓存失败（已忽略）:', e)
+  }
+
   // readdir 对结尾斜杠的要求因服务器而异：先试无斜杠，再试有斜杠。
   let names: string[] = []
   for (const dir of [UFS_DIR, `${UFS_DIR}/`]) {
