@@ -96,6 +96,18 @@ export default function HostDiskApp() {
       {state === 'empty' && <EmptyState onRetry={load} />}
       {state === 'data' && (
         <div className="space-y-5">
+          {/* 在线设备置顶：控制节点（当前为在线设备）渲染在最上方 */}
+          {controlNodes.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-1.5 text-white/40 text-xs px-1">
+                <ShieldAlert className="w-3.5 h-3.5" />
+                控制节点（敏感凭证已遮罩，点击揭示）
+              </div>
+              {controlNodes.map((n) => (
+                <ControlNodeCard key={n.uuid} node={n} />
+              ))}
+            </div>
+          )}
           {/* 磁盘信息过滤：区分有 / 无磁盘信息的主机 */}
           <div className="flex items-center gap-2 text-xs">
             <span className="text-white/40 shrink-0">筛选</span>
@@ -115,17 +127,6 @@ export default function HostDiskApp() {
               ))
             )}
           </div>
-          {controlNodes.length > 0 && (
-            <div className="space-y-2">
-              <div className="flex items-center gap-1.5 text-white/40 text-xs px-1">
-                <ShieldAlert className="w-3.5 h-3.5" />
-                控制节点（敏感凭证已遮罩，点击揭示）
-              </div>
-              {controlNodes.map((n) => (
-                <ControlNodeCard key={n.uuid} node={n} />
-              ))}
-            </div>
-          )}
         </div>
       )}
     </div>
