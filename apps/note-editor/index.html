@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>笔记编辑器 · OneNav</title>
+    <!--
+      直接跳转到独立编辑器页面（note-editor.html）。
+      不再加载 onenav 外壳 / iframe：编辑器本体是自包含单页（从 CDN 加载 Vue + 笔记组件 + Vditor），
+      它自带「返回主页」按钮可回到 onenav 首页。本文件只是从 onenav 应用卡片到该页面的一个转发入口。
+    -->
+    <meta http-equiv="refresh" content="0; url=../../note-editor.html" />
+  </head>
+  <body>
+    <script>
+      // JS 兜底（个别环境禁用 meta refresh 时）
+      location.replace('../../note-editor.html')
+    </script>
+  </body>
+</html>

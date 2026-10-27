@@ -1,0 +1,961 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Git/Gitee 笔记 · 多文档库</title>
+
+<!-- 组件样式（来自 vue-note-sidebar / vue-note-editor / vue-note-backend-config） -->
+<link rel="stylesheet" href="https://unpkg.com/@richard432/vue-note-sidebar@0.3.2/style.css">
+<link rel="stylesheet" href="https://unpkg.com/vue-note-editor@0.2.2/style.css">
+<link rel="stylesheet" href="https://unpkg.com/vue-note-backend-config@0.2.2/style.css">
+
+<!--
+  ★ Vditor 预加载（锁定版本 + 多 CDN 兜底）
+  vue-note-editor@0.2.2 已在包内修复 Vditor 的 cdn base（去掉多余的 /dist）。
+  这里预加载 Vditor 到 window.Vditor，组件会复用它，避免重复拉取；
+  同时锁定 3.11.3（避免 @3 浮动版本导致表格工具条等行为偶发变化 / 失效），
+  并优先 jsDelivr（国内可达），失败再回退 unpkg。
+  用 defer 保证它在页面 module 脚本之前执行完毕，且不阻塞 HTML 解析。
+-->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/vditor@3.11.3/dist/index.css"
+      onerror="this.onerror=null;this.href='https://unpkg.com/vditor@3.11.3/dist/index.css'">
+<script defer src="https://cdn.jsdelivr.net/npm/vditor@3.11.3/dist/index.min.js"
+        onerror="this.onerror=null;this.src='https://unpkg.com/vditor@3.11.3/dist/index.min.js'"></script>
+
+<!--
+  import map 说明：
+  - vue：统一实例（所有组件 ?external=vue 都解析到这里）
+  - vue-note-sidebar / vue-note-editor / vue-note-backend-config：沿用原仓库组件
+  - isomorphic-git + @isomorphic-git/lightning-fs：供 note-core 的 Git 后端使用
+  - note-core：核心库（@richard432/note-core@0.3.2，esm.sh 加载），内置 Git / Gitee /
+    PouchDB / WebDAV 四种 Provider；Git 走 isomorphic-git，Gitee 走 zen-fs-gitee。
+  - Gitee 后端依赖链（纯 CDN，esm.sh 转译，无需本地 bundle，但需联网）：
+      @zenfs/core  —— ?bundle&external=kerium,utilium：把崩溃源 memium 内联进自身
+                      （修复 esm.sh 拆分 memium 导致的 struct 初始化崩溃），kerium/utilium
+                      改为裸导入，交由下方 import map 统一提供「同一份实例」。
+      zen-fs-gitee —— ?external=@zenfs/core,kerium,utilium,zen-fs-cache：自身不打包这些，复用同一份。
+      kerium / utilium —— 单独映射，确保 @zenfs/core 与 zen-fs-gitee 共享同一实例
+                      （kerium 注册全局结构体类型，双份加载会抛 Type is already registered）。
+      kerium / utilium 子路径——@zenfs/core 内部还 import 了
+                      kerium/locks、kerium/log、utilium/{buffer,cache,checksum,misc,requests,string}
+                      等子路径，已在 import map 中逐条显式映射（不使用 `*` 通配符，
+                      因部分浏览器不支持通配符前缀解析）；缺任一会报
+                      “Failed to resolve module specifier 'kerium/log'”。
+                      注：kerium/locks、kerium/log 子路径不加 ?external（esm.sh 对子路径+external
+                      构建报磁盘错误），但其内部 import 的是 esm.sh 规范化的 /utilium@3.9.0/...
+                      绝对路径，与 utilium 映射指向同一份实例，故不破坏单例。
+      zen-fs-gitee@1.2.33 内部就 import 了 zen-fs-cache（用它的 IdbKVStore 持久化
+      shaCache / contentCache / mtimeCache）；本页进一步把 note-core 的 GiteeFS 实例
+      套上 zen-fs-cache 的 CachedFileSystem（IndexedDB）。GiteeFS 实现了 getRevision()
+      —— 返回 git blob SHA，**零网络**，所以命中缓存时既不下载内容、
+      也不再逐个文件请求 Commits API（消除“等所有 commit 过一遍”的等待）。
+      zen-fs-cache 必须保持单实例，故 zen-fs-gitee / note-core 都将其列入 external，
+      并在下方 import map 里给出唯一映射。
+      注：zen-fs-cache@1.0.6 是用户维护的 npm 包（github.com/weijia/zen-fs-cache）。
+      ★ 关键点：@zenfs/core 绝不能让 esm.sh 裸转译（会崩），故必须 ?bundle；而 kerium/utilium
+      必须共享同一实例，故用 ?external + import map 去重。zen-fs-gitee 内部 import 了
+      “@zenfs/core/constants” 裸子路径，已显式补映射，否则浏览器解析失败。
+      本页开启 useCommitTimeAsMtime（直接用 Gitee commit 时间作为文件 mtime，跳过 .mtime
+      边车探测，避免对不存在的边车发 404 + 误导性 ERROR 日志）。注意该 flag 由**消费端配置**
+      提供：新建库时在 addGitee() 写入；已存在的库由 migrateGiteeOptions() 就地补写进
+      localStorage（否则刷新后从旧 config 恢复，flag 丢失、404 复现）。
+  ⚠️ 纯 CDN 方案需联网；且因使用 import map + ES 模块，需通过 http(s) 服务打开
+    （如 python -m http.server），直接双击 file:// 打开不可靠。
+-->
+<script type="importmap">
+{
+  "imports": {
+    "vue": "https://unpkg.com/vue@3.5.13/dist/vue.esm-browser.prod.js",
+    "@richard432/vue-note-sidebar": "https://esm.sh/@richard432/vue-note-sidebar@0.3.2?external=vue",
+    "vue-note-editor": "https://esm.sh/vue-note-editor@0.2.2?external=vue",
+    "vue-note-backend-config": "https://esm.sh/vue-note-backend-config@0.2.2?external=vue",
+    "isomorphic-git": "https://esm.sh/isomorphic-git@1.27.0",
+    "isomorphic-git/http/web": "https://esm.sh/isomorphic-git@1.27.0/http/web",
+    "@isomorphic-git/lightning-fs": "https://esm.sh/@isomorphic-git/lightning-fs@4.6.0",
+    "@zenfs/core": "https://esm.sh/@zenfs/core@2.7.7?bundle&external=kerium,utilium",
+    "@zenfs/core/constants": "https://esm.sh/@zenfs/core@2.7.7/constants?external=kerium,utilium",
+    "zen-fs-gitee": "https://esm.sh/zen-fs-gitee@1.2.33?external=@zenfs/core,kerium,utilium,zen-fs-cache",
+    "zen-fs-cache": "https://esm.sh/zen-fs-cache@1.0.6?bundle",
+    "kerium": "https://esm.sh/kerium@1.5.0?external=utilium",
+    "kerium/locks": "https://esm.sh/kerium@1.5.0/locks",
+    "kerium/log": "https://esm.sh/kerium@1.5.0/log",
+    "utilium": "https://esm.sh/utilium@^3.7.0",
+    "utilium/buffer": "https://esm.sh/utilium@^3.7.0/buffer",
+    "utilium/cache": "https://esm.sh/utilium@^3.7.0/cache",
+    "utilium/checksum": "https://esm.sh/utilium@^3.7.0/checksum",
+    "utilium/misc": "https://esm.sh/utilium@^3.7.0/misc",
+    "utilium/requests": "https://esm.sh/utilium@^3.7.0/requests",
+    "utilium/string": "https://esm.sh/utilium@^3.7.0/string",
+    "note-core": "https://esm.sh/@richard432/note-core@0.3.2?external=vue,@zenfs/core,zen-fs-gitee,zen-fs-cache,isomorphic-git,@isomorphic-git/lightning-fs"
+  }
+}
+</script>
+
+<script type="module">
+/* vue-note-sidebar 的 CDN 回退加载器。
+ * 起因：esm.sh 服务端偶发故障（如磁盘满 → 500 no space left on device）时，
+ * 静态 import 会让整个应用白屏。此处改为动态 import 依次尝试：
+ *   1) esm.sh（首选，import map 里已解析，且与其余依赖共享 vue 单实例）
+ *   2) unpkg dist ESM 构建（兜底；其内部 import 'vue' 同样走 import map，单实例不受影响）
+ * 两者都失败才抛错。 */
+const SIDEBAR_ESM = 'https://esm.sh/@richard432/vue-note-sidebar@0.3.2?external=vue'
+const SIDEBAR_UNPKG = 'https://unpkg.com/@richard432/vue-note-sidebar@0.3.2/dist/vue-note-sidebar.js'
+
+async function loadSidebar() {
+  const urls = [SIDEBAR_ESM, SIDEBAR_UNPKG]
+  let lastErr
+  for (const url of urls) {
+    try {
+      const mod = await import(/* @vite-ignore */ url)
+      console.warn('[index] vue-note-sidebar 加载成功：', url)
+      return mod
+    } catch (e) {
+      lastErr = e
+      console.warn('[index] vue-note-sidebar 加载失败，尝试下一个 CDN：', url, e)
+    }
+  }
+  throw lastErr
+}
+window.__loadNoteSidebar = loadSidebar
+</script>
+
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: -apple-system, "Microsoft YaHei", sans-serif; height:100vh; overflow:hidden; }
+[v-cloak]{ display:none; }
+
+/* 版本角标（页面右下角固定，放在 #app 外，模块加载失败/旧缓存也能看到） */
+.app-ver { position:fixed; right:8px; bottom:6px; font-size:11px; color:#888; opacity:.55; z-index:9999; user-select:none; pointer-events:none; }
+/* 顶栏品牌名后的版本号 */
+.brand .ver { font-size:12px; font-weight:normal; opacity:.6; margin-left:4px; }
+
+.layout { display:flex; flex-direction:column; height:100vh; }
+.body { display:flex; flex:1; min-height:0; }
+
+/* 顶栏 */
+.topbar {
+  display:flex; align-items:center; gap:10px; padding:8px 14px;
+  background:#16213a; color:#e8eefc; border-bottom:1px solid #0d1530; z-index:80;
+}
+.brand { font-size:15px; white-space:nowrap; }
+.repo-switch { display:flex; align-items:center; gap:6px; }
+.repo-switch select {
+  padding:6px 8px; border-radius:6px; border:1px solid #2c3c63;
+  background:#0f1a33; color:#e8eefc; max-width:220px;
+}
+.topbar button {
+  padding:6px 10px; border:none; border-radius:6px; background:#2d6cdf;
+  color:#fff; cursor:pointer; font-size:13px; white-space:nowrap;
+}
+.topbar button.ghost { background:transparent; border:1px solid #36507f; }
+.topbar button:disabled { opacity:.5; cursor:not-allowed; }
+.topbar a.home-btn { display:inline-flex; align-items:center; padding:6px 10px; border-radius:6px; background:#2d6cdf; color:#fff; text-decoration:none; font-size:13px; white-space:nowrap; }
+.topbar a.home-btn:hover { background:#3b7af0; }
+.spacer { flex:1; }
+.status { font-size:12px; color:#9fb3d9; }
+.status.err { color:#ffb4b4; }
+
+/* 侧边栏（沿用你提供的暗色目录风格） */
+.sidebar {
+  position:relative; width:300px; min-width:300px; height:100%;
+  background:#1e1e2e; color:#e6e6f0; display:flex; flex-direction:column;
+  box-shadow:2px 0 8px rgba(0,0,0,.3); z-index:70;
+}
+.sidebar-head { display:flex; gap:6px; padding:10px; border-bottom:1px solid #333; }
+.sidebar-head button {
+  flex:1; padding:6px; border:none; border-radius:4px; background:#2d2d44;
+  color:#fff; cursor:pointer; font-size:13px;
+}
+.search-box { padding:8px 10px; border-bottom:1px solid #333; }
+.search-box input {
+  width:100%; padding:8px; border-radius:4px; border:none;
+  background:#2d2d44; color:#fff; outline:none;
+}
+.tree { flex:1; overflow:auto; padding:6px 0; }
+.tree-row { display:flex; align-items:center; padding:5px 10px; cursor:pointer; font-size:14px; }
+.tree-row:hover { background:#2d2d44; }
+.tree-row.active { background:#3a5a80; }
+.tree-row .icon { width:20px; text-align:center; margin-right:4px; cursor:pointer; }
+.tree-row .label { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.tree-row .badge { font-size:11px; color:#9aa; background:#2d2d44; border-radius:10px; padding:0 6px; }
+.notes-head, .tags-head {
+  padding:8px 12px 4px; font-size:12px; color:#9aa;
+  text-transform:uppercase; letter-spacing:.05em;
+}
+.notes { max-height:34%; overflow:auto; padding:0 0 6px; border-bottom:1px solid #333; }
+/* 全部文件模式：目录树隐藏，笔记列表应占满侧栏剩余高度（修复下半部分空白） */
+.notes.fill { max-height:none; flex:1; min-height:0; }
+.note-row { display:flex; align-items:center; gap:6px; padding:5px 12px; cursor:pointer; font-size:14px; }
+.note-row:hover { background:#2d2d44; }
+.note-row.active { background:#3a5a80; }
+.tags { padding:8px 10px; display:flex; flex-wrap:wrap; gap:6px; }
+.chip { font-size:12px; padding:3px 8px; border-radius:12px; background:#2d2d44; color:#cdd; cursor:pointer; }
+.chip.on { background:#2d6cdf; color:#fff; }
+.chip i { font-style:normal; opacity:.7; margin-left:2px; }
+.hint { padding:10px 12px; color:#777; font-size:13px; }
+
+/* 主区 */
+.main { flex:1; display:flex; flex-direction:column; background:#fff; min-width:0; }
+.main > * { flex:1 1 auto; min-height:0; }
+.empty { flex:1; display:flex; align-items:center; justify-content:center; }
+.empty .card { max-width:440px; text-align:center; padding:30px; border:1px solid #e3e3e3; border-radius:12px; }
+.empty .card h2 { margin-bottom:10px; color:#16213a; }
+.empty .card p { color:#666; margin-bottom:16px; line-height:1.7; }
+.empty .card .primary, .modal button.primary {
+  background:#2d6cdf; color:#fff; border:none; padding:10px 18px; border-radius:8px; cursor:pointer; font-size:14px;
+}
+.empty-mini { padding:8px 14px; color:#999; font-size:13px; border-top:1px solid #eee; }
+
+/* 列表模式切换（目录 / 全部文件） */
+.mode-tabs { display:flex; gap:6px; padding:8px 10px 4px; border-bottom:1px solid #f0f0f0; }
+.mode-tab { flex:1; text-align:center; font-size:12.5px; padding:5px 8px; border-radius:6px;
+  cursor:pointer; color:#666; background:#f5f6f8; user-select:none; }
+.mode-tab:hover { background:#eceff3; }
+.mode-tab.on { background:#2d6cdf; color:#fff; }
+/* 全部文件模式：副标题显示完整路径 */
+.note-row.all-file .label { display:flex; flex-direction:column; line-height:1.25; }
+.note-row.all-file .path { font-style:normal; font-size:11px; color:#999; margin-top:1px;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.note-row.all-file.active .path { color:#cfe0ff; }
+
+/* 帮助弹窗 */
+.modal-mask { position:fixed; inset:0; background:rgba(0,0,0,.45); display:flex; align-items:center; justify-content:center; z-index:200; }
+.modal { background:#fff; color:#222; padding:22px 24px; border-radius:12px; max-width:600px; max-height:82vh; overflow:auto; line-height:1.7; }
+.modal h3 { margin-bottom:10px; color:#16213a; }
+.modal p, .modal li { font-size:14px; color:#444; margin:6px 0; }
+.modal code { background:#f0f0f0; padding:1px 6px; border-radius:4px; font-size:12.5px; }
+.modal button { margin-top:16px; background:#2d6cdf; color:#fff; border:none; padding:8px 16px; border-radius:8px; cursor:pointer; }
+
+/* 致命错误兜底 */
+#fatal { position:fixed; inset:0; background:#1e1e2e; color:#ffb4b4; padding:28px; font-family:monospace; white-space:pre-wrap; z-index:999; overflow:auto; display:none; }
+
+/* 侧栏滑入动画 */
+.slide-enter-active, .slide-leave-active { transition: transform .25s ease, opacity .25s ease; }
+.slide-enter-from, .slide-leave-to { transform: translateX(-100%); opacity:0; }
+
+/* 顶栏折叠菜单（宽屏隐藏，窄屏由下面的 media query 打开） */
+.more-wrap { display:none; position:relative; flex:none; }
+.more-btn { padding:6px 11px !important; font-size:17px; line-height:1; }
+/* 「⋯」菜单打开时的透明遮罩：点任意空白处即可关闭 */
+.more-mask { position:fixed; inset:0; z-index:190; }
+.more-menu {
+  position:absolute; right:0; top:38px; min-width:180px; padding:4px;
+  background:#0f1a33; border:1px solid #36507f; border-radius:8px;
+  display:flex; flex-direction:column; gap:2px; z-index:200;
+  box-shadow:0 8px 22px rgba(0,0,0,.45);
+}
+.more-menu button {
+  background:transparent; border:none; color:#e8eefc; text-align:left;
+  padding:10px 12px; border-radius:6px; font-size:14px; cursor:pointer; white-space:nowrap;
+}
+.more-menu button:disabled { opacity:.5; cursor:not-allowed; }
+.more-menu button:active { background:#2d6cdf; }
+.more-menu hr { border:none; border-top:1px solid #2c3c63; margin:4px 2px; }
+
+/* 抽屉遮罩：仅窄屏（侧栏浮层）时显示 */
+.sidebar-mask { display:none; position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:140; }
+
+/* ---------- Vditor 表格：贴合编辑框宽度 + 消除“被推到表格底部才看得到的横向滚动条” ---------- */
+/* Vditor 渲染的表格在 .vditor-reset / .vditor-wysiwyg / .vditor-ir 内，默认宽度不跟随编辑框、
+   单元格也不换行，宽表会超出编辑框 → 横向滚动条被挤到表格最底部才出现。
+   这里强制表格宽度=编辑框、列宽随内容自适应（保留比例），单元格内容可断行，
+   从而不会溢出、无需横向滚动条，两个问题一并解决。 */
+.vditor-reset table,
+.vditor-wysiwyg table,
+.vditor-ir table {
+  width: 100% !important;
+}
+.vditor-reset table th,
+.vditor-reset table td,
+.vditor-wysiwyg table th,
+.vditor-wysiwyg table td,
+.vditor-ir table th,
+.vditor-ir table td {
+  /* 覆盖 Vditor 自带 `.vditor-reset table td/th { white-space:nowrap; word-break:normal }`，
+     否则单元格禁止换行 → 表格超出编辑框、横向滚动条被挤到表格底部 */
+  white-space: normal !important;
+  word-break: break-word !important;
+  overflow-wrap: anywhere !important;
+}
+
+/* ---------- 窄屏 / 手机适配（≤768px） ---------- */
+@media (max-width: 768px) {
+  /* ① 顶栏瘦身：隐藏标题与状态文字，把次要按钮收进「⋯」 */
+  .brand { display:none; }
+  .status { display:none; }
+  .status.err { display:inline; }
+  .topbar-actions { display:none; }
+  .more-wrap { display:block; }
+  .topbar { padding:6px 8px; gap:6px; flex-wrap:nowrap; }
+  .topbar button { padding:6px 8px; font-size:13px; }
+  .repo-switch { min-width:0; flex:1; }
+  .repo-switch select { flex:1; min-width:0; max-width:none; padding:6px 6px; }
+  .repo-switch button.del { display:none; }        /* 删除按钮移到「⋯」里 */
+
+  /* ③ 编辑器组件可能自带最小宽度，强制铺满并允许内部换行 */
+  .main .vditor, .main .vditor-reset { max-width:100%; }
+  .vditor { max-width:100% !important; }
+
+  /* ② 侧栏改成抽屉：默认收起，浮在编辑区之上，编辑区铺满整屏 */
+  .sidebar {
+    position:fixed; left:0; top:0; bottom:0;
+    width:min(86vw, 320px); min-width:0; z-index:150;
+    box-shadow:4px 0 18px rgba(0,0,0,.5);
+  }
+  .sidebar-mask { display:block; }
+  .main { width:100%; }
+  .notes { max-height:46%; }                        /* 抽屉里给目录更多高度 */
+  .empty .card { max-width:92%; padding:22px 16px; }
+  .empty-mini { font-size:12px; }
+}
+</style>
+</head>
+<body>
+<div id="fatal"></div>
+<div id="appVer" class="app-ver"></div>
+<script>
+  // 页面版本号（单一来源）。每次修改本文件后请同步递增，便于确认浏览器加载的是不是最新版。
+  window.__APP_VERSION__ = 'v2026.10.18.15';
+  document.getElementById('appVer').textContent = '版本 ' + window.__APP_VERSION__;
+
+  /* 调试辅助：清空 Gitee 相关的 IndexedDB 缓存（zen-fs-cache 的 CachedFileSystem
+     用 'zen-fs-cache' 库；zen-fs-gitee 自身用 'zen-fs-gitee:<owner>/<repo>:*' 一组库）。
+     控制台执行 `await clearNoteCache()` 后刷新，即可强制全量重新拉取。 */
+  window.clearNoteCache = async function () {
+    if (!window.indexedDB || !indexedDB.databases) return 'indexedDB.databases() 不可用'
+    const all = await indexedDB.databases()
+    const hit = all.filter((d) => /zen-fs-(cache|gitee)/.test(d.name || ''))
+    await Promise.all(hit.map((d) => new Promise((res) => {
+      const req = indexedDB.deleteDatabase(d.name)
+      req.onsuccess = req.onerror = req.onblocked = () => res(null)
+    })))
+    const msg = `已删除 ${hit.length} 个缓存库：${hit.map((d) => d.name).join(', ') || '(无)'}`
+    console.log('[index] clearNoteCache:', msg)
+    return msg
+  };
+</script>
+
+<div id="app" class="layout" v-cloak>
+  <!-- 顶栏：文档库切换 + 同步 + 添加（窄屏下标题/次要按钮自动收进「⋯」） -->
+  <header class="topbar">
+    <a id="homeBtn" class="home-btn" href="./index.html" title="返回 OneNav 主页">← 主页</a>
+    <button class="toggle-btn" @click="toggleSidebar">
+      {{ isMobile ? (sidebarOpen ? '✕' : '☰') : (sidebarOpen ? '✕ 收起' : '📁 目录') }}
+    </button>
+    <strong class="brand">📚 Git 笔记 <span class="ver">{{ version }}</span></strong>
+
+    <div class="repo-switch" v-if="!isEmpty">
+      <select :value="currentName" @change="onSwitchRepo" :disabled="loading">
+        <option v-for="p in providers" :key="p.name" :value="p.name">
+          {{ p.name }} · {{ p.type === 'gitee' ? 'Gitee' : 'Git' }}
+        </option>
+      </select>
+      <button @click="pushPull" :disabled="syncing || loading">{{ isMobile ? '⇅' : '⇅ 推送/拉取' }}</button>
+      <button class="del" @click="removeLibrary" :disabled="loading || providers.length <= 1">🗑 删除</button>
+    </div>
+
+    <div class="spacer"></div>
+
+    <span class="status" v-if="loading">⏳ 加载中…</span>
+    <span class="status err" v-if="error">⚠ {{ error }}</span>
+    <span class="status" v-if="syncMsg">{{ syncMsg }}</span>
+
+    <!-- 宽屏：按钮平铺 -->
+    <div class="topbar-actions">
+      <button class="ghost" @click="openAdd">＋ 添加文档库</button>
+    </div>
+
+    <!-- 窄屏：以上操作 + 删除，折叠进「⋯」菜单 -->
+    <div class="more-wrap">
+      <button class="ghost more-btn" @click="moreOpen = !moreOpen" aria-label="更多操作">⋯</button>
+      <div class="more-mask" v-show="moreOpen" @click="moreOpen = false"></div>
+      <div class="more-menu" v-show="moreOpen" @click.stop="moreOpen = false">
+        <button @click="onCreateNote" :disabled="isEmpty">＋ 新建笔记</button>
+        <button @click="pushPull" :disabled="syncing || loading">⇅ 推送/拉取</button>
+        <button @click="removeLibrary" :disabled="loading || providers.length <= 1">🗑 删除文档库</button>
+        <hr>
+        <button @click="openAdd">＋ 添加文档库</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="body">
+    <!-- 抽屉遮罩：仅窄屏且侧栏打开时可见，点击收起 -->
+    <div class="sidebar-mask" v-show="sidebarOpen && isMobile" @click="sidebarOpen = false"></div>
+
+    <!-- 侧边栏 -->
+    <transition name="slide">
+      <aside class="sidebar" v-show="sidebarOpen">
+        <div class="sidebar-head">
+          <button @click="onCreateNote">＋ 新建笔记</button>
+          <button @click="sidebarOpen = false">✕ 收起</button>
+        </div>
+
+        <div class="search-box">
+          <input v-model="searchKeywords" placeholder="🔍 搜索标题/内容/标签">
+        </div>
+
+        <!-- 列表模式切换：目录树 / 全部文件（扁平，含所有层级） -->
+        <div class="mode-tabs">
+          <span class="mode-tab" :class="{ on: listMode === 'folder' }" @click="listMode = 'folder'">🗂 目录</span>
+          <span class="mode-tab" :class="{ on: listMode === 'all' }" @click="listMode = 'all'">📋 全部文件</span>
+        </div>
+
+        <div class="tree" v-show="listMode === 'folder'">
+          <div v-if="flatFolders.length === 0" class="hint">暂无文件夹</div>
+          <div v-for="f in flatFolders" :key="f.path" class="tree-row"
+               :class="{ active: activeFolder === f.path }"
+               :style="{ paddingLeft: (f.depth * 16 + 10) + 'px' }">
+            <span class="icon" @click.stop="toggleFolder(f.path)">{{ expanded.has(f.path) ? '📂' : '📁' }}</span>
+            <span class="label" @click="selectFolder(f.path)">{{ f.name }}</span>
+            <span class="badge">{{ f.count }}</span>
+          </div>
+        </div>
+
+        <div class="notes-head">
+          <span v-if="listMode === 'folder'">笔记 <span class="hint" style="display:inline">({{ visibleNotes.length }})</span></span>
+          <span v-else>全部文件 <span class="hint" style="display:inline">({{ allFilesFlat.length }})</span></span>
+        </div>
+        <div class="notes" :class="{ fill: listMode === 'all' }">
+          <!-- 目录模式：当前文件夹下的笔记 -->
+          <template v-if="listMode === 'folder'">
+            <div v-if="visibleNotes.length === 0" class="hint">暂无笔记</div>
+            <div v-for="n in visibleNotes" :key="n._id" class="note-row"
+                 :class="{ active: displayNote && displayNote._id === n._id }"
+                 @click="onPickNote(n)">
+              <span class="icon">📄</span>
+              <span class="label">{{ n.title || n._id }}</span>
+            </div>
+          </template>
+          <!-- 全部文件模式：跨层级的扁平列表，显示完整路径 -->
+          <template v-else>
+            <div v-if="allFilesFlat.length === 0" class="hint">暂无笔记</div>
+            <div v-for="n in allFilesFlat" :key="n._id" class="note-row all-file"
+                 :class="{ active: displayNote && displayNote._id === n._id }"
+                 @click="onPickNote(n)" :title="n._id">
+              <span class="icon">📄</span>
+              <span class="label">
+                {{ n.title || n._id }}
+                <em class="path">{{ n._id }}</em>
+              </span>
+            </div>
+          </template>
+        </div>
+
+        <div class="tags" v-if="tagList.length">
+          <div class="tags-head">标签</div>
+          <span v-for="t in tagList" :key="t.name" class="chip"
+                :class="{ on: activeTags.includes(t.name) }"
+                @click="toggleTag(t.name)">{{ t.name }}<i>{{ t.count }}</i></span>
+        </div>
+      </aside>
+    </transition>
+
+    <!-- 主编辑区 -->
+    <main class="main">
+      <note-editor
+        v-if="!isEmpty"
+        :note="displayNote"
+        :auto-save-delay="800"
+        :readonly="false"
+        :save-status="saveStatus"
+        @save="onEditorSave"
+        @update-tags="onEditorTags"
+        @save-state-change="onSaveState">
+      </note-editor>
+
+      <div v-if="!isEmpty && !displayNote" class="empty-mini">
+        👈 从左侧选择一篇笔记，或点击「＋ 新建笔记」
+      </div>
+
+    </main>
+  </div>
+
+  <!-- 添加文档库（后端配置弹窗）。
+       注意：vue-note-backend-config@0.2.0 的渲染函数无条件输出 .bc-overlay，
+       且 style.css 没有“未打开即隐藏”的规则 → 该弹窗默认永远显示，不受 backendOpen 控制。
+       故用 v-if 包裹：仅当 backendOpen 为真时才挂载，关闭即卸载，彻底避免打开页面就看到它。 -->
+  <backend-config
+    v-if="backendOpen"
+    v-model:open="backendOpen"
+    v-model:backend-type="backendType"
+    @save="addLibrary">
+  </backend-config>
+
+
+</div>
+
+<!-- 致命错误兜底：模块/CDN 加载失败时给出可见提示 -->
+<script>
+  function showFatal(msg) {
+    var el = document.getElementById('fatal');
+    if (el) { el.style.display = 'block'; el.textContent = String(msg); }
+  }
+  window.addEventListener('error', function (e) {
+    showFatal('加载/运行错误：\n' + (e.message || (e.error && e.error.stack) || e));
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    var r = e.reason;
+    showFatal('模块加载失败（多为 CDN / 网络问题）：\n' + (r && r.message ? r.message : r));
+  });
+</script>
+
+<script type="module">
+import { createApp, ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import NoteEditor from 'vue-note-editor'
+import BackendConfig from 'vue-note-backend-config'
+import { useNotebook } from 'note-core'
+
+// vue-note-sidebar：走 CDN 回退加载器（见文件上方模块），esm.sh 故障时自动切 unpkg。
+// 用顶层 await 在挂载前拿到模块；其内部 import 'vue' 仍经 import map 解析，保持单实例。
+const { useNotes, filterNotes, aggregateTags } = await window.__loadNoteSidebar()
+
+// 页面版本号（与右下角固定角标同源，来自 window.__APP_VERSION__）。改文件务必同步递增。
+const APP_VERSION = window.__APP_VERSION__ || 'unknown'
+
+// vue-note-editor@0.2.2 已在包内修复 Vditor 的 cdn base（去掉多余的 /dist）；
+// 最新源码已进一步把 Vditor 锁定在 3.11.3 并优先 jsDelivr（unpkg 兜底）。
+// 本页预加载的 window.Vditor 与组件复用同一份，表格工具条等能力随之稳定可用。
+
+/* ============================================================
+ * 把 FolderNode 的 Record 树拍平为可渲染列表（带层级缩进 + 展开/折叠）
+ * 与 vue-note-sidebar 的 FolderNode 结构（{name, path, count, children}）保持一致
+ * ============================================================ */
+function flattenFolders(tree, expandedSet) {
+  const out = []
+  const walk = (nodes, depth) => {
+    for (const node of Object.values(nodes || {})) {
+      out.push({ name: node.name, path: node.path, count: node.count, depth })
+      if (node.children && Object.keys(node.children).length && expandedSet.has(node.path)) {
+        walk(node.children, depth + 1)
+      }
+    }
+  }
+  walk(tree, 0)
+  return out
+}
+
+const app = createApp({
+  components: { NoteEditor, BackendConfig },
+  setup() {
+    const nb = useNotebook()
+
+    const {
+      providers, currentName, allNotes, currentNote,
+      loading, error, syncing, syncProgress, syncError,
+    } = nb
+
+    /* ------------------------------------------------------------------
+     * 窄屏（手机）适配
+     * - isMobile：≤768px 视为手机，由 CSS 把侧栏变成抽屉、顶栏折叠
+     * - 手机上侧栏默认收起，选笔记 / 新建笔记后自动收起，避免遮住编辑区
+     * ---------------------------------------------------------------- */
+    const MOBILE_QUERY = '(max-width: 768px)'
+    function isMobileViewport() {
+      try { return window.matchMedia(MOBILE_QUERY).matches } catch { return false }
+    }
+    const isMobile = ref(isMobileViewport())
+    const moreOpen = ref(false) // 顶栏「⋯」折叠菜单
+    // 已配置 Gitee（localStorage 有 type==='gitee' 的记录）：进入页面直接展开侧栏显示文件列表；
+    // 手机上也不再默认收起。完全未配置时按设备默认。
+    // 同步判断：localStorage 里是否已有 gitee 文档库配置（在 setup 阶段即可确定，无需等 nb.init）
+    const hasGiteeConfig = ref((() => {
+      try {
+        const raw = localStorage.getItem('notebook_providers')
+        const list = raw ? JSON.parse(raw) : []
+        return Array.isArray(list) && list.some((p) => p && p.type === 'gitee')
+      } catch { return false }
+    })())
+    const sidebarOpen = ref(hasGiteeConfig.value ? true : !isMobile.value)
+
+    function syncViewport() {
+      const m = isMobileViewport()
+      if (m === isMobile.value) return
+      isMobile.value = m
+      // 未配置文档库时按设备默认（手机收起、桌面展开）；已配置则保持展开，
+      // 手机上也直接显示文件列表，不因旋转/分屏而自动收起。
+      if (isEmpty.value) sidebarOpen.value = !m
+      moreOpen.value = false
+    }
+    function toggleSidebar() {
+      sidebarOpen.value = !sidebarOpen.value
+      moreOpen.value = false
+    }
+    /** 手机上执行完侧栏操作后收起抽屉 */
+    function closeSidebarOnMobile() {
+      if (isMobile.value) sidebarOpen.value = false
+    }
+
+    const searchKeywords = ref('')
+    const activeFolder = ref('')
+    const activeTags = ref([])
+    const expanded = ref(new Set())
+    const saveStatus = ref('idle')
+    const syncMsg = ref('')
+    const backendOpen = ref(false)
+    const backendType = ref('git')
+
+    // ★ 类型适配：vue-note-sidebar 内部的排序函数用
+    //   (a.updatedAt ?? '').localeCompare(b.updatedAt ?? '')，假定 updatedAt 是**字符串**；
+    //   而 note-core 的 SidebarNote.updatedAt 是 **number**（Date.now() 时间戳）。
+    //   直接把 allNotes 传进去，数字上调用 localeCompare 会抛
+    //   “TypeError: (o.updatedAt ?? "").localeCompare is not a function”。
+    //   这里统一把时间戳转成 ISO 字符串（ISO 字符串的字典序 == 时间序，排序语义不变）。
+    /* ------------------------------------------------------------------
+     * 笔记快照缓存：让“以前加载过”的文档库秒开
+     * note-core 的 GiteeProvider 在 init 时会遍历整棵目录并对每个 .md 发请求
+     * （readdir + stat + readFile），首次打开必须等这一轮跑完才有内容。
+     * 这里把上次加载的笔记持久化到 localStorage，启动时先渲染快照，
+     * 后台刷完再无缝替换 —— 即“先显示内容，再更新”。
+     * ---------------------------------------------------------------- */
+    const CACHE_PREFIX = 'notes_cache_v1_'
+    const CACHE_MAX = 800 // 条数上限，避免 localStorage 爆配额
+
+    function loadNotesCache(name) {
+      try {
+        const raw = name ? localStorage.getItem(CACHE_PREFIX + name) : null
+        const list = raw ? JSON.parse(raw) : []
+        return Array.isArray(list) ? list : []
+      } catch { return [] }
+    }
+    function saveNotesCache(name, notes) {
+      if (!name) return
+      try {
+        const slim = (notes || []).slice(0, CACHE_MAX).map((n) => ({
+          _id: n._id, title: n.title, path: n.path,
+          tags: n.tags, updatedAt: n.updatedAt, content: n.content,
+        }))
+        localStorage.setItem(CACHE_PREFIX + name, JSON.stringify(slim))
+      } catch { /* 超配额 / 隐私模式：忽略，不影响功能 */ }
+    }
+
+    // 启动时先取上次快照（按“当前文档库”名，此时 nb 尚未 init）
+    let initialProvider = ''
+    try { initialProvider = localStorage.getItem('notebook_current') || '' } catch { /* ignore */ }
+    const snapshotNotes = ref(loadNotesCache(initialProvider))
+    // 快照中被点开的笔记（真实数据就绪前，用它填充编辑器）
+    const snapshotPicked = ref(null)
+
+    // 上次在此文档库打开过的笔记 _id（持久化到 localStorage，实现“重新打开自动定位”）
+    function loadLastOpened(name) {
+      try { return name ? localStorage.getItem('last_opened_v1_' + name) : null } catch { return null }
+    }
+    // 启动时：若上次在此库打开过某篇笔记，用快照先顶上（真实数据就绪后再交接给 note-core）
+    const lastOpenedId = loadLastOpened(initialProvider)
+    if (lastOpenedId) {
+      const snap = snapshotNotes.value.find((n) => n._id === lastOpenedId)
+      if (snap) snapshotPicked.value = snap
+    }
+
+    // 真实数据一到位就写回缓存，并把“快照中选中的笔记”交接给真实数据
+    watch(allNotes, (notes) => {
+      if (!notes || !notes.length) return
+      saveNotesCache(currentName.value, notes)
+      const picked = snapshotPicked.value
+      if (picked) {
+        snapshotPicked.value = null
+        // 若该笔记在真实数据里仍存在，直接选中它，避免编辑器内容闪空
+        if (notes.some((n) => n._id === picked._id)) nb.selectNote(picked._id)
+      }
+    })
+
+    // 列表数据源：真实数据优先，否则用快照（实现“秒开”）
+    const listSource = computed(() => {
+      const real = allNotes.value || []
+      return real.length ? real : snapshotNotes.value
+    })
+
+    const notesForView = computed(() =>
+      (listSource.value || []).map((n) => ({
+        ...n,
+        updatedAt:
+          typeof n.updatedAt === 'number' && Number.isFinite(n.updatedAt)
+            ? new Date(n.updatedAt).toISOString()
+            : (n.updatedAt ?? ''),
+      }))
+    )
+
+    const { folders, visibleNotes } = useNotes(notesForView, () => ({
+      activeFolder: activeFolder.value,
+      activeTags: activeTags.value,
+      keywords: searchKeywords.value,
+    }))
+
+    const currentType = computed(() => providers.value.find((p) => p.name === currentName.value)?.type || '')
+    const isEmpty = computed(() => providers.value.length === 0)
+    const tagList = computed(() => aggregateTags(notesForView.value))
+    const flatFolders = computed(() => flattenFolders(folders.value, expanded.value))
+
+    /* ------------------------------------------------------------------
+     * 「全部文件」扁平列表：不受目录树/当前文件夹限制，
+     * 列出所有层级下的 .md，并按路径分组显示，便于跨目录查找。
+     * ---------------------------------------------------------------- */
+    const listMode = ref('all') // 'folder' = 目录树模式 | 'all' = 全部文件（默认，进入即显示扁平文件列表）
+    const allFilesFlat = computed(() => {
+      // 统一走库的 filterNotes：与目录树模式同一套搜索语义
+      // （标题/正文/标签/文件名 空格分词 AND，不含目录名；默认不搜 path）。
+      // 不再自写 title/_id/content 过滤——旧写法匹配 _id（即完整路径）会误搜目录名，
+      // 且漏搜 tags、多词整串 includes 几乎不命中。
+      const list = filterNotes(notesForView.value || [], {
+        keywords: (searchKeywords.value || '').trim(),
+        activeTags: activeTags.value,
+      })
+      return [...list].sort((a, b) => String(a._id || '').localeCompare(String(b._id || '')))
+    })
+
+    // 目录诊断：打印 path 分布，便于确认子目录是否被正确识别
+    watch(notesForView, (notes) => {
+      try {
+        const dist = {}
+        ;(notes || []).forEach((n) => { const p = n.path || '(空)'; dist[p] = (dist[p] || 0) + 1 })
+        console.log('[index] 目录分布(path -> 文件数):', dist)
+      } catch { /* ignore */ }
+    })
+
+    // 选中笔记时记录“上次打开”，按文档库分别保存（实现重新打开自动定位）
+    watch([currentName, currentNote], ([name, note]) => {
+      if (name && note && note._id) {
+        try { localStorage.setItem('last_opened_v1_' + name, note._id) } catch { /* ignore */ }
+      }
+    })
+
+    // 切换文档库时同步换成该库的快照，并尝试定位到“上次在此库打开的笔记”
+    watch(currentName, (name) => {
+      snapshotNotes.value = loadNotesCache(name)
+      const sid = loadLastOpened(name)
+      snapshotPicked.value = sid ? snapshotNotes.value.find((n) => n._id === sid) || null : null
+    })
+
+    // 编辑器显示用的笔记：真实选中优先，加载中用快照选中的那篇
+    const displayNote = computed(() => currentNote.value || snapshotPicked.value)
+
+    // 点击列表项：真实数据就绪走 note-core；否则先用快照内容顶上
+    function onPickNote(n) {
+      if (!n) return
+      if ((allNotes.value || []).length) {
+        nb.selectNote(n._id)
+      } else {
+        snapshotPicked.value = n
+      }
+      closeSidebarOnMobile()
+    }
+
+    // 默认展开顶层文件夹
+    watch(folders, (f) => {
+      const s = new Set(expanded.value)
+      Object.keys(f || {}).forEach((p) => s.add(p))
+      expanded.value = s
+    }, { immediate: true })
+
+    // ★ 迁移：给「已保存在 localStorage」的 Gitee 文档库补上 useCommitTimeAsMtime +
+    //   zen-fs-cache 缓存开关（cache:'idb'）。
+    //   原因：flag 只在“新建 Gitee 文档库”弹窗里写入；而页面刷新后，note-core 是直接用
+    //   localStorage 里的旧 config 重建 provider 的（useNotebook.connect → info.config），
+    //   根本不经过新建弹窗。旧配置里没有这个字段 → flag 为 undefined → 视为 false →
+    //   zen-fs-gitee 仍会去探测不存在的 .mtime 边车并发 404。故必须就地补写一次。
+    function migrateGiteeOptions() {
+      try {
+        const raw = localStorage.getItem('notebook_providers')
+        if (!raw) return
+        const list = JSON.parse(raw) || []
+        let changed = false
+        const next = list.map((p) => {
+          if (p.type !== 'gitee') return p
+          const cfg = p.config || {}
+          const g = cfg.gitee || {}
+          if (g.useCommitTimeAsMtime === true && g.cache) return p
+          changed = true
+          return {
+            ...p,
+            config: { ...cfg, gitee: { ...g, useCommitTimeAsMtime: true, cache: g.cache || 'idb' } },
+          }
+        })
+        if (changed) {
+          localStorage.setItem('notebook_providers', JSON.stringify(next))
+          console.log('[index] 已为已保存的 Gitee 文档库补写 useCommitTimeAsMtime')
+        }
+      } catch { /* ignore */ }
+    }
+
+    // 清理旧版 note-core 残留在 localStorage 的 pouchdb 文档库（其依赖已不可用）
+    function purgePouchDB() {
+      try {
+        const raw = localStorage.getItem('notebook_providers')
+        if (!raw) return
+        const list = JSON.parse(raw) || []
+        const filtered = list.filter((p) => p.type !== 'pouchdb')
+        if (filtered.length !== list.length) {
+          localStorage.setItem('notebook_providers', JSON.stringify(filtered))
+          const cur = localStorage.getItem('notebook_current')
+          if (cur && !filtered.some((p) => p.name === cur)) localStorage.removeItem('notebook_current')
+        }
+      } catch { /* ignore */ }
+    }
+
+    onMounted(async () => {
+      purgePouchDB()
+      migrateGiteeOptions()
+      // 视口变化（旋转屏幕 / 分屏）时同步手机布局
+      syncViewport()
+      window.addEventListener('resize', syncViewport)
+      window.addEventListener('orientationchange', syncViewport)
+      try { await nb.init() } catch (e) { /* nb.error 已记录 */ }
+    })
+
+    onUnmounted(() => {
+      window.removeEventListener('resize', syncViewport)
+      window.removeEventListener('orientationchange', syncViewport)
+    })
+
+    function onSwitchRepo(e) {
+      const name = e.target.value
+      activeFolder.value = ''
+      activeTags.value = []
+      searchKeywords.value = ''
+      nb.switchProvider(name)
+    }
+
+    function openAdd() {
+      backendType.value = 'git'
+      backendOpen.value = true
+    }
+
+    async function addLibrary(cfg) {
+      const c = cfg || {}
+      backendOpen.value = false
+      let config
+      if (c.webdav && c.webdav.url) {
+        window.alert('当前版本暂不支持 WebDAV，请改用 Git（可填写远端仓库，或留空创建纯本地 Git 库）')
+        return
+      }
+      // Gitee 文档库：BackendConfig 的「Gitee」标签抛出 { gitee: {...} } → 走 zen-fs-gitee 后端
+      if (c.gitee) {
+        const g = c.gitee
+        const repoUrl = (g.repoUrl || '').trim()
+        // 从仓库地址解析 owner / repo：https://gitee.com/<owner>/<repo>.git
+        const m = repoUrl.match(/gitee\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i)
+        const owner = (m && m[1]) ? m[1] : (g.owner || '').trim()
+        const repo = (m && m[2]) ? m[2] : repoUrl.split('/').filter(Boolean).pop().replace(/\.git$/, '')
+        const gname = (window.prompt('文档库名称：', repo || 'Gitee 库') || repo || '').trim()
+        if (!gname) return
+        try {
+          await nb.createProvider('gitee', gname, {
+            gitee: {
+              owner,
+              repo,
+              branch: (g.branch || 'master').trim() || 'master',
+              token: g.token,
+              useCommitTimeAsMtime: true,
+              cache: 'idb',
+            },
+          })
+        } catch (e) {
+          window.alert('添加 Gitee 文档库失败：' + (e.message || e))
+        }
+        return
+      }
+      if (c.git) {
+        config = {
+          git: {
+            repoUrl: (c.git.repoUrl || '').trim(),
+            branch: (c.git.branch || 'main').trim() || 'main',
+            token: (c.git.token || '').trim() || undefined,
+            username: (c.git.username || '').trim() || undefined,
+            corsProxy: (c.git.corsProxy || '').trim() || undefined,
+            localPath: (c.git.localPath || 'notes').trim() || 'notes',
+          },
+        }
+      } else {
+        // 「PouchDB 本地」标签（或空配置）→ 纯本地 Git 仓库（lightning-fs），避免 PouchDB 在浏览器内加载问题
+        config = { git: { repoUrl: '', branch: 'main', token: undefined, localPath: 'local-' + Date.now() } }
+      }
+      const def = config.git.repoUrl
+        ? config.git.repoUrl.split('/').filter(Boolean).pop().replace(/\.git$/, '')
+        : '本地库'
+      const name = (window.prompt('文档库名称：', def) || def).trim()
+      if (!name) return
+      try {
+        await nb.createProvider('git', name, config)
+      } catch (e) {
+        window.alert('添加文档库失败：' + (e.message || e))
+      }
+    }
+
+    function removeLibrary() {
+      if (providers.value.length <= 1) { window.alert('至少保留一个文档库'); return }
+      if (!window.confirm('确定删除文档库「' + currentName.value + '」？')) return
+      nb.deleteProvider(currentName.value)
+    }
+
+    async function pushPull() {
+      const p = nb.currentProvider.value
+      if (p && typeof p.sync === 'function') {
+        syncMsg.value = '同步中…'
+        try {
+          const r = await p.sync('both')
+          syncMsg.value = '推送 ' + r.pushed + ' · 拉取 ' + r.pulled +
+            (r.errors.length ? ' · 错误: ' + r.errors.join('; ') : '')
+        } catch (e) { syncMsg.value = '同步失败: ' + (e.message || e) }
+      } else {
+        syncMsg.value = '当前后端不支持直接同步'
+      }
+    }
+
+    function toggleFolder(path) {
+      const s = new Set(expanded.value)
+      if (s.has(path)) s.delete(path); else s.add(path)
+      expanded.value = s
+    }
+    function selectFolder(path) {
+      activeFolder.value = activeFolder.value === path ? '' : path
+      if (!expanded.value.has(path)) toggleFolder(path)
+    }
+    function selectNoteById(id) { nb.selectNote(id) }
+    function onCreateNote() {
+      nb.createNote(activeFolder.value || '/未分类')
+      closeSidebarOnMobile()
+    }
+    function onEditorSave(content) { nb.saveCurrentNote(content) }
+    function onEditorTags(tags) { nb.updateCurrentTags(tags) }
+    function onSaveState(s) { saveStatus.value = s }
+    function toggleTag(t) {
+      activeTags.value = activeTags.value.includes(t)
+        ? activeTags.value.filter((x) => x !== t)
+        : [...activeTags.value, t]
+    }
+
+    return {
+      version: APP_VERSION,
+      // 状态 ref
+      providers, currentName, allNotes, currentNote,
+      loading, error, syncing, syncProgress, syncError,
+      sidebarOpen, searchKeywords, activeFolder, activeTags, expanded,
+      saveStatus, syncMsg, backendOpen, backendType,
+      // 手机适配
+      isMobile, moreOpen, toggleSidebar,
+      // 派生
+      folders, visibleNotes, currentType, isEmpty, tagList, flatFolders,
+      // 已配置 Gitee 时进入页面自动展开侧栏
+      hasGiteeConfig,
+      // 全部文件模式 + 快照缓存
+      listMode, allFilesFlat, displayNote, snapshotNotes,
+      // 方法
+      onSwitchRepo, openAdd, addLibrary, removeLibrary, pushPull,
+      toggleFolder, selectFolder, selectNoteById, onPickNote, onCreateNote,
+      onEditorSave, onEditorTags, onSaveState, toggleTag,
+    }
+  },
+})
+
+app.mount('#app')
+</script>
+<!-- 返回主页按钮：仅在 http(s) 打开（被 onenav 当应用时）显示；file:// 直接打开则隐藏 -->
+<script>
+  if (location.protocol === 'file:') {
+    var __hb = document.getElementById('homeBtn')
+    if (__hb) __hb.style.display = 'none'
+  }
+</script>
+</body>
+</html>

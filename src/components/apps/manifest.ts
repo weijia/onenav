@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react'
-import { Flag, Server, Wallet } from 'lucide-react'
+import { Flag, NotebookPen, Server, Wallet } from 'lucide-react'
 
 /**
  * 内置小应用的轻量元信息。
@@ -52,6 +52,14 @@ export const APP_MANIFEST: AppMeta[] = [
     accent: 'from-cyan-500 to-blue-600',
     description: '主机与磁盘状态监控',
     entry: 'apps/hostmonitor/index.html',
+  },
+  {
+    id: 'note-editor',
+    name: '笔记编辑器',
+    icon: NotebookPen,
+    accent: 'from-indigo-500 to-blue-600',
+    description: 'Git/Gitee 多文档库笔记',
+    entry: 'apps/note-editor/index.html',
   },
 ]
 
