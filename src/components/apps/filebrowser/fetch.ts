@@ -1,0 +1,114 @@
+// 数据获取层：从 onenav 同账号 RemoteStorage 读取 app_data/folders/ 下全部目录结构清单。
+// 复用 onenav 现有 OAuth 连接（Q1=A），无需额外配置。
+//
+// 数据格式：my-data 定义的 Directory-Structure Manifest（dir-struct-gen 生成），
+// 默认存储于 /app_data/folders/<主机名>（可带或不带 .json 后缀）。本读取侧按
+// 「清单文件留空 → 自动扫描 basePath 下所有 .json」逻辑枚举 app_data/folders 下的 .json，
+// 每个 json 即一台主机的目录结构清单。
+
+import { RemoteStorageFileSystem } from '@/lib/remotestorage-fs'
+import {
+  claimAccess,
+  getStorageCredentials,
+  getSavedStorageCredentials,
+  isRemoteStorageAuthError,
+} from '@/lib/remotestorage-connection'
+import type { RawManifest } from './types'
+
+/** 未连接 RemoteStorage（无凭据） */
+export class RsNotConnectedError extends Error {
+  code = 'NOT_CONNECTED'
+  constructor(message = '未连接 RemoteStorage') {
+    super(message)
+    this.name = 'RsNotConnectedError'
+  }
+}
+
+/** 鉴权失败（401/403），需要重新连接 */
+export class RsAuthError extends Error {
+  code = 'AUTH'
+  constructor(message = 'RemoteStorage 鉴权失败') {
+    super(message)
+    this.name = 'RsAuthError'
+  }
+}
+
+// 目录结构清单默认存储目录（与 dir-struct-manifest-format.md 的 rsBase 默认值一致）。
+// zen-fs 路径约定：无前导斜杠（与 app_data/favorites、ufs-nodes 一致）。
+const FOLDERS_DIR = 'app_data/folders'
+
+/** app_data 读权限不足时的错误说明：已连接，但当前令牌缺作用域，需断开重连换取新令牌 */
+const FOLDERS_AUTH_MSG =
+  'RemoteStorage 已连接，但当前令牌缺少 app_data 目录的读权限（服务端 401）。' +
+  '请在主页断开 RemoteStorage 并重新连接一次以授予该权限。'
+
+/**
+ * 列出并读取 app_data/folders/ 下全部 .json 清单，返回原始 JSON 数组。
+ * 单文件解析/读取失败会被跳过，不导致整页崩溃。
+ *
+ * 关于 claim('app_data','r')：best-effort。token 已 mint 的情况下不会 retroactively 生效，
+ * 仅保证下次重新授权时带上该 scope；若当前 token 无权限，读取会 401 并转成 RsAuthError。
+ */
+export async function fetchDirStructManifests(): Promise<RawManifest[]> {
+  // best-effort：登记 app_data 只读权限（供后续重新授权时带上 scope）
+  try {
+    claimAccess('app_data', 'r')
+  } catch {
+    // 忽略：claim 失败不应阻断读取
+  }
+
+  const credentials = getStorageCredentials() || getSavedStorageCredentials()
+  if (!credentials) {
+    throw new RsNotConnectedError()
+  }
+
+  const fs = new RemoteStorageFileSystem({ href: credentials.href, token: credentials.token })
+
+  // 清掉目录列表缓存，确保本次能枚举到最新远端的 app_data/folders 结构。
+  // 背景：zen-fs-cache 写文件只失效直接父目录、不失效祖先链；本页只读不写，
+  // 若不主动清，远端新增/删除的清单文件最多要等 2 分钟目录缓存 TTL 才可见。
+  // invalidateDirListing 内部已自吞异常，这里再兜一层防止任何意外阻断读取。
+  try {
+    await fs.invalidateDirListing()
+  } catch (e) {
+    console.warn('[filebrowser] 清除 app_data/folders 目录缓存失败（已忽略）:', e)
+  }
+
+  // readdir 对结尾斜杠的要求因服务器而异：先试无斜杠，再试有斜杠。
+  let names: string[] = []
+  for (const dir of [FOLDERS_DIR, `${FOLDERS_DIR}/`]) {
+    try {
+      const list = await fs.readdir(dir)
+      if (list.length > 0) {
+        names = list
+        break
+      }
+    } catch (e) {
+      if (isRemoteStorageAuthError(e)) throw new RsAuthError(FOLDERS_AUTH_MSG)
+      // 否则忽略，尝试带斜杠；目录不存在也会走到这里，最终得到空列表 → 空态
+    }
+  }
+
+  const jsonNames = names
+    .map((n) => n.replace(/^\.\//, '')) // zen-fs 可能返回带 ./ 前缀的条目
+    .filter((n) => n.endsWith('.json'))
+
+  const raws: RawManifest[] = []
+  for (const n of jsonNames) {
+    const path = `${FOLDERS_DIR}/${n}`
+    try {
+      const text = await fs.readFile(path, 'utf8')
+      try {
+        raws.push(JSON.parse(text))
+      } catch {
+        // 单文件 JSON 解析失败：跳过该清单
+        console.warn('[filebrowser] 清单解析失败，已跳过:', path)
+      }
+    } catch (e) {
+      if (isRemoteStorageAuthError(e)) throw new RsAuthError(FOLDERS_AUTH_MSG)
+      // 单文件读取失败：跳过
+      console.warn('[filebrowser] 清单读取失败，已跳过:', path, e)
+    }
+  }
+  return raws
+}

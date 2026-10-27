@@ -23,3 +23,6 @@ src/version.json
 *.njsproj
 *.sln
 *.sw?
+
+# WorkBuddy project data (memory, caches) — never commit
+.workbuddy/

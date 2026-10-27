@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react'
-import { Flag, NotebookPen, Server, Wallet } from 'lucide-react'
+import { Flag, FolderTree, NotebookPen, Server, Wallet } from 'lucide-react'
 
 /**
  * 内置小应用的轻量元信息。
@@ -60,6 +60,14 @@ export const APP_MANIFEST: AppMeta[] = [
     accent: 'from-indigo-500 to-blue-600',
     description: 'Git/Gitee 多文档库笔记',
     entry: 'apps/note-editor/index.html',
+  },
+  {
+    id: 'filebrowser',
+    name: '文件浏览器',
+    icon: FolderTree,
+    accent: 'from-slate-500 to-indigo-600',
+    description: '多主机目录结构浏览',
+    entry: 'apps/filebrowser/index.html',
   },
 ]
 
