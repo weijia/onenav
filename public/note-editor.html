@@ -7,12 +7,12 @@
 
 <!-- 组件样式（来自 vue-note-sidebar / vue-note-editor / vue-note-backend-config） -->
 <link rel="stylesheet" href="https://unpkg.com/@richard432/vue-note-sidebar@0.3.2/style.css">
-<link rel="stylesheet" href="https://unpkg.com/vue-note-editor@0.2.3/style.css">
+<link rel="stylesheet" href="https://unpkg.com/vue-note-editor@0.2.4/style.css">
 <link rel="stylesheet" href="https://unpkg.com/vue-note-backend-config@0.2.2/style.css">
 
 <!--
   ★ Vditor 预加载（锁定版本 + 多 CDN 兜底）
-  vue-note-editor@0.2.3 已在包内修复 Vditor 的 cdn base（去掉多余的 /dist）。
+  vue-note-editor@0.2.4 已在包内修复 Vditor 的 cdn base（去掉多余的 /dist）。
   这里预加载 Vditor 到 window.Vditor，组件会复用它，避免重复拉取；
   同时锁定 3.11.3（避免 @3 浮动版本导致表格工具条等行为偶发变化 / 失效），
   并优先 jsDelivr（国内可达），失败再回退 unpkg。
@@ -68,7 +68,7 @@
   "imports": {
     "vue": "https://unpkg.com/vue@3.5.13/dist/vue.esm-browser.prod.js",
     "@richard432/vue-note-sidebar": "https://esm.sh/@richard432/vue-note-sidebar@0.3.2?external=vue",
-    "vue-note-editor": "https://esm.sh/vue-note-editor@0.2.3?external=vue",
+    "vue-note-editor": "https://esm.sh/vue-note-editor@0.2.4?external=vue",
     "vue-note-backend-config": "https://esm.sh/vue-note-backend-config@0.2.2?external=vue",
     "isomorphic-git": "https://esm.sh/isomorphic-git@1.27.0",
     "isomorphic-git/http/web": "https://esm.sh/isomorphic-git@1.27.0/http/web",
@@ -514,7 +514,7 @@ const { useNotes, filterNotes, aggregateTags } = await window.__loadNoteSidebar(
 // 页面版本号（与右下角固定角标同源，来自 window.__APP_VERSION__）。改文件务必同步递增。
 const APP_VERSION = window.__APP_VERSION__ || 'unknown'
 
-// vue-note-editor@0.2.3 已在包内修复 Vditor 的 cdn base（去掉多余的 /dist）；
+// vue-note-editor@0.2.4 已在包内修复 Vditor 的 cdn base（去掉多余的 /dist）；
 // 最新源码已进一步把 Vditor 锁定在 3.11.3 并优先 jsDelivr（unpkg 兜底）。
 // 本页预加载的 window.Vditor 与组件复用同一份，表格工具条等能力随之稳定可用。
 
