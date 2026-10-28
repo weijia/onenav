@@ -16,6 +16,11 @@ export interface FolderNodeView {
   tags: string[]
   /** 子文件夹节点 */
   children: FolderNodeView[]
+  /**
+   * 驱动层节点（盘符）的稳定身份：来自磁盘根 .dir-struct-id，跨主机一致。
+   * 用于深挖标记的命名空间与「同盘多主机去重」。子目录不携带，靠祖先驱动节点溯源。
+   */
+  volumeId?: string | null
 }
 
 /** 单台主机的目录结构清单视图 */

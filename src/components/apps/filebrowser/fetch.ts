@@ -1,10 +1,17 @@
-// 数据获取层：从 onenav 同账号 RemoteStorage 读取 app_data/folders/ 下全部目录结构清单。
+// 数据获取层：从 onenav 同账号 RemoteStorage 读取目录结构清单。
 // 复用 onenav 现有 OAuth 连接（Q1=A），无需额外配置。
 //
-// 数据格式：my-data 定义的 Directory-Structure Manifest（dir-struct-gen 生成），
-// 默认存储于 /app_data/folders/<主机名>（可带或不带 .json 后缀）。本读取侧按
-// 「清单文件留空 → 自动扫描 basePath 下所有 .json」逻辑枚举 app_data/folders 下的 .json，
-// 每个 json 即一台主机的目录结构清单。
+// 存储模型（dir-struct-manifest-format.md v2）：
+//   app_data/folders/<host>.json        — 主机索引 { version:2, source, mounts:[{letter,volumeId,file}] }
+//   app_data/folders/<volumeKey>.json   — 某块物理盘的卷子树 { volumeId, name, type:'folder', children, sources }
+//   app_data/folder-deepen/<key>.json   — 深挖标记 { marks:[ "E:/Photos/2024", ... ] }
+// 其中 volumeKey = 卷的 .dir-struct-id（UUID，跨主机一致）；同一块盘在多主机上只存一份卷文件，
+// 主机索引只记录挂载关系，从根本上避免「同盘多主机重复保存」。
+//
+// 兼容：仍支持 v1 单文件整树清单（含 root 字段，无 mounts）。
+//
+// 本读取侧把上述结构「拼装」回 { root, source, ... } 形态（与 normalize 输入一致），
+// 因此对 FileBrowserApp / normalize 其余逻辑透明。
 
 import { RemoteStorageFileSystem } from '@/lib/remotestorage-fs'
 import {
@@ -34,40 +41,45 @@ export class RsAuthError extends Error {
 }
 
 // 目录结构清单默认存储目录（与 dir-struct-manifest-format.md 的 rsBase 默认值一致）。
-// zen-fs 路径约定：无前导斜杠（与 app_data/favorites、ufs-nodes 一致）。
 const FOLDERS_DIR = 'app_data/folders'
+const DEEPEN_DIR = 'app_data/folder-deepen'
 
 /** app_data 读权限不足时的错误说明：已连接，但当前令牌缺作用域，需断开重连换取新令牌 */
 const FOLDERS_AUTH_MSG =
-  'RemoteStorage 已连接，但当前令牌缺少 app_data 目录的读权限（服务端 401）。' +
+  'RemoteStorage 已连接，但当前令牌缺少 app_data 目录的权限（服务端 401）。' +
   '请在主页断开 RemoteStorage 并重新连接一次以授予该权限。'
 
+// RemoteStorage 路径只允许安全字符，其余替换为下划线（与 dir-struct-gen 的 sanitizeKey 一致）。
+function sanitizeKey(s: string): string {
+  return (s || '').replace(/[^A-Za-z0-9._-]/g, '_')
+}
+
+/** 构建一个 RS 文件系统实例；未连接则抛 RsNotConnectedError */
+function getFS(): RemoteStorageFileSystem {
+  const credentials = getStorageCredentials() || getSavedStorageCredentials()
+  if (!credentials) throw new RsNotConnectedError()
+  return new RemoteStorageFileSystem({ href: credentials.href, token: credentials.token })
+}
+
 /**
- * 列出并读取 app_data/folders/ 下全部 .json 清单，返回原始 JSON 数组。
- * 单文件解析/读取失败会被跳过，不导致整页崩溃。
+ * 列出并读取 app_data/folders/ 下全部 .json，分类拼装为原始清单数组：
+ * - 含 mounts 数组 → 主机索引，按需拼装其引用的卷文件成完整树；
+ * - 含 volumeId + children 且非 mounts/root → 卷文件，收入卷映射；
+ * - 含 root 字段 → legacy v1 整树清单，原样透传。
  *
- * 关于 claim('app_data','r')：best-effort。token 已 mint 的情况下不会 retroactively 生效，
- * 仅保证下次重新授权时带上该 scope；若当前 token 无权限，读取会 401 并转成 RsAuthError。
+ * 单文件解析/读取失败会被跳过，不导致整页崩溃。
  */
 export async function fetchDirStructManifests(): Promise<RawManifest[]> {
-  // best-effort：登记 app_data 只读权限（供后续重新授权时带上 scope）
+  // best-effort：登记 app_data 读写权限（供后续重新授权时带上 scope）
   try {
-    claimAccess('app_data', 'r')
+    claimAccess('app_data', 'rw')
   } catch {
     // 忽略：claim 失败不应阻断读取
   }
 
-  const credentials = getStorageCredentials() || getSavedStorageCredentials()
-  if (!credentials) {
-    throw new RsNotConnectedError()
-  }
-
-  const fs = new RemoteStorageFileSystem({ href: credentials.href, token: credentials.token })
+  const fs = getFS()
 
   // 清掉目录列表缓存，确保本次能枚举到最新远端的 app_data/folders 结构。
-  // 背景：zen-fs-cache 写文件只失效直接父目录、不失效祖先链；本页只读不写，
-  // 若不主动清，远端新增/删除的清单文件最多要等 2 分钟目录缓存 TTL 才可见。
-  // invalidateDirListing 内部已自吞异常，这里再兜一层防止任何意外阻断读取。
   try {
     await fs.invalidateDirListing()
   } catch (e) {
@@ -93,22 +105,109 @@ export async function fetchDirStructManifests(): Promise<RawManifest[]> {
     .map((n) => n.replace(/^\.\//, '')) // zen-fs 可能返回带 ./ 前缀的条目
     .filter((n) => n.endsWith('.json'))
 
-  const raws: RawManifest[] = []
+  // 读取全部 json 文件
+  const files: { name: string; raw: unknown }[] = []
   for (const n of jsonNames) {
-    const path = `${FOLDERS_DIR}/${n}`
+    const p = `${FOLDERS_DIR}/${n}`
     try {
-      const text = await fs.readFile(path, 'utf8')
+      const text = await fs.readFile(p, 'utf8')
       try {
-        raws.push(JSON.parse(text))
+        files.push({ name: n.replace(/\.json$/, ''), raw: JSON.parse(text) })
       } catch {
-        // 单文件 JSON 解析失败：跳过该清单
-        console.warn('[filebrowser] 清单解析失败，已跳过:', path)
+        console.warn('[filebrowser] 清单解析失败，已跳过:', p)
       }
     } catch (e) {
       if (isRemoteStorageAuthError(e)) throw new RsAuthError(FOLDERS_AUTH_MSG)
-      // 单文件读取失败：跳过
-      console.warn('[filebrowser] 清单读取失败，已跳过:', path, e)
+      console.warn('[filebrowser] 清单读取失败，已跳过:', p, e)
     }
   }
-  return raws
+
+  // 分类
+  const volumeMap = new Map<string, any>()
+  const hostIndexes: any[] = []
+  const legacy: any[] = []
+  for (const f of files) {
+    const raw = f.raw as Record<string, unknown> | null
+    if (!raw || typeof raw !== 'object') continue
+    if (Array.isArray(raw.mounts)) {
+      hostIndexes.push(raw)
+    } else if (
+      typeof raw.volumeId === 'string' &&
+      Array.isArray(raw.children) &&
+      !raw.root
+    ) {
+      volumeMap.set(f.name, raw)
+    } else if (raw.root && typeof raw.root === 'object') {
+      legacy.push(raw)
+    }
+    // 其余形态：跳过
+  }
+
+  const out: RawManifest[] = []
+  // legacy v1：原样透传
+  for (const l of legacy) out.push(l)
+  // 主机索引：拼装引用的卷文件
+  for (const hi of hostIndexes) {
+    const children: any[] = []
+    const root: Record<string, unknown> = {
+      name: typeof hi.source === 'string' ? hi.source : 'unknown',
+      type: 'folder',
+      children,
+    }
+    const mounts = Array.isArray(hi.mounts) ? (hi.mounts as any[]) : []
+    for (const m of mounts) {
+      const vf = volumeMap.get(m.file) ?? (typeof m.volumeId === 'string' ? volumeMap.get(sanitizeKey(m.volumeId)) : undefined)
+      if (vf) children.push(vf)
+    }
+    out.push({
+      source: typeof hi.source === 'string' ? hi.source : 'unknown',
+      generatedAt: typeof hi.generatedAt === 'string' ? hi.generatedAt : undefined,
+      generator: typeof hi.generator === 'string' ? hi.generator : undefined,
+      root,
+    })
+  }
+  return out
+}
+
+/**
+ * 读取某块盘的深挖标记（app_data/folder-deepen/<key>.json）。
+ * 404 / 解析失败 / 未连接 → 返回空数组（不抛错，避免阻断浏览）。
+ */
+export async function getFolderDeepenMarks(key: string): Promise<string[]> {
+  try {
+    const fs = getFS()
+    const p = `${DEEPEN_DIR}/${sanitizeKey(key)}.json`
+    const text = await fs.readFile(p, 'utf8')
+    try {
+      const obj = JSON.parse(text)
+      if (obj && Array.isArray(obj.marks)) {
+        return (obj.marks as unknown[]).filter((m): m is string => typeof m === 'string')
+      }
+      return []
+    } catch {
+      return []
+    }
+  } catch (e) {
+    if (isRemoteStorageAuthError(e)) {
+      // 权限问题仅告警，不打断浏览
+      console.warn('[filebrowser] 读取深挖标记权限不足:', e)
+      return []
+    }
+    return []
+  }
+}
+
+/**
+ * 写回某块盘的深挖标记（app_data/folder-deepen/<key>.json）。
+ * 权限错误（401）抛 RsAuthError，由调用方提示去重连；其它错误原样抛出。
+ */
+export async function putFolderDeepenMarks(key: string, paths: string[]): Promise<void> {
+  const fs = getFS()
+  const p = `${DEEPEN_DIR}/${sanitizeKey(key)}.json`
+  try {
+    await fs.writeFile(p, JSON.stringify({ marks: paths }))
+  } catch (e) {
+    if (isRemoteStorageAuthError(e)) throw new RsAuthError(FOLDERS_AUTH_MSG)
+    throw e
+  }
 }
