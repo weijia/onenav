@@ -39,18 +39,28 @@ export default function BookmarkEditDialog({ open, bookmark, onOpenChange, onSav
   const [error, setError] = useState('')
 
   useEffect(() => {
-    if (!bookmark) return
-    setTitle(bookmark.title)
-    setUrl(bookmark.url)
-    setTagsText(bookmark.tags.join(', '))
-    setDescription(bookmark.description || '')
-    setIcon(bookmark.favicon || '')
+    if (bookmark) {
+      setTitle(bookmark.title)
+      setUrl(bookmark.url)
+      setTagsText(bookmark.tags.join(', '))
+      setDescription(bookmark.description || '')
+      setIcon(bookmark.favicon || '')
+    } else {
+      // 新增模式：打开时清空表单
+      setTitle('')
+      setUrl('')
+      setTagsText('')
+      setDescription('')
+      setIcon('')
+    }
     setError('')
     setConfirmDelete(false)
   }, [bookmark])
 
+  const isCreate = !bookmark
+
   const handleSave = async () => {
-    if (!bookmark || saving || deleting) return
+    if (saving || deleting) return
     const nextUrl = url.trim()
     if (!nextUrl) {
       setError('URL 不能为空')
@@ -67,7 +77,7 @@ export default function BookmarkEditDialog({ open, bookmark, onOpenChange, onSav
     setSaving(true)
     setError('')
     try {
-      await onSave(bookmark.url, {
+      await onSave(bookmark?.url ?? '', {
         title,
         url: nextUrl,
         tags: tagsText.split(',').map((t) => t.trim()).filter(Boolean),
@@ -106,9 +116,9 @@ export default function BookmarkEditDialog({ open, bookmark, onOpenChange, onSav
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="bg-slate-950 text-white border border-white/15 sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>编辑书签</DialogTitle>
+          <DialogTitle>{isCreate ? '新增书签' : '编辑书签'}</DialogTitle>
           <DialogDescription className="text-white/50">
-            修改后会保存到本地 PouchDB，并同步到 RemoteStorage。
+            {isCreate ? '添加后会保存到本地 PouchDB，并同步到 RemoteStorage。' : '修改后会保存到本地 PouchDB，并同步到 RemoteStorage。'}
           </DialogDescription>
         </DialogHeader>
 
@@ -147,17 +157,19 @@ export default function BookmarkEditDialog({ open, bookmark, onOpenChange, onSav
         </div>
 
         <DialogFooter className="bg-white/5 border-white/10 sm:justify-between">
-          <Button
-            variant="ghost"
-            onClick={handleDelete}
-            disabled={saving || deleting}
-            className={confirmDelete ? 'text-red-200 hover:text-white hover:bg-red-500/20' : 'text-red-300/80 hover:text-red-100 hover:bg-red-500/15'}
-          >
-            {deleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
-            {confirmDelete ? '确认删除' : '删除书签'}
-          </Button>
+          {!isCreate && (
+            <Button
+              variant="ghost"
+              onClick={handleDelete}
+              disabled={saving || deleting}
+              className={confirmDelete ? 'text-red-200 hover:text-white hover:bg-red-500/20' : 'text-red-300/80 hover:text-red-100 hover:bg-red-500/15'}
+            >
+              {deleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+              {confirmDelete ? '确认删除' : '删除书签'}
+            </Button>
+          )}
 
-          <div className="flex gap-2">
+          <div className={`flex gap-2 ${isCreate ? 'ml-auto' : ''}`}>
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={saving || deleting} className="text-white/70 hover:text-white hover:bg-white/10">
             取消
           </Button>
