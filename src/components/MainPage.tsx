@@ -6,7 +6,7 @@ import { loadFavoritesBookmarksFromRS, archiveFavoritesOnRS } from '@/lib/favori
 import { filterByTag, getMostVisitedBookmarks, isDeleted, getFaviconUrl, stringToColor } from '@/lib/bookmarks'
 import { recordClick, loadClickStatsFromWebDAV, togglePinnedBookmark, loadPinnedBookmarks, loadPinnedBookmarksAsync, savePinnedBookmarks } from '@/lib/stats'
 import { clearRemoteStorageLogin, getSavedStorageCredentials, getStorageCredentials, isRemoteStorageAuthError, onStatusChange } from '@/lib/remotestorage-connection'
-import { deleteBookmarkFromEdit, getDeletedBookmarkUrls, getPouchDB, updateBookmarkFromEdit, upsertBookmarkEntriesFromExternal, type BookmarkEditInput } from '@/lib/pouchdb'
+import { deleteBookmarkFromEdit, getDeletedBookmarkUrls, getPouchDB, saveBookmark, updateBookmarkFromEdit, upsertBookmarkEntriesFromExternal, type BookmarkEditInput } from '@/lib/pouchdb'
 import { loadFromRemoteStorage } from '@/lib/remotestorage-load'
 import { syncToRemoteStorage } from '@/lib/remotestorage-sync'
 import { loadGiteeFavorites } from '@/lib/gitee-favorites'
@@ -19,7 +19,7 @@ import SetupWizard from '@/components/SetupWizard'
 import AppCard from '@/components/apps/AppCard'
 import ExternalLinkCard from '@/components/apps/ExternalLinkCard'
 import { APP_MANIFEST, isAppVisible } from '@/components/apps/manifest'
-import { RefreshCw, Loader2, LayoutGrid, Search, Menu, X, CloudOff, AlertTriangle } from 'lucide-react'
+import { RefreshCw, Loader2, LayoutGrid, Search, Menu, X, CloudOff, AlertTriangle, Plus } from 'lucide-react'
 import { versionDisplay, buildTimeDisplay } from '@/lib/version'
 
 type SyncStatus = 'idle' | 'pending' | 'syncing' | 'synced' | 'error'
@@ -69,6 +69,7 @@ export default function MainPage() {
   const [initialized, setInitialized] = useState(false)
   const [remoteStorageNeedsLogin, setRemoteStorageNeedsLogin] = useState(false)
   const [editingBookmark, setEditingBookmark] = useState<DisplayBookmark | null>(null)
+  const [bookmarkDialogOpen, setBookmarkDialogOpen] = useState(false)
   const [syncStatus, setSyncStatus] = useState<SyncStatus>(() =>
     localStorage.getItem(PENDING_BOOKMARK_SYNC_KEY) === '1' ? 'pending' : 'idle'
   )
@@ -505,7 +506,11 @@ export default function MainPage() {
   }, [pushBookmarksToRemoteStorage])
 
   const handleBookmarkEditSave = async (originalUrl: string, data: BookmarkEditInput) => {
-    await updateBookmarkFromEdit(originalUrl, data)
+    if (originalUrl) {
+      await updateBookmarkFromEdit(originalUrl, data)
+    } else {
+      await saveBookmark(data)
+    }
     const store = await loadBookmarksFromPouchDB()
     deletedBookmarkUrlsRef.current = await getDeletedBookmarkUrls()
     if (store) {
@@ -698,11 +703,19 @@ export default function MainPage() {
             </div>
           )}
           {bookmarks.length > 0 && (
-            <div className="w-full max-w-md mb-6">
-              <div className="relative">
+            <div className="w-full max-w-md mb-6 flex items-center gap-2">
+              <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
                 <input type="text" placeholder="搜索书签..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full h-10 pl-10 pr-4 rounded-lg bg-white/10 border border-white/20 text-white placeholder:text-white/40 focus:outline-none focus:border-white/40" />
               </div>
+              <button
+                onClick={() => { setEditingBookmark(null); setBookmarkDialogOpen(true) }}
+                className="shrink-0 h-10 px-3 rounded-lg bg-cyan-500/20 border border-cyan-400/40 text-cyan-100 hover:bg-cyan-500/30 transition-colors flex items-center gap-1.5 text-sm font-medium"
+                title="手动添加书签"
+              >
+                <Plus className="w-4 h-4" />
+                新增
+              </button>
             </div>
           )}
           <div className="w-full overflow-visible" style={{ maxWidth: `${appConfig.display.maxWidth}px` }}>
@@ -768,21 +781,29 @@ export default function MainPage() {
                 {filteredBookmarks.length} 个书签
               </span>
             </div>
-            <BookmarkGrid bookmarks={filteredBookmarks} iconSize={appConfig.display.iconSize} borderRadius={appConfig.display.iconBorderRadius} spacing={appConfig.display.iconSpacing} showName={appConfig.display.showName} nameSize={appConfig.display.nameSize} maxWidth={appConfig.display.maxWidth} openInNewTab={appConfig.display.openInNewTab} onItemClick={(bookmark) => recordClick(bookmark, webdavConfig || undefined)} onTogglePin={handleTogglePin} onEditBookmark={setEditingBookmark} />
+            <BookmarkGrid bookmarks={filteredBookmarks} iconSize={appConfig.display.iconSize} borderRadius={appConfig.display.iconBorderRadius} spacing={appConfig.display.iconSpacing} showName={appConfig.display.showName} nameSize={appConfig.display.nameSize} maxWidth={appConfig.display.maxWidth} openInNewTab={appConfig.display.openInNewTab} onItemClick={(bookmark) => recordClick(bookmark, webdavConfig || undefined)} onTogglePin={handleTogglePin} onEditBookmark={(bookmark) => { setEditingBookmark(bookmark); setBookmarkDialogOpen(true) }} />
             {/* 空状态：刚初始化完还没导入任何数据时给出明确引导，而不是留一片空白 */}
             {allBookmarks.length === 0 && !searchQuery.trim() && (
               <div className="mt-4 rounded-xl border border-white/10 bg-white/5 px-6 py-10 text-center">
                 <p className="text-white/60 text-sm mb-1">还没有书签</p>
                 <p className="text-white/35 text-xs leading-relaxed">
-                  在设置里配置 WebDAV 或 RemoteStorage 即可同步已有书签，<br />
-                  之后添加的书签会自动保存在本机。
+                  点击下方按钮手动添加书签，或在设置里配置 WebDAV / RemoteStorage 同步已有书签。
                 </p>
-                <button
-                  onClick={() => setSettingsOpen(true)}
-                  className="mt-4 rounded-lg border border-white/20 bg-white/5 px-3 py-1.5 text-xs text-white/80 hover:bg-white/10 transition-colors"
-                >
-                  去设置
-                </button>
+                <div className="mt-4 flex items-center justify-center gap-2">
+                  <button
+                    onClick={() => { setEditingBookmark(null); setBookmarkDialogOpen(true) }}
+                    className="rounded-lg bg-cyan-500/20 border border-cyan-400/40 px-3 py-1.5 text-xs text-cyan-100 hover:bg-cyan-500/30 transition-colors flex items-center gap-1"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    新增书签
+                  </button>
+                  <button
+                    onClick={() => setSettingsOpen(true)}
+                    className="rounded-lg border border-white/20 bg-white/5 px-3 py-1.5 text-xs text-white/80 hover:bg-white/10 transition-colors"
+                  >
+                    去设置
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -825,9 +846,10 @@ export default function MainPage() {
         </div>
       )}
       <BookmarkEditDialog
-        open={!!editingBookmark}
+        open={bookmarkDialogOpen}
         bookmark={editingBookmark}
         onOpenChange={(open) => {
+          setBookmarkDialogOpen(open)
           if (!open) setEditingBookmark(null)
         }}
         onSave={handleBookmarkEditSave}

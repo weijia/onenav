@@ -17,7 +17,7 @@ import {
   Plug,
   FileWarning,
 } from 'lucide-react'
-import { fetchDirStructManifests, RsNotConnectedError, RsAuthError } from './filebrowser/fetch'
+import { fetchDirStructManifests, getFolderDeepenMarks, putFolderDeepenMarks, RsNotConnectedError, RsAuthError } from './filebrowser/fetch'
 import { filterTree, normalizeManifests } from './filebrowser/normalize'
 import type { FolderNodeView, ManifestView } from './filebrowser/types'
 
@@ -29,6 +29,8 @@ export default function FileBrowserApp() {
   const [errorMsg, setErrorMsg] = useState('')
   const [errorCode, setErrorCode] = useState('')
   const [query, setQuery] = useState('')
+  // 深挖标记：key（volumeId 或 主机::盘符）→ 该盘下被标记 host-relative 路径集合
+  const [marksByKey, setMarksByKey] = useState<Record<string, Set<string>>>({})
 
   const load = useCallback(async () => {
     setState('loading')
@@ -38,6 +40,25 @@ export default function FileBrowserApp() {
       const raws = await fetchDirStructManifests()
       const ms = normalizeManifests(raws)
       setManifests(ms)
+      // 并发加载每台主机每个驱动的深挖标记（按卷身份命名空间）。
+      const marks: Record<string, Set<string>> = {}
+      await Promise.all(
+        ms.map(async (m) => {
+          for (const drive of m.root.children) {
+            const key = drive.volumeId || `${m.source}::${drive.name}`
+            try {
+              const list = await getFolderDeepenMarks(key)
+              if (list.length) marks[key] = new Set(list)
+            } catch (err) {
+              // 标记读取失败（如令牌缺权限）不阻断浏览，写回时再提示
+              if (err instanceof RsAuthError) {
+                console.warn('[filebrowser] 读取深挖标记权限不足，写回时会提示:', err.message)
+              }
+            }
+          }
+        }),
+      )
+      setMarksByKey(marks)
       setState(ms.length > 0 ? 'data' : 'empty')
     } catch (e) {
       if (e instanceof RsAuthError) {
@@ -54,9 +75,34 @@ export default function FileBrowserApp() {
     }
   }, [])
 
+  // 切换某目录的深挖标记并写回 RS（按卷身份命名空间去重）。
+  const toggleMark = useCallback((key: string, path: string) => {
+    setMarksByKey((prev) => {
+      const cur = prev[key] || new Set<string>()
+      const next = new Set(cur)
+      if (next.has(path)) next.delete(path)
+      else next.add(path)
+      const m = { ...prev }
+      if (next.size) m[key] = next
+      else delete m[key]
+      // 写回放到微任务里，避免在状态更新函数内做副作用
+      queueMicrotask(() => {
+        putFolderDeepenMarks(key, [...next]).catch((err) => {
+          console.error('[filebrowser] 写回深挖标记失败:', err)
+        })
+      })
+      return m
+    })
+  }, [])
+
   useEffect(() => {
     void load()
   }, [load])
+
+  const totalMarks = useMemo(
+    () => Object.values(marksByKey).reduce((s, set) => s + set.size, 0),
+    [marksByKey],
+  )
 
   const q = query.trim().toLowerCase()
   const filtered = useMemo(() => {
@@ -106,6 +152,12 @@ export default function FileBrowserApp() {
         </div>
       )}
 
+      {state === 'data' && totalMarks > 0 && (
+        <div className="rounded-lg bg-sky-500/10 border border-sky-400/25 px-3 py-2 text-xs text-sky-100/85 leading-relaxed">
+          ↳ 已标记 {totalMarks} 个目录「继续解析下一层」。标记后需在本机重新运行 dir-struct-gen 生成清单，再点「刷新」才会展开。
+        </div>
+      )}
+
       {state === 'loading' && <LoadingState />}
       {state === 'error' && <ErrorState code={errorCode} message={errorMsg} onRetry={load} />}
       {state === 'empty' && <EmptyState onRetry={load} />}
@@ -117,7 +169,7 @@ export default function FileBrowserApp() {
         ) : (
           <div className="space-y-3">
             {filtered.map((m) => (
-              <HostCard key={m.source} manifest={m} query={q} />
+              <HostCard key={m.source} manifest={m} query={q} marksByKey={marksByKey} onToggleMark={toggleMark} />
             ))}
           </div>
         ))}
@@ -251,7 +303,19 @@ function TagChip({ tag }: { tag: string }) {
   )
 }
 
-function HostCard({ manifest, query }: { manifest: ManifestView; query: string }) {
+const EMPTY_SET: Set<string> = new Set()
+
+function HostCard({
+  manifest,
+  query,
+  marksByKey,
+  onToggleMark,
+}: {
+  manifest: ManifestView
+  query: string
+  marksByKey: Record<string, Set<string>>
+  onToggleMark: (key: string, path: string) => void
+}) {
   const genText = formatGeneratedAt(manifest.generatedAt)
   return (
     <div className="rounded-xl bg-white/5 border border-white/10 p-4 space-y-2">
@@ -277,9 +341,22 @@ function HostCard({ manifest, query }: { manifest: ManifestView; query: string }
         {manifest.root.children.length === 0 ? (
           <div className="text-white/30 text-xs px-1">（无子目录）</div>
         ) : (
-          manifest.root.children.map((child, i) => (
-            <FolderTree key={`${child.name}-${i}`} node={child} depth={0} forceExpand={!!query} />
-          ))
+          manifest.root.children.map((child, i) => {
+            // 每块盘的稳定身份命名空间：有 volumeId 用 volumeId（跨主机去重），否则回退 主机::盘符。
+            const key = child.volumeId || `${manifest.source}::${child.name}`
+            return (
+              <FolderTree
+                key={`${child.name}-${i}`}
+                node={child}
+                depth={0}
+                forceExpand={!!query}
+                basePath={[child.name]}
+                markKey={key}
+                marked={marksByKey[key] || EMPTY_SET}
+                onToggle={onToggleMark}
+              />
+            )
+          })
         )}
       </div>
     </div>
@@ -290,21 +367,32 @@ function FolderTree({
   node,
   depth,
   forceExpand,
+  basePath,
+  markKey,
+  marked,
+  onToggle,
 }: {
   node: FolderNodeView
   depth: number
   forceExpand: boolean
+  basePath: string[]
+  markKey: string
+  marked: Set<string>
+  onToggle: (key: string, path: string) => void
 }) {
   // 默认展开顶层（盘符/根目录），深层收起；筛选命中时整棵匹配树强制展开。
   const [open, setOpen] = useState(depth === 0 && !forceExpand)
   const expanded = forceExpand || open
   const hasChildren = node.children.length > 0
   const indent = { paddingLeft: `${depth * 14 + 8}px` }
+  // host-relative 路径（盘符 + 嵌套目录名，用 / 连接），用于深挖标记。
+  const path = basePath.join('/')
+  const isMarked = marked.has(path)
 
   return (
     <div>
       <div
-        className="flex items-center gap-1 py-1 pr-2 rounded hover:bg-white/5"
+        className="group flex items-center gap-1 py-1 pr-2 rounded hover:bg-white/5"
         style={indent}
       >
         {hasChildren ? (
@@ -333,12 +421,39 @@ function FolderTree({
             ))}
           </span>
         )}
+        {isMarked && (
+          <span className="px-1.5 py-0.5 rounded text-[10px] bg-sky-500/20 text-sky-200/90 font-mono leading-none shrink-0">
+            ↳ 待深挖
+          </span>
+        )}
+        {node.type === 'folder' && (
+          <button
+            type="button"
+            onClick={(ev) => {
+              ev.stopPropagation()
+              onToggle(markKey, path)
+            }}
+            title="继续解析下一层（标记后需在本机重新运行 dir-struct-gen 生成清单）"
+            className="ml-auto shrink-0 opacity-0 group-hover:opacity-100 text-sky-300/70 hover:text-sky-200 text-xs px-1 leading-none"
+          >
+            ↳
+          </button>
+        )}
       </div>
 
       {expanded && hasChildren && (
         <div>
           {node.children.map((c, i) => (
-            <FolderTree key={`${c.name}-${i}`} node={c} depth={depth + 1} forceExpand={forceExpand} />
+            <FolderTree
+              key={`${c.name}-${i}`}
+              node={c}
+              depth={depth + 1}
+              forceExpand={forceExpand}
+              basePath={[...basePath, c.name]}
+              markKey={markKey}
+              marked={marked}
+              onToggle={onToggle}
+            />
           ))}
         </div>
       )}

@@ -138,7 +138,17 @@ export interface BookmarkDoc {
   deleted?: boolean
 }
 
-export async function saveBookmark(bookmark: Omit<BookmarkDoc, '_id' | 'type'> & { url: string }): Promise<void> {
+// 新增书签的入参：基础字段来自 BookmarkEditInput，其余字段（点击数/创建时间/删除标记等）可选，
+// 未传时 saveBookmark 会填默认值。share-inbox 导入会带上 clicks/createdAt。
+export type SaveBookmarkInput = BookmarkEditInput & {
+  clicks?: number
+  lastClickedAt?: number
+  createdAt?: number
+  updatedAt?: number
+  deleted?: boolean
+}
+
+export async function saveBookmark(bookmark: SaveBookmarkInput): Promise<void> {
   const database = await getDb()
   const id = PREFIX.BOOKMARK + bookmark.url
   
@@ -152,11 +162,11 @@ export async function saveBookmark(bookmark: Omit<BookmarkDoc, '_id' | 'type'> &
       tags: bookmark.tags || [],
       description: bookmark.description,
       icon: bookmark.icon,
-      clicks: bookmark.clicks || 0,
+      clicks: bookmark.clicks ?? 0,
       lastClickedAt: bookmark.lastClickedAt,
-      createdAt: existing?.createdAt || Date.now(),
-      updatedAt: Date.now(),
-      deleted: bookmark.deleted || false,
+      createdAt: existing?.createdAt || bookmark.createdAt || Date.now(),
+      updatedAt: bookmark.updatedAt || Date.now(),
+      deleted: bookmark.deleted ?? false,
     }
     
     if (existing) {

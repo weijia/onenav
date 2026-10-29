@@ -8,6 +8,8 @@ interface RawFolderNode {
   type?: unknown
   tags?: unknown
   children?: unknown
+  /** 驱动层节点的稳定身份（来自磁盘根 .dir-struct-id），子目录不携带 */
+  volumeId?: unknown
 }
 
 function toStr(v: unknown): string | null {
@@ -44,7 +46,11 @@ function normalizeFolderNode(raw: unknown, warnings: string[]): FolderNodeView |
     if (cn) children.push(cn)
   }
 
-  return { name, type: 'folder', tags, children }
+  const volumeId = toStr(node.volumeId)
+  const out: FolderNodeView = { name, type: 'folder', tags, children }
+  // 仅驱动层节点携带稳定身份（子目录不重复存）。
+  if (volumeId) out.volumeId = volumeId
+  return out
 }
 
 /** 递归统计文件夹节点数（含自身） */
