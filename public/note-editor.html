@@ -311,14 +311,38 @@ body { font-family: -apple-system, "Microsoft YaHei", sans-serif; height:100vh; 
   .empty .card { max-width:92%; padding:22px 16px; }
   .empty-mini { font-size:12px; }
 }
+/* 加载中遮罩：放在 #app 外，挂载前显示（#app 因 v-cloak 隐藏），
+   成功挂载后由脚本移除；CDN/模块加载失败由 #fatal 接管并隐藏本遮罩。 */
+#loading {
+  position: fixed; inset: 0; z-index: 50;
+  display: flex; align-items: center; justify-content: center;
+  background: #f5f7fb;
+}
+#loading .loading-card { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+#loading .spinner {
+  width: 40px; height: 40px; border-radius: 50%;
+  border: 4px solid #d8e0f0; border-top-color: #2d6cdf;
+  animation: nb-spin 0.8s linear infinite;
+}
+#loading .loading-text { color: #5a6b8c; font-size: 14px; letter-spacing: 1px; }
+@keyframes nb-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  #loading .spinner { animation-duration: 2s; }
+}
 </style>
 </head>
 <body>
 <div id="fatal"></div>
 <div id="appVer" class="app-ver"></div>
+<div id="loading">
+  <div class="loading-card">
+    <div class="spinner" aria-hidden="true"></div>
+    <div class="loading-text">加载中…</div>
+  </div>
+</div>
 <script>
   // 页面版本号（单一来源）。每次修改本文件后请同步递增，便于确认浏览器加载的是不是最新版。
-  window.__APP_VERSION__ = 'v2026.10.18.15';
+  window.__APP_VERSION__ = 'v2026.10.29.1';
   document.getElementById('appVer').textContent = '版本 ' + window.__APP_VERSION__;
 
   /* 调试辅助：清空 Gitee 相关的 IndexedDB 缓存（zen-fs-cache 的 CachedFileSystem
@@ -493,6 +517,8 @@ body { font-family: -apple-system, "Microsoft YaHei", sans-serif; height:100vh; 
   function showFatal(msg) {
     var el = document.getElementById('fatal');
     if (el) { el.style.display = 'block'; el.textContent = String(msg); }
+    var ld = document.getElementById('loading');
+    if (ld) ld.remove();
   }
   window.addEventListener('error', function (e) {
     showFatal('加载/运行错误：\n' + (e.message || (e.error && e.error.stack) || e));
@@ -951,6 +977,9 @@ const app = createApp({
 })
 
 app.mount('#app')
+// 挂载成功：移除加载遮罩（#app 的 v-cloak 已被 Vue 移除，真实控件已显示）
+var __ld = document.getElementById('loading')
+if (__ld) __ld.remove()
 </script>
 <!-- 返回主页按钮：仅在 http(s) 打开（被 onenav 当应用时）显示；file:// 直接打开则隐藏 -->
 <script>
