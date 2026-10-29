@@ -123,7 +123,9 @@ window.__loadNoteSidebar = loadSidebar
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
 body { font-family: -apple-system, "Microsoft YaHei", sans-serif; height:100vh; overflow:hidden; }
-[v-cloak]{ display:none; }
+/* 必须比 .layout 的 display:flex 优先级高（#app[id]+[attr]=1,1,0 > .layout=0,1,0），
+   否则挂载前 #app 仍会显示未经编译的模板（FOUC）。仅用于 #app，挂载后 v-cloak 被移除即恢复 .layout。 */
+#app[v-cloak]{ display:none; }
 
 /* 版本角标（页面右下角固定，放在 #app 外，模块加载失败/旧缓存也能看到） */
 .app-ver { position:fixed; right:8px; bottom:6px; font-size:11px; color:#888; opacity:.55; z-index:9999; user-select:none; pointer-events:none; }
