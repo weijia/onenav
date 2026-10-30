@@ -303,6 +303,64 @@ function TagChip({ tag }: { tag: string }) {
   )
 }
 
+// 字节数 → 人类可读（KB/MB/GB…），用于展示目录总大小。
+function formatSize(bytes?: number): string {
+  if (bytes == null) return '—'
+  if (bytes < 1024) return `${bytes} B`
+  const units = ['KB', 'MB', 'GB', 'TB', 'PB']
+  let v = bytes / 1024
+  let i = 0
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024
+    i++
+  }
+  return `${v.toFixed(v < 10 ? 2 : 1)} ${units[i]}`
+}
+
+// 文件数 → 千分位展示。
+function formatCount(n?: number): string {
+  if (n == null) return '—'
+  return n.toLocaleString('zh-CN')
+}
+
+// 目录大小徽标：展示该目录（含子孙）的文件数与总大小。
+// 数据来自 dir-struct-gen「汇总文件数与大小」（可选字段，缺失清单不显示）。
+function FolderSize({ node }: { node: FolderNodeView }) {
+  if (node.fileCount === undefined && node.totalSize === undefined) return null
+  const parts: string[] = []
+  if (node.fileCount !== undefined) parts.push(`${formatCount(node.fileCount)} 项`)
+  if (node.totalSize !== undefined) parts.push(formatSize(node.totalSize))
+  const title =
+    (node.fileCount !== undefined ? `文件 ${node.fileCount} 个` : '') +
+    (node.totalSize !== undefined ? ` · 总大小 ${node.totalSize} 字节` : '')
+  return (
+    <span
+      className="ml-1 shrink-0 text-sky-200/55 text-[11px] font-mono tabular-nums leading-none"
+      title={title}
+    >
+      {parts.join(' · ')}
+    </span>
+  )
+}
+
+// 主机级汇总：累加各「驱动（盘符）」节点的递归统计（盘符互为兄弟、不嵌套，不会重复计数）。
+function hostStats(root: FolderNodeView): { files: number; bytes: number; has: boolean } {
+  let files = 0
+  let bytes = 0
+  let has = false
+  for (const d of root.children) {
+    if (d.fileCount !== undefined) {
+      files += d.fileCount
+      has = true
+    }
+    if (d.totalSize !== undefined) {
+      bytes += d.totalSize
+      has = true
+    }
+  }
+  return { files, bytes, has }
+}
+
 const EMPTY_SET: Set<string> = new Set()
 
 function HostCard({
@@ -317,6 +375,7 @@ function HostCard({
   onToggleMark: (key: string, path: string) => void
 }) {
   const genText = formatGeneratedAt(manifest.generatedAt)
+  const stats = hostStats(manifest.root)
   return (
     <div className="rounded-xl bg-white/5 border border-white/10 p-4 space-y-2">
       <div className="flex items-center gap-2 min-w-0">
@@ -328,6 +387,11 @@ function HostCard({
       </div>
       <div className="text-white/40 text-xs flex items-center gap-3 flex-wrap">
         <span>{manifest.folderCount} 个文件夹</span>
+        {stats.has && (
+          <span className="text-sky-200/60">
+            {formatCount(stats.files)} 个文件 · {formatSize(stats.bytes)}
+          </span>
+        )}
         {genText && <span>生成于 {genText}</span>}
         {manifest.warnings.length > 0 && (
           <span className="text-amber-300/70 flex items-center gap-1">
@@ -421,6 +485,7 @@ function FolderTree({
             ))}
           </span>
         )}
+        <FolderSize node={node} />
         {isMarked && (
           <span className="px-1.5 py-0.5 rounded text-[10px] bg-sky-500/20 text-sky-200/90 font-mono leading-none shrink-0">
             ↳ 待深挖

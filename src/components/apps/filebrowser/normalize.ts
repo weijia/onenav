@@ -10,6 +10,10 @@ interface RawFolderNode {
   children?: unknown
   /** 驱动层节点的稳定身份（来自磁盘根 .dir-struct-id），子目录不携带 */
   volumeId?: unknown
+  /** 可选：该目录（含子孙）的总文件数 */
+  fileCount?: unknown
+  /** 可选：该目录（含子孙）的总字节数 */
+  totalSize?: unknown
 }
 
 function toStr(v: unknown): string | null {
@@ -50,6 +54,10 @@ function normalizeFolderNode(raw: unknown, warnings: string[]): FolderNodeView |
   const out: FolderNodeView = { name, type: 'folder', tags, children }
   // 仅驱动层节点携带稳定身份（子目录不重复存）。
   if (volumeId) out.volumeId = volumeId
+  // 可选统计字段：目录下所有文件（含子孙）的数量与总字节数（由 dir-struct-gen「汇总文件数与大小」生成）。
+  // 缺失（未开启统计 / 无访问权限）时该字段不出现，读取侧按需展示。
+  if (typeof node.fileCount === 'number' && node.fileCount >= 0) out.fileCount = node.fileCount
+  if (typeof node.totalSize === 'number' && node.totalSize >= 0) out.totalSize = node.totalSize
   return out
 }
 
