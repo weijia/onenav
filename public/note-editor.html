@@ -28,7 +28,7 @@
   - vue：统一实例（所有组件 ?external=vue 都解析到这里）
   - vue-note-sidebar / vue-note-editor / vue-note-backend-config：沿用原仓库组件
   - isomorphic-git + @isomorphic-git/lightning-fs：供 note-core 的 Git 后端使用
-  - note-core：核心库（@richard432/note-core@0.3.2，esm.sh 加载），内置 Git / Gitee /
+  - note-core：核心库（@richard432/note-core@0.3.3，esm.sh 加载），内置 Git / Gitee /
     PouchDB / WebDAV 四种 Provider；Git 走 isomorphic-git，Gitee 走 zen-fs-gitee。
   - Gitee 后端依赖链（纯 CDN，esm.sh 转译，无需本地 bundle，但需联网）：
       @zenfs/core  —— ?bundle&external=kerium,utilium：把崩溃源 memium 内联进自身
@@ -45,7 +45,7 @@
                       注：kerium/locks、kerium/log 子路径不加 ?external（esm.sh 对子路径+external
                       构建报磁盘错误），但其内部 import 的是 esm.sh 规范化的 /utilium@3.9.0/...
                       绝对路径，与 utilium 映射指向同一份实例，故不破坏单例。
-      zen-fs-gitee@1.2.33 内部就 import 了 zen-fs-cache（用它的 IdbKVStore 持久化
+      zen-fs-gitee@1.2.34 内部就 import 了 zen-fs-cache（用它的 IdbKVStore 持久化
       shaCache / contentCache / mtimeCache）；本页进一步把 note-core 的 GiteeFS 实例
       套上 zen-fs-cache 的 CachedFileSystem（IndexedDB）。GiteeFS 实现了 getRevision()
       —— 返回 git blob SHA，**零网络**，所以命中缓存时既不下载内容、
@@ -75,7 +75,7 @@
     "@isomorphic-git/lightning-fs": "https://esm.sh/@isomorphic-git/lightning-fs@4.6.0",
     "@zenfs/core": "https://esm.sh/@zenfs/core@2.7.7?bundle&external=kerium,utilium",
     "@zenfs/core/constants": "https://esm.sh/@zenfs/core@2.7.7/constants?external=kerium,utilium",
-    "zen-fs-gitee": "https://esm.sh/zen-fs-gitee@1.2.33?external=@zenfs/core,kerium,utilium,zen-fs-cache",
+    "zen-fs-gitee": "https://esm.sh/zen-fs-gitee@1.2.34?external=@zenfs/core,kerium,utilium,zen-fs-cache",
     "zen-fs-cache": "https://esm.sh/zen-fs-cache@1.0.6?bundle",
     "kerium": "https://esm.sh/kerium@1.5.0?external=utilium",
     "kerium/locks": "https://esm.sh/kerium@1.5.0/locks",
@@ -87,7 +87,7 @@
     "utilium/misc": "https://esm.sh/utilium@^3.7.0/misc",
     "utilium/requests": "https://esm.sh/utilium@^3.7.0/requests",
     "utilium/string": "https://esm.sh/utilium@^3.7.0/string",
-    "note-core": "https://esm.sh/@richard432/note-core@0.3.2?external=vue,@zenfs/core,zen-fs-gitee,zen-fs-cache,isomorphic-git,@isomorphic-git/lightning-fs"
+    "note-core": "https://esm.sh/@richard432/note-core@0.3.3?external=vue,@zenfs/core,zen-fs-gitee,zen-fs-cache,isomorphic-git,@isomorphic-git/lightning-fs"
   }
 }
 </script>
