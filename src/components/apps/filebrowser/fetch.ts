@@ -2,11 +2,13 @@
 // 复用 onenav 现有 OAuth 连接（Q1=A），无需额外配置。
 //
 // 存储模型（dir-struct-manifest-format.md v2）：
-//   app_data/folders/<host>.json        — 主机索引 { version:2, source, mounts:[{letter,volumeId,file}] }
-//   app_data/folders/<volumeKey>.json   — 某块物理盘的卷子树 { volumeId, name, type:'folder', children, sources }
-//   app_data/folder-deepen/<key>.json   — 深挖标记 { marks:[ "E:/Photos/2024", ... ] }
-// 其中 volumeKey = 卷的 .dir-struct-id（UUID，跨主机一致）；同一块盘在多主机上只存一份卷文件，
-// 主机索引只记录挂载关系，从根本上避免「同盘多主机重复保存」。
+//   app_data/folders/<host>.json             — 主机索引 { version:2, source, mounts:[{letter,volumeId,file,files:[{file,partId}]}] }
+//   app_data/folders/<volumeKey>.<partId>.json — 某块盘「按主机分片」的卷子树（每台主机一份，互不覆盖）
+//   app_data/folders/<volumeKey>.json        — 旧版单文件卷（历史数据，仍兼容）
+//   app_data/folder-deepen/<key>.json        — 深挖标记 { marks:[ "E:/Photos/2024", ... ] }
+// 其中 volumeKey = 卷的 .dir-struct-id（UUID，跨主机一致）。
+// 读取侧：对主机索引的每个 mount 取该卷全部分片（files 优先，回退 file），按 volumeId 合并成一棵树。
+// 合并规则见 ./merge.ts（严格对齐生成器与格式文档「分片合并规则」）。
 //
 // 兼容：仍支持 v1 单文件整树清单（含 root 字段，无 mounts）。
 //
@@ -20,6 +22,7 @@ import {
   getSavedStorageCredentials,
   isRemoteStorageAuthError,
 } from '@/lib/remotestorage-connection'
+import { mergeShards } from './merge'
 import type { RawManifest } from './types'
 
 /** 未连接 RemoteStorage（无凭据） */
@@ -44,6 +47,9 @@ export class RsAuthError extends Error {
 const FOLDERS_DIR = 'app_data/folders'
 const DEEPEN_DIR = 'app_data/folder-deepen'
 
+/** 未索引卷（分片存在但无主机索引引用它们）的合成主机名 */
+const ORPHAN_SOURCE = '（未索引卷）'
+
 /** app_data 读权限不足时的错误说明：已连接，但当前令牌缺作用域，需断开重连换取新令牌 */
 const FOLDERS_AUTH_MSG =
   'RemoteStorage 已连接，但当前令牌缺少 app_data 目录的权限（服务端 401）。' +
@@ -61,11 +67,29 @@ function getFS(): RemoteStorageFileSystem {
   return new RemoteStorageFileSystem({ href: credentials.href, token: credentials.token })
 }
 
+/** 从主机索引的一个 mount 项取该卷全部分片基名（files 优先、回退 file），稳定排序 */
+function mountShardBases(mount: Record<string, unknown>): string[] {
+  const fromFiles = Array.isArray(mount.files)
+    ? (mount.files as unknown[])
+        .map((f) => (typeof f === 'string' ? f : f && typeof f === 'object' ? (f as Record<string, unknown>).file : null))
+        .filter((b): b is string => typeof b === 'string' && !!b)
+    : []
+  const bases =
+    fromFiles.length > 0
+      ? fromFiles
+      : typeof mount.file === 'string' && mount.file
+        ? [mount.file]
+        : []
+  // 固定折叠顺序 → 合并结果确定（与生成器 applyLoadedDoc 同一口径）
+  return [...new Set(bases)].sort((a, b) => a.localeCompare(b))
+}
+
 /**
- * 列出并读取 app_data/folders/ 下全部 .json，分类拼装为原始清单数组：
- * - 含 mounts 数组 → 主机索引，按需拼装其引用的卷文件成完整树；
- * - 含 volumeId + children 且非 mounts/root → 卷文件，收入卷映射；
+ * 列出并读取 app_data/folders/ 下全部 .json，按形态分类拼装为原始清单数组：
+ * - 含 mounts 数组 → 主机索引：对每个 mount 取该卷全部分片并合并成一棵树；
+ * - 含 volumeId + children 且非 root/mounts → 卷分片，收入按基名的映射，等待被主机索引合并；
  * - 含 root 字段 → legacy v1 整树清单，原样透传。
+ * 未被任何主机索引引用的分片，按 volumeId 归组后合并，作为「未索引卷」展示（不丢数据）。
  *
  * 单文件解析/读取失败会被跳过，不导致整页崩溃。
  */
@@ -105,14 +129,15 @@ export async function fetchDirStructManifests(): Promise<RawManifest[]> {
     .map((n) => n.replace(/^\.\//, '')) // zen-fs 可能返回带 ./ 前缀的条目
     .filter((n) => n.endsWith('.json'))
 
-  // 读取全部 json 文件
-  const files: { name: string; raw: unknown }[] = []
+  // 读取全部 json 文件（保留去掉 .json 的基名，供 mounts 按基名引用分片）
+  const docs: { base: string; raw: Record<string, unknown> }[] = []
   for (const n of jsonNames) {
     const p = `${FOLDERS_DIR}/${n}`
     try {
       const text = await fs.readFile(p, 'utf8')
       try {
-        files.push({ name: n.replace(/\.json$/, ''), raw: JSON.parse(text) })
+        const raw = JSON.parse(text) as Record<string, unknown>
+        if (raw && typeof raw === 'object') docs.push({ base: n.replace(/\.json$/, ''), raw })
       } catch {
         console.warn('[filebrowser] 清单解析失败，已跳过:', p)
       }
@@ -123,20 +148,16 @@ export async function fetchDirStructManifests(): Promise<RawManifest[]> {
   }
 
   // 分类
-  const volumeMap = new Map<string, any>()
-  const hostIndexes: any[] = []
-  const legacy: any[] = []
-  for (const f of files) {
-    const raw = f.raw as Record<string, unknown> | null
-    if (!raw || typeof raw !== 'object') continue
+  const hostIndexes: Record<string, unknown>[] = []
+  const shardByBase = new Map<string, Record<string, unknown>>()
+  const legacy: Record<string, unknown>[] = []
+  for (const d of docs) {
+    const raw = d.raw
     if (Array.isArray(raw.mounts)) {
       hostIndexes.push(raw)
-    } else if (
-      typeof raw.volumeId === 'string' &&
-      Array.isArray(raw.children) &&
-      !raw.root
-    ) {
-      volumeMap.set(f.name, raw)
+    } else if ('volumeId' in raw && Array.isArray(raw.children) && !raw.root) {
+      // 卷分片 / 旧版单文件卷：都按基名收好，等待被主机索引引用后合并
+      shardByBase.set(d.base, raw)
     } else if (raw.root && typeof raw.root === 'object') {
       legacy.push(raw)
     }
@@ -146,26 +167,78 @@ export async function fetchDirStructManifests(): Promise<RawManifest[]> {
   const out: RawManifest[] = []
   // legacy v1：原样透传
   for (const l of legacy) out.push(l)
-  // 主机索引：拼装引用的卷文件
+
+  // 主机索引：对每个 mount 取该卷全部分片 → 合并成一棵树 → 挂在该主机根下
+  const referencedBases = new Set<string>()
   for (const hi of hostIndexes) {
-    const children: any[] = []
-    const root: Record<string, unknown> = {
-      name: typeof hi.source === 'string' ? hi.source : 'unknown',
-      type: 'folder',
-      children,
-    }
-    const mounts = Array.isArray(hi.mounts) ? (hi.mounts as any[]) : []
+    const source = typeof hi.source === 'string' ? hi.source : 'unknown'
+    const drives: Record<string, unknown>[] = []
+    const mounts = Array.isArray(hi.mounts) ? (hi.mounts as unknown[]) : []
     for (const m of mounts) {
-      const vf = volumeMap.get(m.file) ?? (typeof m.volumeId === 'string' ? volumeMap.get(sanitizeKey(m.volumeId)) : undefined)
-      if (vf) children.push(vf)
+      if (!m || typeof m !== 'object') continue
+      const mount = m as Record<string, unknown>
+      const bases = mountShardBases(mount)
+      if (!bases.length) continue
+      for (const b of bases) referencedBases.add(b)
+      const docsForMount = bases
+        .map((b) => shardByBase.get(b))
+        .filter((x): x is Record<string, unknown> => !!x)
+      if (!docsForMount.length) continue
+      const merged = mergeShards(docsForMount)
+      if (!merged) continue
+      // 驱动节点：以 mount.letter 为名，保留合并后的统计字段 / sources / volumeId。
+      const drive: Record<string, unknown> = { ...merged }
+      drive.type = 'folder'
+      if (typeof mount.letter === 'string' && mount.letter) drive.name = mount.letter
+      if (!drive.volumeId && typeof mount.volumeId === 'string' && mount.volumeId) {
+        drive.volumeId = mount.volumeId
+      }
+      drives.push(drive)
     }
+    // 盘符顺序：按名称自然排序，保证多主机展示稳定
+    drives.sort((a, b) =>
+      String(a.name).localeCompare(String(b.name), undefined, { numeric: true }),
+    )
     out.push({
-      source: typeof hi.source === 'string' ? hi.source : 'unknown',
+      source,
       generatedAt: typeof hi.generatedAt === 'string' ? hi.generatedAt : undefined,
       generator: typeof hi.generator === 'string' ? hi.generator : undefined,
-      root,
+      root: { name: source, type: 'folder', children: drives },
     })
   }
+
+  // 未被任何主机索引引用的分片：按 volumeId 归组后合并，作为「未索引卷」展示（不丢数据）。
+  const orphanGroups = new Map<string, Record<string, unknown>[]>()
+  for (const [base, raw] of shardByBase) {
+    if (referencedBases.has(base)) continue
+    const vid = typeof raw.volumeId === 'string' && raw.volumeId ? raw.volumeId : ''
+    const groupKey = vid || `∅::${typeof raw.name === 'string' ? raw.name : base}`
+    const arr = orphanGroups.get(groupKey) ?? []
+    arr.push(raw)
+    orphanGroups.set(groupKey, arr)
+  }
+  if (orphanGroups.size > 0) {
+    const orphanDrives: Record<string, unknown>[] = []
+    for (const [, groupDocs] of orphanGroups) {
+      const merged = mergeShards(groupDocs)
+      if (!merged) continue
+      const drive: Record<string, unknown> = { ...merged, type: 'folder' }
+      if (typeof drive.name !== 'string') drive.name = '（未命名卷）'
+      orphanDrives.push(drive)
+    }
+    orphanDrives.sort((a, b) =>
+      String(a.name).localeCompare(String(b.name), undefined, { numeric: true }),
+    )
+    if (orphanDrives.length > 0) {
+      out.push({
+        source: ORPHAN_SOURCE,
+        generatedAt: undefined,
+        generator: undefined,
+        root: { name: ORPHAN_SOURCE, type: 'folder', children: orphanDrives },
+      })
+    }
+  }
+
   return out
 }
 

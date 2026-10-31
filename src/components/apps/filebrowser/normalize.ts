@@ -12,8 +12,16 @@ interface RawFolderNode {
   volumeId?: unknown
   /** 可选：该目录（含子孙）的总文件数 */
   fileCount?: unknown
-  /** 可选：该目录（含子孙）的总字节数 */
+  /** 可选：该目录（含子孙）的逻辑大小之和 */
   totalSize?: unknown
+  /** 可选：该目录（含子孙）的占用磁盘空间之和 */
+  totalSizeOnDisk?: unknown
+  /** 可选：数值仅下界 */
+  sizePartial?: unknown
+  /** 可选：分片来源主机（并集） */
+  sources?: unknown
+  /** 可选：磁盘上无子目录 */
+  leaf?: unknown
 }
 
 function toStr(v: unknown): string | null {
@@ -54,10 +62,22 @@ function normalizeFolderNode(raw: unknown, warnings: string[]): FolderNodeView |
   const out: FolderNodeView = { name, type: 'folder', tags, children }
   // 仅驱动层节点携带稳定身份（子目录不重复存）。
   if (volumeId) out.volumeId = volumeId
-  // 可选统计字段：目录下所有文件（含子孙）的数量与总字节数（由 dir-struct-gen「汇总文件数与大小」生成）。
+  // 可选统计字段：目录下所有文件（含子孙）的数量、逻辑大小、占用空间（由 dir-struct-gen「汇总文件数与大小」生成）。
   // 缺失（未开启统计 / 无访问权限）时该字段不出现，读取侧按需展示。
   if (typeof node.fileCount === 'number' && node.fileCount >= 0) out.fileCount = node.fileCount
   if (typeof node.totalSize === 'number' && node.totalSize >= 0) out.totalSize = node.totalSize
+  if (typeof node.totalSizeOnDisk === 'number' && node.totalSizeOnDisk >= 0) {
+    out.totalSizeOnDisk = node.totalSizeOnDisk
+  }
+  // 下界标记：以「≥」展示，避免把读不到的部分当成 0。
+  if (node.sizePartial === true) out.sizePartial = true
+  // 分片来源主机（多主机合并后的并集），仅分片层可能出现。
+  if (Array.isArray(node.sources)) {
+    const sources = node.sources.filter((s): s is string => typeof s === 'string')
+    if (sources.length) out.sources = sources
+  }
+  // 磁盘上确实无子目录（合并后由规则重算），读取侧据此省略展开按钮。
+  if (node.leaf === true) out.leaf = true
   return out
 }
 

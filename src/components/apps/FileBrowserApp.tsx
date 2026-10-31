@@ -323,31 +323,58 @@ function formatCount(n?: number): string {
   return n.toLocaleString('zh-CN')
 }
 
-// 目录大小徽标：展示该目录（含子孙）的文件数与总大小。
+// 目录大小徽标：展示该目录（含子孙）的文件数、逻辑大小、占用空间。
 // 数据来自 dir-struct-gen「汇总文件数与大小」（可选字段，缺失清单不显示）。
+// 子树有读不到的部分时 sizePartial=true，以「≥」表示数值只是下界。
 function FolderSize({ node }: { node: FolderNodeView }) {
-  if (node.fileCount === undefined && node.totalSize === undefined) return null
+  const hasCount = node.fileCount !== undefined
+  const hasSize = node.totalSize !== undefined
+  const hasDisk = node.totalSizeOnDisk !== undefined
+  if (!hasCount && !hasSize && !hasDisk) return null
+
   const parts: string[] = []
-  if (node.fileCount !== undefined) parts.push(`${formatCount(node.fileCount)} 项`)
-  if (node.totalSize !== undefined) parts.push(formatSize(node.totalSize))
-  const title =
-    (node.fileCount !== undefined ? `文件 ${node.fileCount} 个` : '') +
-    (node.totalSize !== undefined ? ` · 总大小 ${node.totalSize} 字节` : '')
+  if (hasCount) parts.push(`${formatCount(node.fileCount)} 项`)
+  if (hasSize) parts.push(formatSize(node.totalSize))
+  // 占用与逻辑大小不同（簇对齐 / 压缩 / 稀疏文件等）时才额外标注，避免默认噪声；
+  // Windows 下取不到真实占用会按逻辑大小替代，此时两者相等、不重复显示。
+  const diskDiffers = hasDisk && (!hasSize || node.totalSizeOnDisk !== node.totalSize)
+
+  const titleParts: string[] = []
+  if (hasCount) titleParts.push(`文件 ${node.fileCount} 个`)
+  if (hasSize) titleParts.push(`逻辑大小 ${node.totalSize} 字节`)
+  if (hasDisk) titleParts.push(`占用空间 ${node.totalSizeOnDisk} 字节`)
+  if (node.sizePartial) titleParts.push('（下界：子树有部分无法读取）')
+
+  const main = parts.join(' · ')
   return (
     <span
-      className="ml-1 shrink-0 text-sky-200/55 text-[11px] font-mono tabular-nums leading-none"
-      title={title}
+      className="ml-1 shrink-0 text-sky-200/55 text-[11px] font-mono tabular-nums leading-none whitespace-nowrap"
+      title={titleParts.join(' · ')}
     >
-      {parts.join(' · ')}
+      {node.sizePartial ? '≥' : ''}
+      {main}
+      {diskDiffers && (
+        <span className="text-white/35">
+          {main ? ' · ' : ''}占 {formatSize(node.totalSizeOnDisk)}
+        </span>
+      )}
     </span>
   )
 }
 
 // 主机级汇总：累加各「驱动（盘符）」节点的递归统计（盘符互为兄弟、不嵌套，不会重复计数）。
-function hostStats(root: FolderNodeView): { files: number; bytes: number; has: boolean } {
+function hostStats(root: FolderNodeView): {
+  files: number
+  bytes: number
+  disk: number
+  has: boolean
+  hasDisk: boolean
+} {
   let files = 0
   let bytes = 0
+  let disk = 0
   let has = false
+  let hasDisk = false
   for (const d of root.children) {
     if (d.fileCount !== undefined) {
       files += d.fileCount
@@ -357,8 +384,12 @@ function hostStats(root: FolderNodeView): { files: number; bytes: number; has: b
       bytes += d.totalSize
       has = true
     }
+    if (d.totalSizeOnDisk !== undefined) {
+      disk += d.totalSizeOnDisk
+      hasDisk = true
+    }
   }
-  return { files, bytes, has }
+  return { files, bytes, disk, has, hasDisk }
 }
 
 const EMPTY_SET: Set<string> = new Set()
@@ -390,6 +421,7 @@ function HostCard({
         {stats.has && (
           <span className="text-sky-200/60">
             {formatCount(stats.files)} 个文件 · {formatSize(stats.bytes)}
+            {stats.hasDisk && stats.disk !== stats.bytes && <> · 占 {formatSize(stats.disk)}</>}
           </span>
         )}
         {genText && <span>生成于 {genText}</span>}
@@ -486,6 +518,14 @@ function FolderTree({
           </span>
         )}
         <FolderSize node={node} />
+        {node.sources && node.sources.length > 1 && (
+          <span
+            className="ml-1 shrink-0 px-1.5 py-0.5 rounded text-[10px] bg-emerald-500/15 text-emerald-200/80 font-mono leading-none"
+            title={`该盘由以下主机的分片合并而来：${node.sources.join('、')}`}
+          >
+            ⇄ {node.sources.length} 台
+          </span>
+        )}
         {isMarked && (
           <span className="px-1.5 py-0.5 rounded text-[10px] bg-sky-500/20 text-sky-200/90 font-mono leading-none shrink-0">
             ↳ 待深挖
