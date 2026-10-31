@@ -194,6 +194,13 @@ function mergeVolumeTrees(a: RawNode, b: RawNode, ctx?: MergeCtx): RawNode {
   else delete out.updatedAt
   if (out.part && aPart !== bPart) delete out.part
 
+  // 9) mtime 仅展示属性、不参与合并取舍：保留任一侧已有的 mtime（优先胜出侧，无值时另一侧兜底）。
+  //    合并逻辑不得用 mtime 覆盖 updatedAt 或反过来。
+  const mt = keepA ? (a.mtime ?? b.mtime) : (b.mtime ?? a.mtime)
+  const mtMs = toEpochMs(mt)
+  if (mtMs != null) out.mtime = mtMs
+  else delete out.mtime
+
   // 6) 两套大小字段与合并结果保持一致（逐个取 max）
   if ((out.type || 'folder') === 'folder') {
     const sum = sumChildrenTotals(children)

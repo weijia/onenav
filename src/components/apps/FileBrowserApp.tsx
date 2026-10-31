@@ -323,6 +323,19 @@ function formatCount(n?: number): string {
   return n.toLocaleString('zh-CN')
 }
 
+// 目录自身磁盘修改时间（mtime，毫秒级 epoch）→ 简短日期；用于展示「最后改于」。
+function formatMtime(ms?: number): string | null {
+  if (ms == null || !isFinite(ms)) return null
+  const d = new Date(ms)
+  if (isNaN(d.getTime())) return null
+  const y = d.getFullYear()
+  const mo = String(d.getMonth() + 1).padStart(2, '0')
+  const da = String(d.getDate()).padStart(2, '0')
+  const hh = String(d.getHours()).padStart(2, '0')
+  const mi = String(d.getMinutes()).padStart(2, '0')
+  return `${y}-${mo}-${da} ${hh}:${mi}`
+}
+
 // 目录大小徽标：展示该目录（含子孙）的文件数、逻辑大小、占用空间。
 // 数据来自 dir-struct-gen「汇总文件数与大小」（可选字段，缺失清单不显示）。
 // 子树有读不到的部分时 sizePartial=true，以「≥」表示数值只是下界。
@@ -344,6 +357,8 @@ function FolderSize({ node }: { node: FolderNodeView }) {
   if (hasSize) titleParts.push(`逻辑大小 ${node.totalSize} 字节`)
   if (hasDisk) titleParts.push(`占用空间 ${node.totalSizeOnDisk} 字节`)
   if (node.sizePartial) titleParts.push('（下界：子树有部分无法读取）')
+  const mtimeStr = formatMtime(node.mtime)
+  if (mtimeStr) titleParts.push(`最后修改 ${mtimeStr}`)
 
   const main = parts.join(' · ')
   return (
@@ -518,6 +533,14 @@ function FolderTree({
           </span>
         )}
         <FolderSize node={node} />
+        {formatMtime(node.mtime) && (
+          <span
+            className="shrink-0 text-white/30 text-[11px] font-mono tabular-nums leading-none whitespace-nowrap"
+            title={`最后修改 ${formatMtime(node.mtime)}`}
+          >
+            改 {formatMtime(node.mtime)}
+          </span>
+        )}
         {node.sources && node.sources.length > 1 && (
           <span
             className="ml-1 shrink-0 px-1.5 py-0.5 rounded text-[10px] bg-emerald-500/15 text-emerald-200/80 font-mono leading-none"

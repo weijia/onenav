@@ -44,6 +44,12 @@ export interface FolderNodeView {
   sources?: string[]
   /** 磁盘上确实无子目录时为 true（读取侧据此省略展开按钮） */
   leaf?: boolean
+  /**
+   * 该目录自身在磁盘上的最后修改时间（filesystem mtime），毫秒级 Unix epoch（UTC）。
+   * 与 updatedAt（生成器扫描确认时间）语义不同：mtime 是磁盘上该条目本身的修改时刻，不随扫描变化。
+   * 由生成器为每个进清单的节点写入，不参与合并取舍（分片合并规则第 9 条），仅作展示。
+   */
+  mtime?: number
 }
 
 /** 单台主机的目录结构清单视图 */

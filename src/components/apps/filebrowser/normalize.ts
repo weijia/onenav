@@ -22,6 +22,8 @@ interface RawFolderNode {
   sources?: unknown
   /** 可选：磁盘上无子目录 */
   leaf?: unknown
+  /** 可选：该目录自身在磁盘上的最后修改时间（filesystem mtime），毫秒级 epoch */
+  mtime?: unknown
 }
 
 function toStr(v: unknown): string | null {
@@ -78,6 +80,13 @@ function normalizeFolderNode(raw: unknown, warnings: string[]): FolderNodeView |
   }
   // 磁盘上确实无子目录（合并后由规则重算），读取侧据此省略展开按钮。
   if (node.leaf === true) out.leaf = true
+  // 目录自身在磁盘上的最后修改时间（mtime，毫秒级 epoch）。仅展示用途，不参与合并取舍；
+  // 缺失（fs.stat 失败 / 权限不足）时不写该字段。
+  if (typeof node.mtime === 'number' && isFinite(node.mtime)) out.mtime = node.mtime
+  else if (typeof node.mtime === 'string' && node.mtime) {
+    const t = Date.parse(node.mtime)
+    if (!isNaN(t)) out.mtime = t
+  }
   return out
 }
 
