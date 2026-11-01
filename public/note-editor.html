@@ -28,8 +28,14 @@
   - vue：统一实例（所有组件 ?external=vue 都解析到这里）
   - vue-note-sidebar / vue-note-editor / vue-note-backend-config：沿用原仓库组件
   - isomorphic-git + @isomorphic-git/lightning-fs：供 note-core 的 Git 后端使用
-  - note-core：核心库（@richard432/note-core@0.3.3，esm.sh 加载），内置 Git / Gitee /
-    PouchDB / WebDAV 四种 Provider；Git 走 isomorphic-git，Gitee 走 zen-fs-gitee。
+  - note-core：核心库（@richard432/note-core@0.4.1，esm.sh 加载），内置 Git / Gitee /
+    PouchDB / WebDAV / AppData 五种 Provider；Git 走 isomorphic-git，Gitee 走
+    zen-fs-gitee，AppData 挂载 zen-fs-config 的数据同步组（registerAppDataFS 注入）。
+  - zen-fs-config：数据同步组管理（connect/createAppDataGroup），走官方 IIFE
+    浏览器包（window.ZenFSConfig）。不能走 esm.sh：其依赖 memium（ZenFS 结构体
+    库）经 esm.sh 二次转译后与 @zenfs/core 版本错配，运行时抛
+    “Unable to resolve size of class …”（与本页注释里 @zenfs/core 必须 ?bundle
+    的问题同类）。IIFE 包自带完整依赖（闭包隔离，双实例安全）。
   - Gitee 后端依赖链（纯 CDN，esm.sh 转译，无需本地 bundle，但需联网）：
       @zenfs/core  —— ?bundle&external=kerium,utilium：把崩溃源 memium 内联进自身
                       （修复 esm.sh 拆分 memium 导致的 struct 初始化崩溃），kerium/utilium
@@ -87,7 +93,7 @@
     "utilium/misc": "https://esm.sh/utilium@^3.7.0/misc",
     "utilium/requests": "https://esm.sh/utilium@^3.7.0/requests",
     "utilium/string": "https://esm.sh/utilium@^3.7.0/string",
-    "note-core": "https://esm.sh/@richard432/note-core@0.3.3?external=vue,@zenfs/core,zen-fs-gitee,zen-fs-cache,isomorphic-git,@isomorphic-git/lightning-fs"
+    "note-core": "https://esm.sh/@richard432/note-core@0.4.1?external=vue,@zenfs/core,zen-fs-gitee,zen-fs-cache,isomorphic-git,@isomorphic-git/lightning-fs"
   }
 }
 </script>
@@ -118,6 +124,89 @@ async function loadSidebar() {
   throw lastErr
 }
 window.__loadNoteSidebar = loadSidebar
+</script>
+
+<script type="module">
+/* zen-fs-config 懒加载器（数据同步组支持）。
+ * 仅在首次需要时（添加文档库 / 打开同步设置 / 启动时存在 appdata 库）才加载，
+ * 不拖累首屏。
+ *
+ * zen-fs-config 走官方 IIFE 浏览器包（unpkg dist/zen-fs-config.js →
+ * window.ZenFSConfig）：esm.sh 转译 memium 会运行时崩溃（见 import map 注释），
+ * IIFE 包自带完整依赖链，闭包隔离，与页面 esm.sh zenfs 栈双实例并存安全
+ * （kerium 结构体注册表在 bundle 闭包内，非全局）。两栈之间只传递鸭子类型
+ * fs 对象（AppDataGroup.fs.promises → note-core 的 appdata provider）。
+ * 三个云后端（Gitee/GitHub/RemoteStorage）走 UMD 全局包：
+ * zen-fs-config 的 importOptionalBackend 会探测 window.ZenFSGitee /
+ * ZenFSGitHub / ZenFSRemoteStorage，命中即用（无需 import map）。
+ * 这些全局包同样闭包隔离，只服务「配置仓库 / 数据同步组」这条新链路，
+ * 页面原生的 Gitee 笔记库（note-core 直连）不受影响。 */
+const ZFC_SCRIPTS = [
+  'https://unpkg.com/zen-fs-config@0.5.40/dist/zen-fs-config.js',
+  'https://unpkg.com/zen-fs-gitee@1.2.34/dist/zen-fs-gitee.global.js',
+  'https://unpkg.com/zen-fs-github@1.1.3/dist/zen-fs-github.global.js',
+  'https://unpkg.com/zen-fs-remotestoragejs@1.3.20/dist/zen-fs-remotestoragejs.global.js',
+]
+function loadScript(url) {
+  return new Promise((resolve) => {
+    const s = document.createElement('script')
+    s.src = url
+    s.async = true
+    s.onload = () => resolve(null)
+    s.onerror = () => { console.warn('[zfc] 资源加载失败（功能可能受限）：', url); resolve(null) }
+    document.head.appendChild(s)
+  })
+}
+let zfcBackendLoadPromise = null
+function loadZfcBackends() {
+  if (!zfcBackendLoadPromise) {
+    zfcBackendLoadPromise = Promise.all(ZFC_SCRIPTS.map(loadScript))
+  }
+  return zfcBackendLoadPromise
+}
+window.__loadZfcBackends = loadZfcBackends
+
+let zfcModPromise = null
+function loadZenFsConfig() {
+  if (!zfcModPromise) {
+    zfcModPromise = (async () => {
+      await loadZfcBackends()
+      return window.ZenFSConfig
+    })()
+  }
+  return zfcModPromise
+}
+window.__loadZenFsConfig = loadZenFsConfig
+</script>
+
+<script type="module">
+/* zen-fs-config-ui web component 注册（IIFE 包，必须用显式
+ * /dist/zen-fs-config-ui.js 路径——裸 URL 会解析到 CJS 构建而抛
+ * “module is not defined”）。它注册 <sync-group-configurator> 并暴露
+ * window.ZenFSConfigUI。
+ *
+ * 该包内嵌一份 zen-fs-config 副本（bundle 闭包），与主链路的
+ * dist/zen-fs-config.js 是两个运行时实例，但两者以相同 appId 连接
+ * 「同一个 IndexedDB store（zen-fs-config-onenav-notebook）」——
+ * UI 面板里添加/删除的后端与数据组会持久化到同一份配置数据，
+ * 主链路刷新页面后（重新 connect + listAppDataGroups）即读到。
+ * 内存态（sync pair、组实例）互不共享，属可接受的松耦合。 */
+const ZFC_UI_SCRIPT = 'https://unpkg.com/zen-fs-config-ui@0.3.6/dist/zen-fs-config-ui.js'
+let zfcUiPromise = null
+function loadZenFsConfigUI() {
+  if (!zfcUiPromise) {
+    zfcUiPromise = new Promise((resolve, reject) => {
+      const s = document.createElement('script')
+      s.src = ZFC_UI_SCRIPT
+      s.async = true
+      s.onload = () => resolve(window.ZenFSConfigUI)
+      s.onerror = () => reject(new Error('zen-fs-config-ui 加载失败'))
+      document.head.appendChild(s)
+    })
+  }
+  return zfcUiPromise
+}
+window.__loadZenFsConfigUI = loadZenFsConfigUI
 </script>
 
 <style>
@@ -231,6 +320,37 @@ body { font-family: -apple-system, "Microsoft YaHei", sans-serif; height:100vh; 
 
 /* 致命错误兜底 */
 #fatal { position:fixed; inset:0; background:#1e1e2e; color:#ffb4b4; padding:28px; font-family:monospace; white-space:pre-wrap; z-index:999; overflow:auto; display:none; }
+
+/* ---------- 添加文档库弹窗：页签 + 同步设置面板 ---------- */
+.bc-tabs .bc-tabbar {
+  position:fixed; top:14vh; left:50%; transform:translateX(-50%);
+  display:flex; gap:4px; z-index:950;  /* 在 bc-overlay(900?) 之上 */
+}
+.bc-tabs .bc-tabbar button {
+  padding:8px 18px; border:1px solid #2c3c63; border-bottom:none;
+  border-radius:8px 8px 0 0; background:#0f1a33; color:#9fb3d9;
+  cursor:pointer; font-size:13.5px;
+}
+.bc-tabs .bc-tabbar button.on { background:#16213a; color:#fff; font-weight:600; }
+.bc-tabs .bc-loading { font-size:11px; opacity:.7; }
+.bc-sync-panel { position:fixed; inset:0; z-index:940; }
+.bc-sync-mask { position:absolute; inset:0; background:rgba(0,0,0,.45); }
+.bc-sync-box {
+  position:absolute; top:14vh; left:50%; transform:translateX(-50%);
+  width:min(92vw, 680px); max-height:74vh; overflow:auto;
+  background:#fff; border-radius:12px; padding:18px 20px;
+}
+.bc-sync-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+.bc-sync-head strong { color:#16213a; font-size:16px; }
+.bc-sync-head button { border:none; background:#f0f0f0; border-radius:6px; padding:4px 10px; cursor:pointer; }
+.bc-sync-hint { font-size:12.5px; color:#666; line-height:1.6; margin-bottom:12px;
+  background:#f5f6f8; border-radius:8px; padding:8px 10px; }
+.bc-sync-loading { padding:30px 0; text-align:center; color:#888; font-size:14px; }
+.bc-sync-actions { margin-bottom:10px; }
+.bc-sync-actions button {
+  background:#2d6cdf; color:#fff; border:none; border-radius:8px;
+  padding:8px 16px; cursor:pointer; font-size:13.5px;
+}
 
 /* 侧栏滑入动画 */
 .slide-enter-active, .slide-leave-active { transition: transform .25s ease, opacity .25s ease; }
@@ -499,15 +619,47 @@ body { font-family: -apple-system, "Microsoft YaHei", sans-serif; height:100vh; 
   </div>
 
   <!-- 添加文档库（后端配置弹窗）。
+       两个页签：
+       - 「添加文档库」：vue-note-backend-config 组件（git/gitee 表单）
+       - 「同步设置」：zen-fs-config-ui 的 <sync-group-configurator>，
+         管理配置仓库的远端副本 + 各文档库（数据同步组）的后端列表。
        注意：vue-note-backend-config@0.2.0 的渲染函数无条件输出 .bc-overlay，
        且 style.css 没有“未打开即隐藏”的规则 → 该弹窗默认永远显示，不受 backendOpen 控制。
        故用 v-if 包裹：仅当 backendOpen 为真时才挂载，关闭即卸载，彻底避免打开页面就看到它。 -->
+  <div v-if="backendOpen" class="bc-tabs">
+    <div class="bc-tabbar">
+      <button :class="{ on: syncPanelTab === 'backends' }" @click="syncPanelTab = 'backends'">添加文档库</button>
+      <button :class="{ on: syncPanelTab === 'sync' }" @click="syncPanelTab = 'sync'">
+        同步设置 <span v-if="!zfcReady" class="bc-loading">…</span>
+      </button>
+    </div>
+  </div>
   <backend-config
-    v-if="backendOpen"
+    v-if="backendOpen && syncPanelTab === 'backends'"
     v-model:open="backendOpen"
     v-model:backend-type="backendType"
     @save="addLibrary">
   </backend-config>
+  <!-- 同步设置面板（zen-fs-config-ui web component，shadow DOM 自带样式） -->
+  <div v-if="backendOpen && syncPanelTab === 'sync'" class="bc-sync-panel">
+    <div class="bc-sync-mask" @click="closeSyncPanel"></div>
+    <div class="bc-sync-box">
+      <div class="bc-sync-head">
+        <strong>同步设置</strong>
+        <button @click="closeSyncPanel">✕</button>
+      </div>
+      <div class="bc-sync-hint">
+        配置仓库（IndexedDB 本地保存，可添加远端副本自动同步）管理各文档库的后端。
+        新设备在此连上同一远端副本即可恢复全部文档库。⚠️ 配置含访问令牌，务必使用私有仓库。
+        <br>在下方添加 / 修改后端后，点击「应用并刷新」让当前页面立即生效。
+      </div>
+      <div class="bc-sync-actions">
+        <button @click="applySyncChanges">⟳ 应用并刷新文档库</button>
+      </div>
+      <sync-group-configurator v-if="zfcReady" app-id="onenav-notebook"></sync-group-configurator>
+      <div v-else class="bc-sync-loading">⏳ 正在加载同步模块（首次需拉取 CDN 资源）…</div>
+    </div>
+  </div>
 
 
 </div>
@@ -533,7 +685,7 @@ body { font-family: -apple-system, "Microsoft YaHei", sans-serif; height:100vh; 
 import { createApp, ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import NoteEditor from 'vue-note-editor'
 import BackendConfig from 'vue-note-backend-config'
-import { useNotebook } from 'note-core'
+import { useNotebook, registerAppDataFS } from 'note-core'
 
 // vue-note-sidebar：走 CDN 回退加载器（见文件上方模块），esm.sh 故障时自动切 unpkg。
 // 用顶层 await 在挂载前拿到模块；其内部 import 'vue' 仍经 import map 解析，保持单实例。
@@ -821,6 +973,206 @@ const app = createApp({
       } catch { /* ignore */ }
     }
 
+    /* ------------------------------------------------------------------
+     * zen-fs-config 数据同步组接线层
+     *
+     * 一个「数据同步组」= 一个文档库。组内多后端（Gitee/GitHub/
+     * RemoteStorage…）由 zen-fs-config 自动双向同步；note-core 的
+     * 'appdata' Provider 通过 registerAppDataFS 拿到组 fs 挂载为笔记本。
+     *
+     * 笔记本注册表 /onenav-notebook/notebooks.json 同样保存在配置仓库里
+     * （{ savedAt, notebooks: [{name, groupId}] }），随配置仓库同步——
+     * 新设备只需在「同步设置」里连上配置仓库的远端副本，即可恢复全部
+     * 文档库。
+     * ---------------------------------------------------------------- */
+    const ZFC_APP_ID = 'onenav-notebook'
+    const ZFC_NOTEBOOKS_KEY = 'notebooks.json'
+    const zfcRepo = ref(null)          // ConfigRepo（可能为 null：离线/加载失败）
+    const zfcReady = ref(false)
+    const syncPanelOpen = ref(false)   // 「同步设置」面板
+    const syncPanelTab = ref('backends') // 'backends' = 添加文档库表单 | 'sync' = 配置仓库管理
+    let zfcConnectPromise = null
+
+    async function ensureZfc() {
+      if (!zfcConnectPromise) {
+        zfcConnectPromise = (async () => {
+          try {
+            const zfc = await window.__loadZenFsConfig()
+            const { connect } = zfc
+            const { repo } = await connect(ZFC_APP_ID)
+            zfcRepo.value = repo
+            return repo
+          } catch (e) {
+            console.warn('[zfc] zen-fs-config 连接失败（数据同步组功能不可用）:', e)
+            return null
+          }
+        })()
+      }
+      return zfcConnectPromise
+    }
+
+    /** 读取配置仓库里的笔记本注册表 */
+    async function readNotebookRegistry(repo) {
+      try {
+        const reg = repo.getConfig(ZFC_NOTEBOOKS_KEY)
+        if (reg && Array.isArray(reg.notebooks)) return reg
+      } catch { /* ignore */ }
+      return { savedAt: 0, notebooks: [] }
+    }
+
+    /** 写回注册表（zen-fs-config 自动同步到配置仓库的远端副本） */
+    async function writeNotebookRegistry(repo, notebooks) {
+      try {
+        repo.setConfig(ZFC_NOTEBOOKS_KEY, { savedAt: Date.now(), notebooks })
+      } catch (e) { console.warn('[zfc] 注册表写入失败:', e) }
+    }
+
+    /** 把一个数据同步组注册进 note-core（appdata provider 可见） */
+    async function attachGroup(repo, groupId) {
+      try {
+        const group = await repo.getAppDataGroup(groupId)
+        registerAppDataFS(ZFC_APP_ID, groupId, group)
+        return group
+      } catch (e) {
+        console.warn('[zfc] 数据同步组不可用:', groupId, e)
+        return null
+      }
+    }
+
+    /**
+     * 启动接线：连接配置仓库 → 注册全部组 → 迁移旧 Gitee 库 → 生成
+     * providers 写入 localStorage（note-core 的现有机制）→ nb.init()。
+     * zen-fs-config 不可用时静默跳过（页面仍以旧的 git/gitee 库运行）。
+     */
+    async function bootstrapSyncGroups() {
+      const repo = await ensureZfc()
+      if (!repo) return
+
+      const registry = await readNotebookRegistry(repo)
+      const groups = await repo.listAppDataGroups()
+
+      // —— 迁移：localStorage 里旧的直连 gitee 库 → 各建一个数据同步组 ——
+      let localList = []
+      try { localList = JSON.parse(localStorage.getItem('notebook_providers') || '[]') } catch { /* ignore */ }
+      const legacyGitee = localList.filter((p) => p && p.type === 'gitee' && p.config && p.config.gitee)
+      let registryChanged = false
+      for (const p of legacyGitee) {
+        const g = p.config.gitee
+        const already = registry.notebooks.find((n) => n.name === p.name)
+        if (already) continue
+        const groupId = 'nb-' + (p.name).replace(/[^\w\u4e00-\u9fa5-]/g, '_')
+        try {
+          await repo.createAppDataGroup(groupId, [{
+            id: 'gitee',
+            type: 'Gitee',
+            options: { owner: g.owner, repo: g.repo, branch: g.branch || 'master', token: g.token || '' },
+            description: '从旧配置迁移的 Gitee 后端',
+          }])
+          registry.notebooks.push({ name: p.name, groupId })
+          registryChanged = true
+          console.log('[zfc] 已迁移旧 Gitee 文档库为数据同步组:', p.name, '→', groupId)
+        } catch (e) {
+          console.warn('[zfc] 迁移失败（保留原直连库）:', p.name, e)
+          continue // 保留原 gitee 库，不丢配置
+        }
+      }
+
+      // —— 组 → appdata providers（迁移成功的旧 gitee 库改写为 appdata；未迁移的原样保留）——
+      const providersNext = []
+      const registryNames = new Set(registry.notebooks.map((n) => n.name))
+      for (const p of localList) {
+        if (!p) continue
+        const migrated = legacyGitee.find((l) => l.name === p.name)
+          && registry.notebooks.find((n) => n.name === p.name)
+        if (migrated) {
+          providersNext.push({ name: p.name, type: 'appdata', config: { appdata: { appId: ZFC_APP_ID, groupId: migrated.groupId } } })
+        } else {
+          providersNext.push(p)
+        }
+      }
+      // 注册表里有、localStorage 里没有的（新设备恢复 / 配置仓库新增）→ 补上
+      for (const n of registry.notebooks) {
+        if (!providersNext.some((p) => p.name === n.name)) {
+          providersNext.push({ name: n.name, type: 'appdata', config: { appdata: { appId: ZFC_APP_ID, groupId: n.groupId } } })
+        }
+      }
+      if (JSON.stringify(providersNext) !== JSON.stringify(localList)) {
+        try { localStorage.setItem('notebook_providers', JSON.stringify(providersNext)) } catch { /* ignore */ }
+      }
+
+      // —— 挂载全部组 ——
+      for (const n of registry.notebooks) await attachGroup(repo, n.groupId)
+      if (registryChanged) await writeNotebookRegistry(repo, registry.notebooks)
+      zfcReady.value = true
+    }
+
+    /** 新建「数据同步组」文档库（addLibrary 的 gitee 分支改走这里） */
+    async function createSyncGroupLibrary(name, backendType, backendOptions) {
+      const repo = await ensureZfc()
+      if (!repo) {
+        window.alert('数据同步模块未就绪（zen-fs-config 加载失败），无法创建同步文档库')
+        return false
+      }
+      const groupId = 'nb-' + String(name).replace(/[^\w\u4e00-\u9fa5-]/g, '_') + '-' + Date.now().toString(36)
+      try {
+        await repo.createAppDataGroup(groupId, [{
+          id: backendType.toLowerCase(),
+          type: backendType,
+          options: backendOptions,
+        }])
+      } catch (e) {
+        window.alert('连接后端失败：' + (e.message || e))
+        return false
+      }
+      const registry = await readNotebookRegistry(repo)
+      registry.notebooks.push({ name, groupId })
+      await writeNotebookRegistry(repo, registry.notebooks)
+      await attachGroup(repo, groupId)
+      try {
+        await nb.createProvider('appdata', name, { appdata: { appId: ZFC_APP_ID, groupId } })
+        return true
+      } catch (e) {
+        window.alert('挂载文档库失败：' + (e.message || e))
+        return false
+      }
+    }
+
+    /** 同步设置面板：打开前确保 zen-fs-config 已就绪 */
+    async function openSyncPanel() {
+      syncPanelTab.value = 'backends'
+      backendType.value = 'git'
+      backendOpen.value = true
+      // 后台预热数据同步模块（首次会拉取三个后端 UMD 包 + esm.sh 模块）
+      ensureZfc().then(() => { zfcReady.value = !!zfcRepo.value })
+      // 切到同步页签时才需要 UI 组件；预加载它（shadow DOM 自带样式）
+      window.__loadZenFsConfigUI().catch((e) => console.warn('[zfc-ui] 预加载失败:', e))
+    }
+
+    function closeSyncPanel() {
+      backendOpen.value = false
+    }
+
+    /** UI 面板（独立 zen-fs-config 实例）改了配置 → 落盘 IndexedDB。
+     *  这里重读注册表 + 重新挂载组 + 重建 providers（当前会话立即生效）。 */
+    async function applySyncChanges() {
+      const repo = zfcRepo.value
+      if (!repo) { window.alert('同步模块未就绪'); return }
+      try {
+        const registry = await readNotebookRegistry(repo)
+        const localList = JSON.parse(localStorage.getItem('notebook_providers') || '[]')
+        // UI 实例改的都在磁盘上；主实例需重新读组列表（getAppDataGroup 会重读描述符）
+        const providersNext = localList.filter((p) => p.type !== 'appdata')
+        for (const n of registry.notebooks) {
+          await attachGroup(repo, n.groupId)
+          providersNext.push({ name: n.name, type: 'appdata', config: { appdata: { appId: ZFC_APP_ID, groupId: n.groupId } } })
+        }
+        localStorage.setItem('notebook_providers', JSON.stringify(providersNext))
+        window.alert('已应用。共 ' + providersNext.length + ' 个文档库，切换文档库即可使用新后端。')
+      } catch (e) {
+        window.alert('应用失败：' + (e.message || e))
+      }
+    }
+
     onMounted(async () => {
       purgePouchDB()
       migrateGiteeOptions()
@@ -828,6 +1180,8 @@ const app = createApp({
       syncViewport()
       window.addEventListener('resize', syncViewport)
       window.addEventListener('orientationchange', syncViewport)
+      // 数据同步组接线（迁移旧 Gitee 库 / 恢复注册表），完成后再 nb.init()
+      try { await bootstrapSyncGroups() } catch (e) { console.warn('[zfc] bootstrap 失败:', e) }
       try { await nb.init() } catch (e) { /* nb.error 已记录 */ }
     })
 
@@ -845,8 +1199,7 @@ const app = createApp({
     }
 
     function openAdd() {
-      backendType.value = 'git'
-      backendOpen.value = true
+      openSyncPanel()
     }
 
     async function addLibrary(cfg) {
@@ -857,7 +1210,9 @@ const app = createApp({
         window.alert('当前版本暂不支持 WebDAV，请改用 Git（可填写远端仓库，或留空创建纯本地 Git 库）')
         return
       }
-      // Gitee 文档库：BackendConfig 的「Gitee」标签抛出 { gitee: {...} } → 走 zen-fs-gitee 后端
+      // Gitee 文档库：改走「数据同步组」——一个文档库 = 一个组，组内
+      // Gitee 后端由 zen-fs-config 自动双向同步；后续可在「同步设置」里
+      // 给同一文档库追加更多后端（GitHub / RemoteStorage 镜像）。
       if (c.gitee) {
         const g = c.gitee
         const repoUrl = (g.repoUrl || '').trim()
@@ -867,20 +1222,11 @@ const app = createApp({
         const repo = (m && m[2]) ? m[2] : repoUrl.split('/').filter(Boolean).pop().replace(/\.git$/, '')
         const gname = (window.prompt('文档库名称：', repo || 'Gitee 库') || repo || '').trim()
         if (!gname) return
-        try {
-          await nb.createProvider('gitee', gname, {
-            gitee: {
-              owner,
-              repo,
-              branch: (g.branch || 'master').trim() || 'master',
-              token: g.token,
-              useCommitTimeAsMtime: true,
-              cache: 'idb',
-            },
-          })
-        } catch (e) {
-          window.alert('添加 Gitee 文档库失败：' + (e.message || e))
-        }
+        await createSyncGroupLibrary(gname, 'Gitee', {
+          owner, repo,
+          branch: (g.branch || 'master').trim() || 'master',
+          token: g.token || '',
+        })
         return
       }
       if (c.git) {
@@ -910,9 +1256,21 @@ const app = createApp({
       }
     }
 
-    function removeLibrary() {
+    async function removeLibrary() {
       if (providers.value.length <= 1) { window.alert('至少保留一个文档库'); return }
       if (!window.confirm('确定删除文档库「' + currentName.value + '」？')) return
+      // 数据同步组库：同时删除组与注册表项（远端副本文件不删，可重新连接恢复）
+      const cur = providers.value.find((p) => p.name === currentName.value)
+      if (cur && cur.type === 'appdata' && zfcRepo.value) {
+        try {
+          const registry = await readNotebookRegistry(zfcRepo.value)
+          const hit = registry.notebooks.find((n) => n.name === cur.name)
+          if (hit) {
+            await zfcRepo.value.removeAppDataGroup(hit.groupId)
+            await writeNotebookRegistry(zfcRepo.value, registry.notebooks.filter((n) => n.name !== cur.name))
+          }
+        } catch (e) { console.warn('[zfc] 删除数据同步组失败（仍删除本地条目）:', e) }
+      }
       nb.deleteProvider(currentName.value)
     }
 
@@ -960,6 +1318,8 @@ const app = createApp({
       loading, error, syncing, syncProgress, syncError,
       sidebarOpen, searchKeywords, activeFolder, activeTags, expanded,
       saveStatus, syncMsg, backendOpen, backendType,
+      // 同步设置（zen-fs-config 数据同步组）
+      zfcReady, syncPanelTab, closeSyncPanel, applySyncChanges,
       // 手机适配
       isMobile, moreOpen, toggleSidebar,
       // 派生
