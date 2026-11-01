@@ -17,7 +17,15 @@ import {
   Plug,
   FileWarning,
 } from 'lucide-react'
-import { fetchDirStructManifests, getFolderDeepenMarks, putFolderDeepenMarks, RsNotConnectedError, RsAuthError } from './filebrowser/fetch'
+import {
+  fetchDirStructManifests,
+  getFolderDeepenMarks,
+  getFoldersBase,
+  setFoldersBase,
+  putFolderDeepenMarks,
+  RsNotConnectedError,
+  RsAuthError,
+} from './filebrowser/fetch'
 import { filterTree, normalizeManifests } from './filebrowser/normalize'
 import type { FolderNodeView, ManifestView } from './filebrowser/types'
 
@@ -29,6 +37,8 @@ export default function FileBrowserApp() {
   const [errorMsg, setErrorMsg] = useState('')
   const [errorCode, setErrorCode] = useState('')
   const [query, setQuery] = useState('')
+  // 清单基目录（与 dir-struct-gen 数据同步组 RemoteStorage 后端的 basePath 一致）
+  const [baseInput, setBaseInput] = useState(() => getFoldersBase())
   // 深挖标记：key（volumeId 或 主机::盘符）→ 该盘下被标记 host-relative 路径集合
   const [marksByKey, setMarksByKey] = useState<Record<string, Set<string>>>({})
 
@@ -95,6 +105,13 @@ export default function FileBrowserApp() {
     })
   }, [])
 
+  // 应用新的清单基目录并重新读取（需与 dir-struct-gen 的 basePath 一致）。
+  const applyBase = useCallback(() => {
+    setFoldersBase(baseInput)
+    setBaseInput(getFoldersBase())
+    void load()
+  }, [baseInput, load])
+
   useEffect(() => {
     void load()
   }, [load])
@@ -127,13 +144,29 @@ export default function FileBrowserApp() {
           <FolderTreeIcon className="w-4 h-4 text-white/50" />
           文件浏览器
         </h1>
-        <button
-          onClick={load}
-          className="px-3 py-1.5 rounded-lg text-xs bg-white/5 text-white/70 hover:bg-white/15 hover:text-white flex items-center gap-1.5 transition-colors"
-        >
-          <RefreshCw className="w-3.5 h-3.5" />
-          刷新
-        </button>
+        <div className="flex items-center gap-2">
+          <input
+            value={baseInput}
+            onChange={(e) => setBaseInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') applyBase() }}
+            placeholder="app_data/folders"
+            title="目录结构清单基目录：需与 dir-struct-gen 数据同步组 RemoteStorage 后端的 basePath 一致"
+            className="w-44 px-2 py-1 rounded-lg text-xs bg-white/5 border border-white/10 text-white/75 outline-none focus:border-white/25"
+          />
+          <button
+            onClick={applyBase}
+            className="px-2.5 py-1.5 rounded-lg text-xs bg-white/5 text-white/70 hover:bg-white/15 hover:text-white transition-colors"
+          >
+            应用
+          </button>
+          <button
+            onClick={load}
+            className="px-3 py-1.5 rounded-lg text-xs bg-white/5 text-white/70 hover:bg-white/15 hover:text-white flex items-center gap-1.5 transition-colors"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            刷新
+          </button>
+        </div>
       </div>
 
       {state === 'data' && (
@@ -164,7 +197,7 @@ export default function FileBrowserApp() {
       {state === 'data' &&
         (filtered.length === 0 ? (
           <div className="text-white/30 text-sm text-center py-8">
-            {q ? '无匹配的文件夹' : 'app_data/folders 下暂无目录结构清单'}
+            {q ? '无匹配的文件夹' : `${getFoldersBase()}/struct 下暂无目录结构清单`}
           </div>
         ) : (
           <div className="space-y-3">
@@ -192,9 +225,10 @@ function EmptyState({ onRetry }: { onRetry: () => void }) {
   return (
     <div className="rounded-xl bg-white/5 border border-white/10 p-6 text-center space-y-3">
       <FolderTreeIcon className="w-8 h-8 text-white/40 mx-auto" />
-      <div className="text-white/70">app_data/folders 下暂无目录结构清单</div>
+      <div className="text-white/70">{getFoldersBase()}/struct 下暂无目录结构清单</div>
       <div className="text-white/40 text-xs">
         确认 dir-struct-gen 已向 RemoteStorage 写入主机目录清单（每台主机一个 .json）后重试。
+        基目录需与 dir-struct-gen 中数据同步组 RemoteStorage 后端的 basePath 一致。
       </div>
       <button
         onClick={onRetry}

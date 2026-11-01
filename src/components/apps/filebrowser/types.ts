@@ -1,6 +1,7 @@
 // 文件浏览器应用的数据类型。
 // 数据来源：my-data 定义的 Directory-Structure Manifest（dir-struct-gen 生成），
-// 存储于 RemoteStorage 的 app_data/folders/ 目录，每个清单文件对应一台主机。
+// 存储于 RemoteStorage 的 <base>/struct/ 目录（基目录默认 app_data/folders，可配置），
+// 每个清单文件对应一台主机；深挖标记在 <base>/folder-deepen/。
 // 格式规范见 my-data/docs/formats/dir-struct-manifest-format.md。
 
 /** 任意原始清单 JSON（字段宽容，运行时再做类型收窄） */

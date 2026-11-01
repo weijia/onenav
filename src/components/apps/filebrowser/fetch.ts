@@ -1,11 +1,12 @@
 // 数据获取层：从 onenav 同账号 RemoteStorage 读取目录结构清单。
 // 复用 onenav 现有 OAuth 连接（Q1=A），无需额外配置。
 //
-// 存储模型（dir-struct-manifest-format.md v2）：
-//   app_data/folders/<host>.json             — 主机索引 { version:2, source, mounts:[{letter,volumeId,file,files:[{file,partId}]}] }
-//   app_data/folders/<volumeKey>.<partId>.json — 某块盘「按主机分片」的卷子树（每台主机一份，互不覆盖）
-//   app_data/folders/<volumeKey>.json        — 旧版单文件卷（历史数据，仍兼容）
-//   app_data/folder-deepen/<key>.json        — 深挖标记 { marks:[ "E:/Photos/2024", ... ] }
+// 存储模型（dir-struct-manifest-format.md v2）。基目录 <base> 默认 app_data/folders，可配置，
+// 与 dir-struct-gen 里数据同步组 RemoteStorage 后端的 basePath 必须一致：
+//   <base>/struct/<host>.json                   — 主机索引 { version:2, source, mounts:[{volumeId,files:[<基名>]}] }
+//   <base>/struct/<volumeId>.<createdAt>.json   — 某块盘「按次生成」的卷子树（每次生成一份，互不覆盖）
+//   <base>/struct/<volumeKey>.json              — 旧版单文件卷（历史数据，仍兼容）
+//   <base>/folder-deepen/<key>.json             — 深挖标记 { marks:[ "E:/Photos/2024", ... ] }
 // 其中 volumeKey = 卷的 .dir-struct-id（UUID，跨主机一致）。
 // 读取侧：对主机索引的每个 mount 取该卷全部分片（files 优先，回退 file），按 volumeId 合并成一棵树。
 // 合并规则见 ./merge.ts（严格对齐生成器与格式文档「分片合并规则」）。
@@ -43,9 +44,43 @@ export class RsAuthError extends Error {
   }
 }
 
-// 目录结构清单默认存储目录（与 dir-struct-manifest-format.md 的 rsBase 默认值一致）。
-const FOLDERS_DIR = 'app_data/folders'
-const DEEPEN_DIR = 'app_data/folder-deepen'
+// 目录结构清单的「基目录」（与 dir-struct-gen 数据同步组 RemoteStorage 后端的 basePath 一致）。
+// 默认 app_data/folders，可在设置里改；改了必须和 dir-struct-gen 同步，否则读不到清单。
+export const DEFAULT_FOLDERS_BASE = 'app_data/folders'
+const FOLDERS_BASE_STORAGE_KEY = 'onenav.filebrowser.foldersBase'
+
+/** 读取当前配置的基目录（去掉首尾斜杠，便于拼接） */
+export function getFoldersBase(): string {
+  try {
+    const v = localStorage.getItem(FOLDERS_BASE_STORAGE_KEY)
+    if (v) {
+      const t = v.trim().replace(/^\/+/, '').replace(/\/+$/, '')
+      if (t) return t
+    }
+  } catch {
+    // localStorage 不可用（SSR / 隐私模式）时回退默认值
+  }
+  return DEFAULT_FOLDERS_BASE
+}
+
+/** 写入基目录配置；传空字符串/空白表示恢复默认 */
+export function setFoldersBase(base: string): void {
+  const t = (base || '').trim().replace(/^\/+/, '').replace(/\/+$/, '')
+  try {
+    if (t && t !== DEFAULT_FOLDERS_BASE) localStorage.setItem(FOLDERS_BASE_STORAGE_KEY, t)
+    else localStorage.removeItem(FOLDERS_BASE_STORAGE_KEY)
+  } catch {
+    // 忽略持久化失败
+  }
+}
+
+// 实际读取的两个子目录：清单在基下的 struct/，深挖标记在基下的 folder-deepen/。
+function foldersDir(): string {
+  return `${getFoldersBase()}/struct`
+}
+function deepenDir(): string {
+  return `${getFoldersBase()}/folder-deepen`
+}
 
 /** 未索引卷（分片存在但无主机索引引用它们）的合成主机名 */
 const ORPHAN_SOURCE = '（未索引卷）'
@@ -85,7 +120,7 @@ function mountShardBases(mount: Record<string, unknown>): string[] {
 }
 
 /**
- * 列出并读取 app_data/folders/ 下全部 .json，按形态分类拼装为原始清单数组：
+ * 列出并读取 <base>/struct/ 下全部 .json，按形态分类拼装为原始清单数组：
  * - 含 mounts 数组 → 主机索引：对每个 mount 取该卷全部分片并合并成一棵树；
  * - 含 volumeId + children 且非 root/mounts → 卷分片，收入按基名的映射，等待被主机索引合并；
  * - 含 root 字段 → legacy v1 整树清单，原样透传。
@@ -103,15 +138,16 @@ export async function fetchDirStructManifests(): Promise<RawManifest[]> {
 
   const fs = getFS()
 
-  // 清掉目录列表缓存，确保本次能枚举到最新远端的 app_data/folders 结构。
+  // 清掉目录列表缓存，确保本次能枚举到最新远端的结构。
   try {
     await fs.invalidateDirListing()
   } catch (e) {
-    console.warn('[filebrowser] 清除 app_data/folders 目录缓存失败（已忽略）:', e)
+    console.warn('[filebrowser] 清除目录列表缓存失败（已忽略）:', e)
   }
 
   // readdir 对结尾斜杠的要求因服务器而异：先试无斜杠，再试有斜杠。
   let names: string[] = []
+  const FOLDERS_DIR = foldersDir()
   for (const dir of [FOLDERS_DIR, `${FOLDERS_DIR}/`]) {
     try {
       const list = await fs.readdir(dir)
@@ -243,13 +279,13 @@ export async function fetchDirStructManifests(): Promise<RawManifest[]> {
 }
 
 /**
- * 读取某块盘的深挖标记（app_data/folder-deepen/<key>.json）。
+ * 读取某块盘的深挖标记（<base>/folder-deepen/<key>.json）。
  * 404 / 解析失败 / 未连接 → 返回空数组（不抛错，避免阻断浏览）。
  */
 export async function getFolderDeepenMarks(key: string): Promise<string[]> {
   try {
     const fs = getFS()
-    const p = `${DEEPEN_DIR}/${sanitizeKey(key)}.json`
+    const p = `${deepenDir()}/${sanitizeKey(key)}.json`
     const text = await fs.readFile(p, 'utf8')
     try {
       const obj = JSON.parse(text)
@@ -271,12 +307,12 @@ export async function getFolderDeepenMarks(key: string): Promise<string[]> {
 }
 
 /**
- * 写回某块盘的深挖标记（app_data/folder-deepen/<key>.json）。
+ * 写回某块盘的深挖标记（<base>/folder-deepen/<key>.json）。
  * 权限错误（401）抛 RsAuthError，由调用方提示去重连；其它错误原样抛出。
  */
 export async function putFolderDeepenMarks(key: string, paths: string[]): Promise<void> {
   const fs = getFS()
-  const p = `${DEEPEN_DIR}/${sanitizeKey(key)}.json`
+  const p = `${deepenDir()}/${sanitizeKey(key)}.json`
   try {
     await fs.writeFile(p, JSON.stringify({ marks: paths }))
   } catch (e) {
