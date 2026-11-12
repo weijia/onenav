@@ -4,7 +4,7 @@
 // 关键词筛选文件/文件夹（命中节点 + 祖先链），命中时整棵匹配树自动展开；文件夹标签小徽标；
 // 每个条目可打用户标签，独立存于 <base>/file-tags/（不改写 struct 清单）；
 // 带 'private' 标签的目录缺省隐藏且不显示任何提示（静默），在页面键入 magic code
-// 切换显示/隐藏（键盘序列，无输入框）；仅解锁后显示一条状态提示。
+// 切换显示/隐藏（键盘序列，无输入框）；解锁后的状态提示可点击，直接切回隐藏态。
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -62,7 +62,7 @@ export default function FileBrowserApp() {
   const [tagEditor, setTagEditor] = useState<{ key: string; path: string; current: string[] } | null>(
     null,
   )
-  // 隐私目录：缺省隐藏（带 'private' 标签的目录）；在页面键入 magic code 切换显示/隐藏。
+  // 隐私目录：缺省隐藏（带 'private' 标签的目录）；键入 magic code 解锁，点击状态提示即可重新隐藏。
   const [showPrivate, setShowPrivate] = useState(false)
   // 键盘序列缓冲：记录最近键入的字符，凑齐 MAGIC_CODE 即切换（无需任何输入框）。
   const magicBuf = useRef('')
@@ -99,6 +99,14 @@ export default function FileBrowserApp() {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
+
+  // 切回隐藏态：清空键盘序列缓冲，并移除 'private' 标签筛选，
+  // 避免锁定后仍残留「存在隐私目录」的痕迹（锁定态必须完全静默）。
+  const hidePrivate = useCallback(() => {
+    magicBuf.current = ''
+    setShowPrivate(false)
+    setTagFilter((prev) => (prev?.toLowerCase() === PRIVATE_TAG ? null : prev))
   }, [])
 
   const load = useCallback(async () => {
@@ -289,12 +297,19 @@ export default function FileBrowserApp() {
         <div className="flex items-center gap-3 flex-wrap">
           <span className="text-white/45 text-xs">{manifests.length} 台主机</span>
           <span className="text-white/45 text-xs">{totalFolders} 个文件夹</span>
-          {/* 仅在「已解锁、隐私目录确实可见」时才暴露隐私相关状态；锁定态完全静默。 */}
+          {/* 仅在「已解锁、隐私目录确实可见」时才暴露隐私相关状态；锁定态完全静默。
+              点击该状态即切回隐藏态，无需再次键入 magic code。 */}
           {showPrivate && privateCount > 0 && (
-            <span className="flex items-center gap-1 text-xs text-emerald-200/85">
+            <button
+              type="button"
+              onClick={hidePrivate}
+              title="点击重新隐藏隐私目录（也可再次键入 magic code 切换）"
+              className="group flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-emerald-200/85 transition-colors hover:bg-emerald-500/15 hover:text-emerald-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400/50"
+            >
               <Eye className="w-3.5 h-3.5" />
               隐私已显示
-            </span>
+              <span className="hidden group-hover:inline text-emerald-200/60">· 点击隐藏</span>
+            </button>
           )}
           <div className="relative flex-1 min-w-[160px]">
             <Search className="w-3.5 h-3.5 text-white/35 absolute left-2.5 top-1/2 -translate-y-1/2" />
@@ -333,7 +348,15 @@ export default function FileBrowserApp() {
       {/* 锁定态不显示任何提示（否则等于宣告「这里藏了 N 个目录」）；仅解锁后给一条状态提示。 */}
       {state === 'data' && showPrivate && privateCount > 0 && (
         <div className="rounded-lg border px-3 py-2 text-xs leading-relaxed bg-emerald-500/10 border-emerald-400/25 text-emerald-100/85">
-          🔓 已显示 {privateCount} 个隐私目录（含 'private' 标签）。再次键入 magic code 可重新隐藏。
+          {`🔓 已显示 ${privateCount} 个隐私目录（含 'private' 标签）。`}
+          <button
+            type="button"
+            onClick={hidePrivate}
+            className="mx-1 underline decoration-emerald-300/40 underline-offset-2 hover:text-white hover:decoration-emerald-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400/50 rounded"
+          >
+            重新隐藏
+          </button>
+          {'，或再次键入 magic code 切换。'}
         </div>
       )}
 
