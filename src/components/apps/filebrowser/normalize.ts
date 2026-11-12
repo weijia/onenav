@@ -1,13 +1,18 @@
-// 归一化层：把原始目录结构清单（RawManifest）收敛为已校验、已过滤的 FolderNodeView 树。
-// 过滤规则遵循 dir-struct-manifest-format.md：清单只描述「目录结构」，读取侧过滤掉 type:"file" 的节点。
+// 归一化层：把原始目录结构清单（RawManifest）收敛为已校验的节点树。
+// 清单默认只描述目录结构，但也可能（dir-struct-gen 开启「包含文件」时）含 type:"file" 节点；
+// 读取侧保留文件节点用于展示/打标签，但文件不计入 folderCount、不参与目录展开。
 
-import type { FolderNodeView, ManifestView, RawManifest } from './types'
+import type { FileNodeView, FsNodeView, FolderNodeView, ManifestView, RawManifest } from './types'
 
-interface RawFolderNode {
+interface RawNode {
   name?: unknown
   type?: unknown
   tags?: unknown
   children?: unknown
+  /** 文件逻辑大小（字节），仅 type:"file" 节点携带 */
+  size?: unknown
+  /** 文件占用磁盘空间（字节），仅 type:"file" 节点携带 */
+  sizeOnDisk?: unknown
   /** 驱动层节点的稳定身份（来自磁盘根 .dir-struct-id），子目录不携带 */
   volumeId?: unknown
   /** 可选：该目录（含子孙）的总文件数 */
@@ -30,15 +35,29 @@ function toStr(v: unknown): string | null {
   return typeof v === 'string' ? v : null
 }
 
+/** 把 mtime 字段收敛为毫秒 epoch（接受数字或可解析的日期字符串），非法时返回 null */
+function toMtime(v: unknown): number | null {
+  if (typeof v === 'number' && isFinite(v)) return v
+  if (typeof v === 'string' && v) {
+    const t = Date.parse(v)
+    if (!isNaN(t)) return t
+  }
+  return null
+}
+
+function toTags(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((t): t is string => typeof t === 'string') : []
+}
+
 /**
- * 将一个原始节点收敛为 FolderNodeView；非法节点返回 null 被跳过。
+ * 将一个原始节点收敛为 FsNodeView；非法节点返回 null 被跳过。
  * - 缺 name：跳过（告警）
- * - type === 'file'：跳过（格式约定：清单不含文件）
+ * - type === 'file'：保留为文件节点（无子节点，只展示文件名/大小/mtime）
  * - 其余（无 type 或 'folder'）：视作 folder
  */
-function normalizeFolderNode(raw: unknown, warnings: string[]): FolderNodeView | null {
+function normalizeNode(raw: unknown, warnings: string[]): FsNodeView | null {
   if (!raw || typeof raw !== 'object') return null
-  const node = raw as RawFolderNode
+  const node = raw as RawNode
 
   const name = toStr(node.name)
   if (name == null) {
@@ -47,16 +66,24 @@ function normalizeFolderNode(raw: unknown, warnings: string[]): FolderNodeView |
   }
 
   const type = toStr(node.type) ?? 'folder'
-  if (type === 'file') return null // 过滤文件节点
+  const tags = toTags(node.tags)
+  const mtime = toMtime(node.mtime)
 
-  const tags = Array.isArray(node.tags)
-    ? node.tags.filter((t): t is string => typeof t === 'string')
-    : []
+  // 文件节点：保留，但不含子节点、不参与目录统计。
+  if (type === 'file') {
+    const file: FileNodeView = { name, type: 'file', tags }
+    if (typeof node.size === 'number' && node.size >= 0) file.size = node.size
+    if (typeof node.sizeOnDisk === 'number' && node.sizeOnDisk >= 0) {
+      file.sizeOnDisk = node.sizeOnDisk
+    }
+    if (mtime != null) file.mtime = mtime
+    return file
+  }
 
   const childrenRaw = Array.isArray(node.children) ? node.children : []
-  const children: FolderNodeView[] = []
+  const children: FsNodeView[] = []
   for (const c of childrenRaw) {
-    const cn = normalizeFolderNode(c, warnings)
+    const cn = normalizeNode(c, warnings)
     if (cn) children.push(cn)
   }
 
@@ -82,16 +109,13 @@ function normalizeFolderNode(raw: unknown, warnings: string[]): FolderNodeView |
   if (node.leaf === true) out.leaf = true
   // 目录自身在磁盘上的最后修改时间（mtime，毫秒级 epoch）。仅展示用途，不参与合并取舍；
   // 缺失（fs.stat 失败 / 权限不足）时不写该字段。
-  if (typeof node.mtime === 'number' && isFinite(node.mtime)) out.mtime = node.mtime
-  else if (typeof node.mtime === 'string' && node.mtime) {
-    const t = Date.parse(node.mtime)
-    if (!isNaN(t)) out.mtime = t
-  }
+  if (mtime != null) out.mtime = mtime
   return out
 }
 
-/** 递归统计文件夹节点数（含自身） */
-function countFolders(node: FolderNodeView): number {
+/** 递归统计文件夹节点数（含自身；文件节点不计入） */
+function countFolders(node: FsNodeView): number {
+  if (node.type === 'file') return 0
   let n = 1
   for (const c of node.children) n += countFolders(c)
   return n
@@ -105,8 +129,8 @@ export function normalizeManifest(raw: unknown): ManifestView | null {
   const obj = raw as RawManifest
   const warnings: string[] = []
 
-  const root = normalizeFolderNode(obj.root, warnings)
-  if (!root) {
+  const root = normalizeNode(obj.root, warnings)
+  if (!root || root.type !== 'folder') {
     // 缺少合法 root 节点（root.type 必须为 folder），跳过该清单。
     return null
   }
@@ -140,17 +164,65 @@ export function normalizeManifests(raws: unknown[]): ManifestView[] {
 }
 
 /**
- * 按关键词筛选目录树：返回只包含「匹配节点及其祖先链」的树。
- * - 节点名命中关键词：保留该节点；其子节点仅保留同样命中的分支（避免倾倒无关子树）。
- * - 节点名未命中：仅当存在命中的后代时才保留（作为祖先路径）。
+ * 按关键词与/或标签筛选节点树：返回只包含「匹配节点及其祖先链」的树。
+ * - 关键词命中：节点名命中 query → 保留该节点；其子节点仅保留同样命中的分支。
+ * - 标签命中：节点的清单自带标签（node.tags）或用户标签（userTagsByKey[markKey][path]）含该标签。
+ * - 关键词 / 标签任一命中即保留；均未命中但有命中后代时作为祖先路径保留。
+ * - 文件节点只能自匹配，命中时作为叶子保留。
+ *
+ * opts（全部可选，向后兼容旧的两参调用）：
+ *  - tag：筛选标签（null / 空不生效）
+ *  - userTagsByKey：用户标签表（与页面 tagsByKey 同结构）
+ *  - source：清单来源（用于回退 markKey = source::盘符）
+ *  - markKey / basePath：内部递归透传，按盘符命名空间定位用户标签
  */
-export function filterTree(node: FolderNodeView, query: string): FolderNodeView | null {
+export function filterTree(
+  node: FsNodeView,
+  query: string,
+  opts?: {
+    tag?: string | null
+    userTagsByKey?: Record<string, Record<string, string[]>>
+    source?: string
+    markKey?: string
+    basePath?: string[]
+  },
+): FsNodeView | null {
   const q = query.trim().toLowerCase()
-  const kids = node.children
-    .map((c) => filterTree(c, query))
-    .filter((c): c is FolderNodeView => c !== null)
+  const tag = opts?.tag ?? null
+  const userTagsByKey = opts?.userTagsByKey
+  const basePath = opts?.basePath ?? []
+  const path = basePath.join('/')
 
-  const selfMatch = node.name.toLowerCase().includes(q)
+  // 用户标签定位：当前节点若为文件夹，用所在盘的命名空间 key + host-relative 路径查表。
+  const userTagsHere: string[] =
+    node.type === 'folder' && userTagsByKey && opts?.markKey
+      ? userTagsByKey[opts.markKey]?.[path] ?? []
+      : []
+  const nameMatch = q ? node.name.toLowerCase().includes(q) : false
+  const tagHit = tag != null && (node.tags.includes(tag) || userTagsHere.includes(tag))
+  const selfMatch = nameMatch || tagHit
+
+  if (node.type === 'file') {
+    return selfMatch ? node : null
+  }
+
+  // 顶层子节点（盘符）首次出现时用其自身 identity 计算 markKey，深层节点沿继承。
+  const kids = node.children
+    .map((c) => {
+      const childKey =
+        c.type === 'folder' && !opts?.markKey
+          ? (c as FolderNodeView).volumeId || `${opts?.source ?? ''}::${c.name}`
+          : opts?.markKey
+      return filterTree(c, query, {
+        tag,
+        userTagsByKey,
+        source: opts?.source,
+        markKey: childKey,
+        basePath: [...basePath, c.name],
+      })
+    })
+    .filter((c): c is FsNodeView => c !== null)
+
   if (selfMatch) {
     return { ...node, children: kids }
   }

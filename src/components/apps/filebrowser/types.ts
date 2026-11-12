@@ -1,13 +1,32 @@
 // 文件浏览器应用的数据类型。
 // 数据来源：my-data 定义的 Directory-Structure Manifest（dir-struct-gen 生成），
 // 存储于 RemoteStorage 的 <base>/struct/ 目录（基目录默认 app_data/folders，可配置），
-// 每个清单文件对应一台主机；深挖标记在 <base>/folder-deepen/。
+// 每个清单文件对应一台主机；深挖标记在 <base>/folder-deepen/，用户标签在 <base>/file-tags/。
 // 格式规范见 my-data/docs/formats/dir-struct-manifest-format.md。
 
 /** 任意原始清单 JSON（字段宽容，运行时再做类型收窄） */
 export type RawManifest = Record<string, unknown>
 
-/** 文件夹节点视图（已校验、已过滤 type:"file"） */
+/** 文件节点视图（清单含 type:"file" 时保留，仅作展示、无子节点） */
+export interface FileNodeView {
+  /** 文件名 */
+  name: string
+  /** 固定为 'file' */
+  type: 'file'
+  /** 清单自带标签（通常为空） */
+  tags: string[]
+  /** 文件逻辑大小（字节），生成器未统计时缺失 */
+  size?: number
+  /** 文件占用磁盘空间（字节），可能缺省或由生成器按 size 替代 */
+  sizeOnDisk?: number
+  /** 文件自身的磁盘修改时间（毫秒级 Unix epoch） */
+  mtime?: number
+}
+
+/** 目录树节点：文件夹或文件 */
+export type FsNodeView = FolderNodeView | FileNodeView
+
+/** 文件夹节点视图（已校验；子节点可能包含文件节点） */
 export interface FolderNodeView {
   /** 文件夹名称（盘符如 C:，或目录名） */
   name: string
@@ -15,8 +34,8 @@ export interface FolderNodeView {
   type: 'folder'
   /** 标签数组（可能为空），如 git / node / rust 等自动探测标签 */
   tags: string[]
-  /** 子文件夹节点 */
-  children: FolderNodeView[]
+  /** 子节点（文件夹或文件） */
+  children: FsNodeView[]
   /**
    * 驱动层节点（盘符）的稳定身份：来自磁盘根 .dir-struct-id，跨主机一致。
    * 用于深挖标记的命名空间与「同盘多主机去重」。子目录不携带，靠祖先驱动节点溯源。

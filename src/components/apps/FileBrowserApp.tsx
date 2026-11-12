@@ -1,7 +1,8 @@
 // 文件浏览器应用 UI 层。
 // 状态机：loading / error（含「去连接」引导）/ empty / data。
 // 手动刷新（与设备监控一致，无自动刷新）；多主机并列展示各自的只读目录树；
-// 关键词筛选文件夹（命中节点 + 祖先链），命中时整棵匹配树自动展开；文件夹标签小徽标。
+// 关键词筛选文件/文件夹（命中节点 + 祖先链），命中时整棵匹配树自动展开；文件夹标签小徽标；
+// 每个条目可打用户标签，独立存于 <base>/file-tags/（不改写 struct 清单）。
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
@@ -16,6 +17,8 @@ import {
   AlertTriangle,
   Plug,
   FileWarning,
+  File,
+  Tag,
 } from 'lucide-react'
 import {
   fetchDirStructManifests,
@@ -23,11 +26,13 @@ import {
   getFoldersBase,
   setFoldersBase,
   putFolderDeepenMarks,
+  getFileTags,
+  putFileTags,
   RsNotConnectedError,
   RsAuthError,
 } from './filebrowser/fetch'
 import { filterTree, normalizeManifests } from './filebrowser/normalize'
-import type { FolderNodeView, ManifestView } from './filebrowser/types'
+import type { FileNodeView, FolderNodeView, FsNodeView, ManifestView } from './filebrowser/types'
 
 type LoadState = 'loading' | 'error' | 'empty' | 'data'
 
@@ -41,6 +46,14 @@ export default function FileBrowserApp() {
   const [baseInput, setBaseInput] = useState(() => getFoldersBase())
   // 深挖标记：key（volumeId 或 主机::盘符）→ 该盘下被标记 host-relative 路径集合
   const [marksByKey, setMarksByKey] = useState<Record<string, Set<string>>>({})
+  // 用户标签：key（与深挖标记同一命名空间）→ host-relative 路径 → 标签数组
+  const [tagsByKey, setTagsByKey] = useState<Record<string, Record<string, string[]>>>({})
+  // 标签筛选：点击标签芯片时按该标签过滤整棵树；null 表示不按标签筛。
+  const [tagFilter, setTagFilter] = useState<string | null>(null)
+  // 标签编辑弹窗状态：null 表示关闭；非空携带所在盘的命名空间与 host-relative 路径与当前标签。
+  const [tagEditor, setTagEditor] = useState<{ key: string; path: string; current: string[] } | null>(
+    null,
+  )
 
   const load = useCallback(async () => {
     setState('loading')
@@ -50,11 +63,13 @@ export default function FileBrowserApp() {
       const raws = await fetchDirStructManifests()
       const ms = normalizeManifests(raws)
       setManifests(ms)
-      // 并发加载每台主机每个驱动的深挖标记（按卷身份命名空间）。
+      // 并发加载每台主机每个驱动的深挖标记与用户标签（按卷身份命名空间）。
       const marks: Record<string, Set<string>> = {}
+      const tags: Record<string, Record<string, string[]>> = {}
       await Promise.all(
         ms.map(async (m) => {
           for (const drive of m.root.children) {
+            if (drive.type !== 'folder') continue
             const key = drive.volumeId || `${m.source}::${drive.name}`
             try {
               const list = await getFolderDeepenMarks(key)
@@ -65,10 +80,20 @@ export default function FileBrowserApp() {
                 console.warn('[filebrowser] 读取深挖标记权限不足，写回时会提示:', err.message)
               }
             }
+            try {
+              const map = await getFileTags(key)
+              if (Object.keys(map).length) tags[key] = map
+            } catch (err) {
+              // 标签读取失败同样不阻断浏览
+              if (err instanceof RsAuthError) {
+                console.warn('[filebrowser] 读取用户标签权限不足，写回时会提示:', err.message)
+              }
+            }
           }
         }),
       )
       setMarksByKey(marks)
+      setTagsByKey(tags)
       setState(ms.length > 0 ? 'data' : 'empty')
     } catch (e) {
       if (e instanceof RsAuthError) {
@@ -105,6 +130,27 @@ export default function FileBrowserApp() {
     })
   }, [])
 
+  // 设置某条目的用户标签并写回 RS（空数组表示删除该条目标签）。
+  const setNodeTags = useCallback((key: string, path: string, tags: string[]) => {
+    setTagsByKey((prev) => {
+      const cur = prev[key] || {}
+      const next = { ...cur }
+      const cleaned = [...new Set(tags.map((t) => t.trim()).filter(Boolean))]
+      if (cleaned.length) next[path] = cleaned
+      else delete next[path]
+      const m = { ...prev }
+      if (Object.keys(next).length) m[key] = next
+      else delete m[key]
+      // 写回放到微任务里，避免在状态更新函数内做副作用
+      queueMicrotask(() => {
+        putFileTags(key, next).catch((err) => {
+          console.error('[filebrowser] 写回用户标签失败:', err)
+        })
+      })
+      return m
+    })
+  }, [])
+
   // 应用新的清单基目录并重新读取（需与 dir-struct-gen 的 basePath 一致）。
   const applyBase = useCallback(() => {
     setFoldersBase(baseInput)
@@ -123,19 +169,35 @@ export default function FileBrowserApp() {
 
   const q = query.trim().toLowerCase()
   const filtered = useMemo(() => {
-    if (!q) return manifests
+    if (!q && !tagFilter) return manifests
     return manifests
       .map((m) => {
-        const root = filterTree(m.root, q)
+        const root = filterTree(m.root, q, {
+          tag: tagFilter,
+          source: m.source,
+          userTagsByKey: tagsByKey,
+          basePath: [],
+        })
         return root ? { ...m, root } : null
       })
       .filter((m): m is ManifestView => m !== null)
-  }, [manifests, q])
+  }, [manifests, q, tagFilter, tagsByKey])
 
   const totalFolders = useMemo(
     () => manifests.reduce((s, m) => s + m.folderCount, 0),
     [manifests],
   )
+
+  // 全部已用过的用户标签（用于编辑弹窗的「建议已有标签」）。
+  const allUserTags = useMemo(() => {
+    const s = new Set<string>()
+    for (const perKey of Object.values(tagsByKey)) {
+      for (const arr of Object.values(perKey)) {
+        for (const t of arr) s.add(t)
+      }
+    }
+    return [...s].sort()
+  }, [tagsByKey])
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-5 space-y-4">
@@ -178,7 +240,7 @@ export default function FileBrowserApp() {
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="筛选文件夹…"
+              placeholder="筛选文件/文件夹…"
               className="w-full pl-8 pr-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-white/85 text-sm placeholder:text-white/30 outline-none focus:border-white/25"
             />
           </div>
@@ -191,21 +253,58 @@ export default function FileBrowserApp() {
         </div>
       )}
 
+      {state === 'data' && tagFilter && (
+        <div className="flex items-center gap-2 text-xs">
+          <span className="text-white/45">标签筛选：</span>
+          <button
+            onClick={() => setTagFilter(null)}
+            className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-200/90 ring-1 ring-amber-400/30 flex items-center gap-1 hover:bg-amber-500/30"
+          >
+            {tagFilter}
+            <span className="leading-none">✕</span>
+          </button>
+          <button onClick={() => setTagFilter(null)} className="text-white/40 hover:text-white">
+            清除
+          </button>
+        </div>
+      )}
+
       {state === 'loading' && <LoadingState />}
       {state === 'error' && <ErrorState code={errorCode} message={errorMsg} onRetry={load} />}
       {state === 'empty' && <EmptyState onRetry={load} />}
       {state === 'data' &&
         (filtered.length === 0 ? (
           <div className="text-white/30 text-sm text-center py-8">
-            {q ? '无匹配的文件夹' : `${getFoldersBase()}/struct 下暂无目录结构清单`}
+            {q || tagFilter ? '无匹配的文件或文件夹' : `${getFoldersBase()}/struct 下暂无目录结构清单`}
           </div>
         ) : (
           <div className="space-y-3">
             {filtered.map((m) => (
-              <HostCard key={m.source} manifest={m} query={q} marksByKey={marksByKey} onToggleMark={toggleMark} />
+              <HostCard
+                key={m.source}
+                manifest={m}
+                query={q}
+                marksByKey={marksByKey}
+                tagsByKey={tagsByKey}
+                tagFilter={tagFilter}
+                onToggleMark={toggleMark}
+                onSetTags={setNodeTags}
+                onTagClick={(t) => setTagFilter((prev) => (prev === t ? null : t))}
+                onEditTags={(key, path, current) => setTagEditor({ key, path, current })}
+              />
             ))}
           </div>
         ))}
+
+      <TagEditorModal
+        editor={tagEditor}
+        allTags={allUserTags}
+        onClose={() => setTagEditor(null)}
+        onSave={(next) => {
+          if (tagEditor) setNodeTags(tagEditor.key, tagEditor.path, next)
+          setTagEditor(null)
+        }}
+      />
     </div>
   )
 }
@@ -329,11 +428,183 @@ function formatGeneratedAt(iso: string | null): string | null {
   })
 }
 
-function TagChip({ tag }: { tag: string }) {
+function TagChip({
+  tag,
+  active,
+  onClick,
+}: {
+  tag: string
+  active?: boolean
+  onClick?: () => void
+}) {
+  const cls = `px-1.5 py-0.5 rounded text-[10px] font-mono leading-none ${
+    active
+      ? 'bg-indigo-500/35 text-indigo-100 ring-1 ring-indigo-300/50'
+      : 'bg-indigo-500/15 text-indigo-200/90'
+  }`
+  if (onClick) {
+    return (
+      <button type="button" className={cls} onClick={(e) => { e.stopPropagation(); onClick() }}>
+        {tag}
+      </button>
+    )
+  }
+  return <span className={cls}>{tag}</span>
+}
+
+// 用户自定义标签：琥珀色，与清单自带（indigo）标签区分；可点击切换标签筛选。
+function UserTagChip({
+  tag,
+  active,
+  onClick,
+}: {
+  tag: string
+  active?: boolean
+  onClick?: () => void
+}) {
+  const cls = `px-1.5 py-0.5 rounded text-[10px] font-mono leading-none ${
+    active
+      ? 'bg-amber-500/35 text-amber-100 ring-1 ring-amber-300/50'
+      : 'bg-amber-500/15 text-amber-200/90 ring-1 ring-amber-400/20'
+  }`
+  if (onClick) {
+    return (
+      <button type="button" className={cls} onClick={(e) => { e.stopPropagation(); onClick() }}>
+        {tag}
+      </button>
+    )
+  }
+  return <span className={cls}>{tag}</span>
+}
+
+// 标签编辑弹窗：当前标签以可删除芯片展示；输入框回车/逗号加标签；建议整棵树已有标签。
+function TagEditorModal({
+  editor,
+  allTags,
+  onClose,
+  onSave,
+}: {
+  editor: { key: string; path: string; current: string[] } | null
+  allTags: string[]
+  onClose: () => void
+  onSave: (tags: string[]) => void
+}) {
+  const [draft, setDraft] = useState<string[]>(editor?.current ?? [])
+  const [input, setInput] = useState('')
+
+  useEffect(() => {
+    setDraft(editor?.current ?? [])
+    setInput('')
+  }, [editor])
+
+  if (!editor) return null
+
+  const addTag = (raw: string) => {
+    const t = raw.trim()
+    if (!t || draft.includes(t)) {
+      setInput('')
+      return
+    }
+    setDraft((d) => [...d, t])
+    setInput('')
+  }
+  const removeTag = (t: string) => setDraft((d) => d.filter((x) => x !== t))
+  const suggestions = allTags.filter((t) => !draft.includes(t))
+
   return (
-    <span className="px-1.5 py-0.5 rounded text-[10px] bg-indigo-500/15 text-indigo-200/90 font-mono leading-none">
-      {tag}
-    </span>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-[min(92vw,420px)] rounded-xl bg-[#1b1f27] border border-white/10 p-4 space-y-3 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between">
+          <h3 className="text-white/90 font-medium text-sm">编辑标签</h3>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-white/40 hover:text-white text-sm leading-none"
+          >
+            ✕
+          </button>
+        </div>
+        <div className="text-white/40 text-xs font-mono break-all">路径：{editor.path}</div>
+
+        <div className="flex flex-wrap gap-1.5 min-h-[24px]">
+          {draft.length === 0 && <span className="text-white/30 text-xs">暂无标签</span>}
+          {draft.map((t) => (
+            <span
+              key={t}
+              className="px-1.5 py-0.5 rounded text-[11px] bg-amber-500/15 text-amber-200 ring-1 ring-amber-400/20 flex items-center gap-1"
+            >
+              {t}
+              <button
+                type="button"
+                onClick={() => removeTag(t)}
+                className="text-amber-200/70 hover:text-white leading-none"
+              >
+                ✕
+              </button>
+            </span>
+          ))}
+        </div>
+
+        <input
+          autoFocus
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ',') {
+              e.preventDefault()
+              addTag(input)
+            } else if (e.key === 'Backspace' && !input && draft.length) {
+              removeTag(draft[draft.length - 1])
+            } else if (e.key === 'Escape') {
+              onClose()
+            }
+          }}
+          placeholder="输入标签后回车或逗号添加…"
+          className="w-full px-2 py-1.5 rounded-lg bg-white/5 border border-white/10 text-white/85 text-sm outline-none focus:border-white/25"
+        />
+
+        {suggestions.length > 0 && (
+          <div>
+            <div className="text-white/35 text-xs mb-1">建议（已有标签）</div>
+            <div className="flex flex-wrap gap-1.5">
+              {suggestions.map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => addTag(t)}
+                  className="px-1.5 py-0.5 rounded text-[11px] bg-white/5 text-white/60 hover:bg-white/15 hover:text-white"
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2 pt-1">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-3 py-1.5 rounded-lg bg-white/5 text-white/70 hover:bg-white/15 text-sm"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            onClick={() => onSave(draft)}
+            className="px-3 py-1.5 rounded-lg bg-amber-500/80 hover:bg-amber-500 text-white text-sm"
+          >
+            保存
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -411,6 +682,30 @@ function FolderSize({ node }: { node: FolderNodeView }) {
   )
 }
 
+// 文件大小徽标：展示单个文件的大小与占用空间（有则显示）。
+function FileSize({ node }: { node: FileNodeView }) {
+  const hasSize = node.size !== undefined
+  const hasDisk = node.sizeOnDisk !== undefined
+  if (!hasSize && !hasDisk) return null
+
+  const titleParts: string[] = []
+  if (hasSize) titleParts.push(`逻辑大小 ${node.size} 字节`)
+  if (hasDisk) titleParts.push(`占用空间 ${node.sizeOnDisk} 字节`)
+  const mtimeStr = formatMtime(node.mtime)
+  if (mtimeStr) titleParts.push(`最后修改 ${mtimeStr}`)
+
+  const diskDiffers = hasDisk && (!hasSize || node.sizeOnDisk !== node.size)
+  return (
+    <span
+      className="ml-1 shrink-0 text-white/45 text-[11px] font-mono tabular-nums leading-none whitespace-nowrap"
+      title={titleParts.join(' · ')}
+    >
+      {hasSize ? formatSize(node.size) : '—'}
+      {diskDiffers && <span className="text-white/30"> · 占 {formatSize(node.sizeOnDisk)}</span>}
+    </span>
+  )
+}
+
 // 主机级汇总：累加各「驱动（盘符）」节点的递归统计（盘符互为兄弟、不嵌套，不会重复计数）。
 function hostStats(root: FolderNodeView): {
   files: number
@@ -425,6 +720,7 @@ function hostStats(root: FolderNodeView): {
   let has = false
   let hasDisk = false
   for (const d of root.children) {
+    if (d.type !== 'folder') continue
     if (d.fileCount !== undefined) {
       files += d.fileCount
       has = true
@@ -442,17 +738,28 @@ function hostStats(root: FolderNodeView): {
 }
 
 const EMPTY_SET: Set<string> = new Set()
+const EMPTY_TAGS_MAP: Record<string, string[]> = {}
 
 function HostCard({
   manifest,
   query,
   marksByKey,
+  tagsByKey,
+  tagFilter,
   onToggleMark,
+  onSetTags,
+  onTagClick,
+  onEditTags,
 }: {
   manifest: ManifestView
   query: string
   marksByKey: Record<string, Set<string>>
+  tagsByKey: Record<string, Record<string, string[]>>
+  tagFilter: string | null
   onToggleMark: (key: string, path: string) => void
+  onSetTags: (key: string, path: string, tags: string[]) => void
+  onTagClick: (tag: string) => void
+  onEditTags: (key: string, path: string, current: string[]) => void
 }) {
   const genText = formatGeneratedAt(manifest.generatedAt)
   const stats = hostStats(manifest.root)
@@ -486,22 +793,29 @@ function HostCard({
         {manifest.root.children.length === 0 ? (
           <div className="text-white/30 text-xs px-1">（无子目录）</div>
         ) : (
-          manifest.root.children.map((child, i) => {
-            // 每块盘的稳定身份命名空间：有 volumeId 用 volumeId（跨主机去重），否则回退 主机::盘符。
-            const key = child.volumeId || `${manifest.source}::${child.name}`
-            return (
-              <FolderTree
-                key={`${child.name}-${i}`}
-                node={child}
-                depth={0}
-                forceExpand={!!query}
-                basePath={[child.name]}
-                markKey={key}
-                marked={marksByKey[key] || EMPTY_SET}
-                onToggle={onToggleMark}
-              />
-            )
-          })
+          manifest.root.children
+            .filter((c): c is FolderNodeView => c.type === 'folder')
+            .map((child, i) => {
+              // 每块盘的稳定身份命名空间：有 volumeId 用 volumeId（跨主机去重），否则回退 主机::盘符。
+              const key = child.volumeId || `${manifest.source}::${child.name}`
+              return (
+                <FolderTree
+                  key={`${child.name}-${i}`}
+                  node={child}
+                  depth={0}
+                  forceExpand={!!query || !!tagFilter}
+                  basePath={[child.name]}
+                  markKey={key}
+                  marked={marksByKey[key] || EMPTY_SET}
+                  userTags={tagsByKey[key] || EMPTY_TAGS_MAP}
+                  tagFilter={tagFilter}
+                  onToggle={onToggleMark}
+                  onSetTags={onSetTags}
+                  onTagClick={onTagClick}
+                  onEditTags={onEditTags}
+                />
+              )
+            })
         )}
       </div>
     </div>
@@ -515,24 +829,41 @@ function FolderTree({
   basePath,
   markKey,
   marked,
+  userTags,
+  tagFilter,
   onToggle,
+  onSetTags,
+  onTagClick,
+  onEditTags,
 }: {
-  node: FolderNodeView
+  node: FsNodeView
   depth: number
   forceExpand: boolean
   basePath: string[]
   markKey: string
   marked: Set<string>
+  userTags: Record<string, string[]>
+  tagFilter: string | null
   onToggle: (key: string, path: string) => void
+  onSetTags: (key: string, path: string, tags: string[]) => void
+  onTagClick: (tag: string) => void
+  onEditTags: (key: string, path: string, current: string[]) => void
 }) {
   // 默认展开顶层（盘符/根目录），深层收起；筛选命中时整棵匹配树强制展开。
   const [open, setOpen] = useState(depth === 0 && !forceExpand)
   const expanded = forceExpand || open
-  const hasChildren = node.children.length > 0
+  const isFolder = node.type === 'folder'
+  const hasChildren = isFolder && node.children.length > 0
   const indent = { paddingLeft: `${depth * 14 + 8}px` }
-  // host-relative 路径（盘符 + 嵌套目录名，用 / 连接），用于深挖标记。
+  // host-relative 路径（盘符 + 嵌套名称，用 / 连接），用于深挖标记与用户标签。
   const path = basePath.join('/')
-  const isMarked = marked.has(path)
+  const isMarked = isFolder && marked.has(path)
+  const tags = userTags[path] || []
+
+  // 打开标签编辑弹窗（替换原 window.prompt），由顶层 TagEditorModal 接管编辑与保存。
+  const editTags = () => {
+    onEditTags(markKey, path, tags)
+  }
 
   return (
     <div>
@@ -553,7 +884,9 @@ function FolderTree({
         ) : (
           <span className="w-3.5 shrink-0" />
         )}
-        {expanded && hasChildren ? (
+        {node.type === 'file' ? (
+          <File className="w-4 h-4 text-white/45 shrink-0" />
+        ) : expanded && hasChildren ? (
           <FolderOpen className="w-4 h-4 text-sky-300/70 shrink-0" />
         ) : (
           <Folder className="w-4 h-4 text-sky-300/70 shrink-0" />
@@ -562,11 +895,28 @@ function FolderTree({
         {node.tags.length > 0 && (
           <span className="flex items-center gap-1 flex-wrap ml-1">
             {node.tags.map((t, i) => (
-              <TagChip key={`${t}-${i}`} tag={t} />
+              <TagChip
+                key={`${t}-${i}`}
+                tag={t}
+                active={tagFilter === t}
+                onClick={() => onTagClick(t)}
+              />
             ))}
           </span>
         )}
-        <FolderSize node={node} />
+        {tags.length > 0 && (
+          <span className="flex items-center gap-1 flex-wrap ml-1">
+            {tags.map((t, i) => (
+              <UserTagChip
+                key={`${t}-${i}`}
+                tag={t}
+                active={tagFilter === t}
+                onClick={() => onTagClick(t)}
+              />
+            ))}
+          </span>
+        )}
+        {node.type === 'folder' ? <FolderSize node={node} /> : <FileSize node={node} />}
         {formatMtime(node.mtime) && (
           <span
             className="shrink-0 text-white/30 text-[11px] font-mono tabular-nums leading-none whitespace-nowrap"
@@ -575,7 +925,7 @@ function FolderTree({
             改 {formatMtime(node.mtime)}
           </span>
         )}
-        {node.sources && node.sources.length > 1 && (
+        {node.type === 'folder' && node.sources && node.sources.length > 1 && (
           <span
             className="ml-1 shrink-0 px-1.5 py-0.5 rounded text-[10px] bg-emerald-500/15 text-emerald-200/80 font-mono leading-none"
             title={`该盘由以下主机的分片合并而来：${node.sources.join('、')}`}
@@ -588,22 +938,35 @@ function FolderTree({
             ↳ 待深挖
           </span>
         )}
-        {node.type === 'folder' && (
+        <span className="ml-auto shrink-0 flex items-center gap-1">
+          {node.type === 'folder' && (
+            <button
+              type="button"
+              onClick={(ev) => {
+                ev.stopPropagation()
+                onToggle(markKey, path)
+              }}
+              title="继续解析下一层（标记后需在本机重新运行 dir-struct-gen 生成清单）"
+              className="shrink-0 opacity-0 group-hover:opacity-100 text-sky-300/70 hover:text-sky-200 text-xs px-1 leading-none"
+            >
+              ↳
+            </button>
+          )}
           <button
             type="button"
             onClick={(ev) => {
               ev.stopPropagation()
-              onToggle(markKey, path)
+              editTags()
             }}
-            title="继续解析下一层（标记后需在本机重新运行 dir-struct-gen 生成清单）"
-            className="ml-auto shrink-0 opacity-0 group-hover:opacity-100 text-sky-300/70 hover:text-sky-200 text-xs px-1 leading-none"
+            title={tags.length ? `编辑标签（当前：${tags.join('、')}）` : '给该条目打标签'}
+            className="shrink-0 text-white/30 hover:text-amber-200 px-1 leading-none"
           >
-            ↳
+            <Tag className="w-3.5 h-3.5" />
           </button>
-        )}
+        </span>
       </div>
 
-      {expanded && hasChildren && (
+      {expanded && node.type === 'folder' && node.children.length > 0 && (
         <div>
           {node.children.map((c, i) => (
             <FolderTree
@@ -614,7 +977,12 @@ function FolderTree({
               basePath={[...basePath, c.name]}
               markKey={markKey}
               marked={marked}
+              userTags={userTags}
+              tagFilter={tagFilter}
               onToggle={onToggle}
+              onSetTags={onSetTags}
+              onTagClick={onTagClick}
+              onEditTags={onEditTags}
             />
           ))}
         </div>

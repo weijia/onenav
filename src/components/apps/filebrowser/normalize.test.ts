@@ -1,17 +1,22 @@
 import { describe, expect, it } from 'vitest'
 import { filterTree, normalizeManifest, normalizeManifests } from './normalize'
-import type { FolderNodeView } from './types'
+import type { FolderNodeView, FsNodeView } from './types'
 
 // 构造一个文件夹节点，便于测试
 function folder(
   name: string,
-  children: FolderNodeView[] = [],
+  children: FsNodeView[] = [],
   tags: string[] = [],
 ): FolderNodeView {
   return { name, type: 'folder', tags, children }
 }
 
-function validManifest(rootChildren: FolderNodeView[], over: Record<string, unknown> = {}) {
+// 子节点访问器：文件节点没有 children
+function kids(node: FsNodeView): FsNodeView[] {
+  return node.type === 'folder' ? node.children : []
+}
+
+function validManifest(rootChildren: FsNodeView[], over: Record<string, unknown> = {}) {
   return {
     version: 1,
     generatedAt: '2026-10-24T12:00:00.000Z',
@@ -40,17 +45,46 @@ describe('normalizeManifest', () => {
     expect(normalizeManifest('not-an-object')).toBeNull()
   })
 
-  it('过滤 type:"file" 节点', () => {
+  it('保留 type:"file" 节点且不影响目录计数', () => {
     const raw = validManifest([
       folder('C:', [
-        // 混入一个 file 节点，应被忽略
+        // 混入一个 file 节点，应被保留
         { name: 'readme.txt', type: 'file', tags: [], children: [] } as unknown as FolderNodeView,
         folder('code'),
       ]),
     ])
     const m = normalizeManifest(raw)!
-    expect(m.root.children[0].children).toHaveLength(1)
-    expect(m.root.children[0].children[0].name).toBe('code')
+    const c = kids(m.root.children[0])
+    expect(c).toHaveLength(2)
+    expect(c[0].type).toBe('file')
+    expect(c[1].name).toBe('code')
+    // 文件夹：根 + C: + code = 3，folderCount 不含根 = 2（文件不计入）
+    expect(m.folderCount).toBe(2)
+  })
+
+  it('文件节点保留大小/占用/mtime 且无子节点', () => {
+    const raw = validManifest([
+      folder('C:', [
+        {
+          name: 'photo.jpg',
+          type: 'file',
+          size: 2048,
+          sizeOnDisk: 4096,
+          mtime: 1760000000000,
+        } as unknown as FolderNodeView,
+      ]),
+    ])
+    const m = normalizeManifest(raw)!
+    const file = kids(m.root.children[0])[0]
+    expect(file.type).toBe('file')
+    expect(file.name).toBe('photo.jpg')
+    expect(file.tags).toEqual([])
+    expect('children' in file).toBe(false)
+    if (file.type === 'file') {
+      expect(file.size).toBe(2048)
+      expect(file.sizeOnDisk).toBe(4096)
+      expect(file.mtime).toBe(1760000000000)
+    }
   })
 
   it('缺 name 的子节点被跳过并记录告警', () => {
@@ -99,18 +133,20 @@ describe('filterTree', () => {
     expect(r).not.toBeNull()
     expect(r!.name).toBe('C:')
     // C: 下只有 Projects 命中分支保留
-    expect(r!.children).toHaveLength(1)
-    expect(r!.children[0].name).toBe('Projects')
-    expect(r!.children[0].children).toHaveLength(1)
-    expect(r!.children[0].children[0].name).toBe('onenav')
+    const c = kids(r!)
+    expect(c).toHaveLength(1)
+    expect(c[0].name).toBe('Projects')
+    expect(kids(c[0])).toHaveLength(1)
+    expect(kids(c[0])[0].name).toBe('onenav')
   })
 
   it('未命中节点但有命中后代：作为祖先路径保留', () => {
     const r = filterTree(buildTree(), 'my-data')
-    expect(r!.children[0].name).toBe('Projects')
-    expect(r!.children[0].children[0].name).toBe('my-data')
+    const c = kids(r!)
+    expect(c[0].name).toBe('Projects')
+    expect(kids(c[0])[0].name).toBe('my-data')
     // Tools 未命中且无命中后代 → 不出现
-    expect(r!.children).toHaveLength(1)
+    expect(c).toHaveLength(1)
   })
 
   it('完全无命中返回 null', () => {
@@ -120,6 +156,81 @@ describe('filterTree', () => {
   it('非空查询不区分大小写', () => {
     const r = filterTree(buildTree(), 'ONENAV')
     expect(r).not.toBeNull()
-    expect(r!.children[0].children[0].name).toBe('onenav')
+    expect(kids(kids(r!)[0])[0].name).toBe('onenav')
+  })
+
+  it('文件节点可按文件名筛选并作为叶子保留', () => {
+    const tree: FolderNodeView = folder('C:', [
+      {
+        name: 'notes.md',
+        type: 'file',
+        tags: [],
+        size: 120,
+      },
+      folder('Tools'),
+    ])
+    const r = filterTree(tree, 'notes')
+    expect(r).not.toBeNull()
+    const c = kids(r!)
+    expect(c).toHaveLength(1)
+    expect(c[0].type).toBe('file')
+    expect(c[0].name).toBe('notes.md')
+  })
+})
+
+describe('filterTree 标签筛选', () => {
+  // 结构（真实结构：根为「主机」，其子为盘符 C:）：
+  // HOST > C:[Projects:[onenav(work), my-data(doc)] (dev), Tools(util)]
+  function buildHostTree(): FolderNodeView {
+    return folder('HOST', [
+      folder('C:', [
+        folder('Projects', [folder('onenav', [], ['work']), folder('my-data', [], ['doc'])], ['dev']),
+        folder('Tools', [], ['util']),
+      ]),
+    ])
+  }
+
+  it('按清单自带标签筛选（tag 命中即保留，祖先链保留）', () => {
+    const r = filterTree(buildHostTree(), '', { tag: 'dev' })
+    expect(r).not.toBeNull()
+    // HOST > C: > Projects（dev 在 Projects 上）
+    const c = kids(r!)
+    expect(c).toHaveLength(1)
+    expect(c[0].name).toBe('C:')
+    const projects = kids(c[0]).find((n) => n.name === 'Projects')!
+    expect(projects).toBeDefined()
+  })
+
+  it('按用户标签筛选需配合 userTagsByKey 与 source（按盘符命名空间定位）', () => {
+    const r = filterTree(buildHostTree(), '', {
+      tag: 'work',
+      source: 'HOST',
+      userTagsByKey: { 'HOST::C:': { 'C:/Projects/onenav': ['work'] } },
+      basePath: [],
+    })
+    expect(r).not.toBeNull()
+    const c = kids(r!)
+    expect(c).toHaveLength(1) // 仅 C:
+    const cDrive = c[0]
+    expect(cDrive.name).toBe('C:')
+    const projects = kids(cDrive).find((n) => n.name === 'Projects')!
+    expect(kids(projects).some((n) => n.name === 'onenav')).toBe(true)
+    // Tools 未命中且无命中后代 → 不出现
+    expect(kids(cDrive).some((n) => n.name === 'Tools')).toBe(false)
+  })
+
+  it('关键词与标签组合为「或」关系', () => {
+    const r = filterTree(buildHostTree(), 'Tools', {
+      tag: 'dev',
+      source: 'HOST',
+      userTagsByKey: { 'HOST::C:': { 'C:/Projects/onenav': ['work'] } },
+      basePath: [],
+    })
+    // C: 下 Tools 关键词命中 + Projects 因标签 dev 命中，两者都应保留
+    const c = kids(r!)
+    const cDrive = c[0]
+    expect(cDrive.name).toBe('C:')
+    expect(kids(cDrive).some((n) => n.name === 'Tools')).toBe(true)
+    expect(kids(cDrive).some((n) => n.name === 'Projects')).toBe(true)
   })
 })

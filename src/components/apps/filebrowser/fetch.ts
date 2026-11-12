@@ -7,6 +7,7 @@
 //   <base>/struct/<volumeId>.<createdAt>.json   — 某块盘「按次生成」的卷子树（每次生成一份，互不覆盖）
 //   <base>/struct/<volumeKey>.json              — 旧版单文件卷（历史数据，仍兼容）
 //   <base>/folder-deepen/<key>.json             — 深挖标记 { marks:[ "E:/Photos/2024", ... ] }
+//   <base>/file-tags/<key>.json                 — 用户标签 { tags:{ "E:/Photos/2024": ["旅行","2024"] } }
 // 其中 volumeKey = 卷的 .dir-struct-id（UUID，跨主机一致）。
 // 读取侧：对主机索引的每个 mount 取该卷全部分片（files 优先，回退 file），按 volumeId 合并成一棵树。
 // 合并规则见 ./merge.ts（严格对齐生成器与格式文档「分片合并规则」）。
@@ -74,12 +75,15 @@ export function setFoldersBase(base: string): void {
   }
 }
 
-// 实际读取的两个子目录：清单在基下的 struct/，深挖标记在基下的 folder-deepen/。
+// 实际读取的子目录：清单在基下的 struct/，深挖标记在 folder-deepen/，用户标签在 file-tags/。
 function foldersDir(): string {
   return `${getFoldersBase()}/struct`
 }
 function deepenDir(): string {
   return `${getFoldersBase()}/folder-deepen`
+}
+function fileTagsDir(): string {
+  return `${getFoldersBase()}/file-tags`
 }
 
 /** 未索引卷（分片存在但无主机索引引用它们）的合成主机名 */
@@ -315,6 +319,57 @@ export async function putFolderDeepenMarks(key: string, paths: string[]): Promis
   const p = `${deepenDir()}/${sanitizeKey(key)}.json`
   try {
     await fs.writeFile(p, JSON.stringify({ marks: paths }))
+  } catch (e) {
+    if (isRemoteStorageAuthError(e)) throw new RsAuthError(FOLDERS_AUTH_MSG)
+    throw e
+  }
+}
+
+/** 某块盘的用户标签映射：host-relative 路径（盘符开始、/ 连接）→ 标签数组 */
+export type FileTagsMap = Record<string, string[]>
+
+/**
+ * 读取某块盘的用户标签（<base>/file-tags/<key>.json）。
+ * 404 / 解析失败 / 未连接 → 返回空对象（不抛错，避免阻断浏览）。
+ */
+export async function getFileTags(key: string): Promise<FileTagsMap> {
+  try {
+    const fs = getFS()
+    const p = `${fileTagsDir()}/${sanitizeKey(key)}.json`
+    const text = await fs.readFile(p, 'utf8')
+    try {
+      const obj = JSON.parse(text)
+      const rawTags = obj && typeof obj === 'object' ? (obj.tags as unknown) : null
+      if (!rawTags || typeof rawTags !== 'object' || Array.isArray(rawTags)) return {}
+      const out: FileTagsMap = {}
+      for (const [path, value] of Object.entries(rawTags as Record<string, unknown>)) {
+        if (!path || !Array.isArray(value)) continue
+        const tags = value.filter((t): t is string => typeof t === 'string' && !!t)
+        if (tags.length) out[path] = tags
+      }
+      return out
+    } catch {
+      return {}
+    }
+  } catch (e) {
+    if (isRemoteStorageAuthError(e)) {
+      // 权限问题仅告警，不打断浏览
+      console.warn('[filebrowser] 读取用户标签权限不足:', e)
+      return {}
+    }
+    return {}
+  }
+}
+
+/**
+ * 写回某块盘的用户标签（<base>/file-tags/<key>.json）。
+ * 权限错误（401）抛 RsAuthError，由调用方提示去重连；其它错误原样抛出。
+ */
+export async function putFileTags(key: string, map: FileTagsMap): Promise<void> {
+  const fs = getFS()
+  const p = `${fileTagsDir()}/${sanitizeKey(key)}.json`
+  try {
+    await fs.writeFile(p, JSON.stringify({ tags: map }))
   } catch (e) {
     if (isRemoteStorageAuthError(e)) throw new RsAuthError(FOLDERS_AUTH_MSG)
     throw e

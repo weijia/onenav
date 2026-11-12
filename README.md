@@ -81,6 +81,26 @@
 }
 ```
 
+### 文件浏览器用户标签（file-tags）
+
+「文件」应用（FileBrowserApp）允许给文件/目录打自定义标签。标签是独立文件，不改写目录结构清单（`struct/*.json` 只读）：
+
+- 位置：`<base>/file-tags/<namespace>.json`，`<base>` 与清单基目录一致（默认 `app_data/folders`，可配置）
+- `namespace` 与「深挖标记」一致：卷身份 `volumeId`（`.dir-struct-id`），无 volumeId 时回退 `主机::盘符`
+- 文件名经 `sanitizeKey` 处理（非 `[A-Za-z0-9._-]` 字符替换为 `_`）
+- 格式：
+
+```json
+{
+  "tags": {
+    "E:/Photos/2024": ["旅行", "2024"],
+    "E:/Photos/2024/cover.jpg": ["封面"]
+  }
+}
+```
+
+键为 host-relative 路径（从盘符开始，`/` 连接，文件与目录使用同一命名空间）。读取失败（404/解析错误/权限不足）返回空标签，不阻断浏览；写入 401 时提示重新连接 RemoteStorage。
+
 ## 同步机制
 
 ### universal-sync-v2
