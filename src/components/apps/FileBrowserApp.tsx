@@ -3,7 +3,8 @@
 // 手动刷新（与设备监控一致，无自动刷新）；多主机并列展示各自的只读目录树；
 // 关键词筛选文件/文件夹（命中节点 + 祖先链），命中时整棵匹配树自动展开；文件夹标签小徽标；
 // 每个条目可打用户标签，独立存于 <base>/file-tags/（不改写 struct 清单）；
-// 带 'private' 标签的目录缺省隐藏，在页面键入 magic code 切换显示/隐藏（键盘序列，无输入框）。
+// 带 'private' 标签的目录缺省隐藏且不显示任何提示（静默），在页面键入 magic code
+// 切换显示/隐藏（键盘序列，无输入框）；仅解锁后显示一条状态提示。
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -21,7 +22,6 @@ import {
   File,
   Tag,
   Eye,
-  EyeOff,
 } from 'lucide-react'
 import {
   fetchDirStructManifests,
@@ -231,7 +231,7 @@ export default function FileBrowserApp() {
       .filter((m): m is ManifestView => m !== null)
   }, [manifests, q, tagFilter, tagsByKey, showPrivate])
 
-  // 隐私目录总数（用于提示条「已隐藏 N 个」）。
+  // 隐私目录总数：仅供解锁态的状态提示使用（锁定态不渲染任何相关信息）。
   const privateCount = useMemo(
     () => countTaggedNodes(manifests, PRIVATE_TAG, tagsByKey),
     [manifests, tagsByKey],
@@ -289,15 +289,11 @@ export default function FileBrowserApp() {
         <div className="flex items-center gap-3 flex-wrap">
           <span className="text-white/45 text-xs">{manifests.length} 台主机</span>
           <span className="text-white/45 text-xs">{totalFolders} 个文件夹</span>
-          {privateCount > 0 && (
-            <span
-              className={`flex items-center gap-1 text-xs ${
-                showPrivate ? 'text-emerald-200/85' : 'text-white/45'
-              }`}
-              title="在页面任意处依次键入 magic code 可切换显示 / 隐藏"
-            >
-              {showPrivate ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-              {showPrivate ? '隐私已显示' : '隐私已隐藏'}
+          {/* 仅在「已解锁、隐私目录确实可见」时才暴露隐私相关状态；锁定态完全静默。 */}
+          {showPrivate && privateCount > 0 && (
+            <span className="flex items-center gap-1 text-xs text-emerald-200/85">
+              <Eye className="w-3.5 h-3.5" />
+              隐私已显示
             </span>
           )}
           <div className="relative flex-1 min-w-[160px]">
@@ -334,17 +330,10 @@ export default function FileBrowserApp() {
         </div>
       )}
 
-      {state === 'data' && privateCount > 0 && (
-        <div
-          className={`rounded-lg border px-3 py-2 text-xs leading-relaxed ${
-            showPrivate
-              ? 'bg-emerald-500/10 border-emerald-400/25 text-emerald-100/85'
-              : 'bg-amber-500/10 border-amber-400/25 text-amber-100/85'
-          }`}
-        >
-          {showPrivate
-            ? `🔓 已显示 ${privateCount} 个隐私目录（含 'private' 标签）。再次键入 magic code 可重新隐藏。`
-            : `🔒 已隐藏 ${privateCount} 个隐私目录（含 'private' 标签）。在页面任意处依次键入 magic code 可显示。`}
+      {/* 锁定态不显示任何提示（否则等于宣告「这里藏了 N 个目录」）；仅解锁后给一条状态提示。 */}
+      {state === 'data' && showPrivate && privateCount > 0 && (
+        <div className="rounded-lg border px-3 py-2 text-xs leading-relaxed bg-emerald-500/10 border-emerald-400/25 text-emerald-100/85">
+          🔓 已显示 {privateCount} 个隐私目录（含 'private' 标签）。再次键入 magic code 可重新隐藏。
         </div>
       )}
 
