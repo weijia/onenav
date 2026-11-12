@@ -2,9 +2,10 @@
 // 状态机：loading / error（含「去连接」引导）/ empty / data。
 // 手动刷新（与设备监控一致，无自动刷新）；多主机并列展示各自的只读目录树；
 // 关键词筛选文件/文件夹（命中节点 + 祖先链），命中时整棵匹配树自动展开；文件夹标签小徽标；
-// 每个条目可打用户标签，独立存于 <base>/file-tags/（不改写 struct 清单）。
+// 每个条目可打用户标签，独立存于 <base>/file-tags/（不改写 struct 清单）；
+// 带 'private' 标签的目录缺省隐藏，在页面键入 magic code 切换显示/隐藏（键盘序列，无输入框）。
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Server,
   RefreshCw,
@@ -19,7 +20,6 @@ import {
   FileWarning,
   File,
   Tag,
-  Lock,
   Eye,
   EyeOff,
 } from 'lucide-react'
@@ -39,7 +39,8 @@ import type { FileNodeView, FolderNodeView, FsNodeView, ManifestView } from './f
 
 type LoadState = 'loading' | 'error' | 'empty' | 'data'
 
-// 隐私目录：标签为 'private'（大小写不敏感）的目录缺省隐藏；输入此口令切换显示/隐藏。
+// 隐私目录：标签为 'private'（大小写不敏感）的目录缺省隐藏；
+// 在页面任意处依次键入此 magic code（键盘序列，无需输入框）即切换显示/隐藏。
 const PRIVATE_TAG = 'private'
 const MAGIC_CODE = 'wwssadadba'
 
@@ -61,18 +62,44 @@ export default function FileBrowserApp() {
   const [tagEditor, setTagEditor] = useState<{ key: string; path: string; current: string[] } | null>(
     null,
   )
-  // 隐私目录：缺省隐藏（带 'private' 标签的目录）；输入口令后切换显示/隐藏。
+  // 隐私目录：缺省隐藏（带 'private' 标签的目录）；在页面键入 magic code 切换显示/隐藏。
   const [showPrivate, setShowPrivate] = useState(false)
-  const [magicInput, setMagicInput] = useState('')
-  const onMagicCode = (v: string) => {
-    // 输入完整口令即切换隐私目录可见性，并清空输入框避免残留。
-    if (v === MAGIC_CODE) {
-      setShowPrivate((p) => !p)
-      setMagicInput('')
-    } else {
-      setMagicInput(v)
+  // 键盘序列缓冲：记录最近键入的字符，凑齐 MAGIC_CODE 即切换（无需任何输入框）。
+  const magicBuf = useRef('')
+
+  useEffect(() => {
+    const isTextInput = (t: EventTarget | null): boolean => {
+      const el = t as HTMLElement | null
+      const tag = el?.tagName
+      return (
+        tag === 'INPUT' ||
+        tag === 'TEXTAREA' ||
+        tag === 'SELECT' ||
+        el?.isContentEditable === true
+      )
     }
-  }
+    const onKeyDown = (e: KeyboardEvent) => {
+      // 组合键、或在文本输入控件内（搜索框 / 基目录 / 标签编辑）不参与序列，避免误触。
+      if (e.ctrlKey || e.metaKey || e.altKey || isTextInput(e.target)) {
+        magicBuf.current = ''
+        return
+      }
+      // 辅助键不改变字符序列，忽略；其余非单字符键（方向键 / Enter / Backspace…）中断序列。
+      if (e.key === 'Shift' || e.key === 'CapsLock') return
+      if (e.key.length !== 1) {
+        magicBuf.current = ''
+        return
+      }
+      const next = (magicBuf.current + e.key.toLowerCase()).slice(-MAGIC_CODE.length)
+      magicBuf.current = next
+      if (next === MAGIC_CODE) {
+        magicBuf.current = ''
+        setShowPrivate((p) => !p)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
 
   const load = useCallback(async () => {
     setState('loading')
@@ -262,6 +289,17 @@ export default function FileBrowserApp() {
         <div className="flex items-center gap-3 flex-wrap">
           <span className="text-white/45 text-xs">{manifests.length} 台主机</span>
           <span className="text-white/45 text-xs">{totalFolders} 个文件夹</span>
+          {privateCount > 0 && (
+            <span
+              className={`flex items-center gap-1 text-xs ${
+                showPrivate ? 'text-emerald-200/85' : 'text-white/45'
+              }`}
+              title="在页面任意处依次键入 magic code 可切换显示 / 隐藏"
+            >
+              {showPrivate ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+              {showPrivate ? '隐私已显示' : '隐私已隐藏'}
+            </span>
+          )}
           <div className="relative flex-1 min-w-[160px]">
             <Search className="w-3.5 h-3.5 text-white/35 absolute left-2.5 top-1/2 -translate-y-1/2" />
             <input
@@ -271,28 +309,6 @@ export default function FileBrowserApp() {
               className="w-full pl-8 pr-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-white/85 text-sm placeholder:text-white/30 outline-none focus:border-white/25"
             />
           </div>
-        </div>
-      )}
-
-      {state === 'data' && (
-        <div className="flex items-center gap-3 flex-wrap">
-          <div className="relative flex-1 min-w-[160px]">
-            <Lock className="w-3.5 h-3.5 text-white/35 absolute left-2.5 top-1/2 -translate-y-1/2" />
-            <input
-              value={magicInput}
-              onChange={(e) => onMagicCode(e.target.value)}
-              placeholder="输入口令以显示隐私目录…"
-              className="w-full pl-8 pr-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-white/85 text-sm placeholder:text-white/30 outline-none focus:border-white/25"
-            />
-          </div>
-          <span
-            className={`flex items-center gap-1 text-xs ${
-              showPrivate ? 'text-emerald-200/85' : 'text-white/45'
-            }`}
-          >
-            {showPrivate ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-            {showPrivate ? '隐私已显示' : '隐私已隐藏'}
-          </span>
         </div>
       )}
 
@@ -327,8 +343,8 @@ export default function FileBrowserApp() {
           }`}
         >
           {showPrivate
-            ? `🔓 已显示 ${privateCount} 个隐私目录（含 'private' 标签）。再次输入口令可重新隐藏。`
-            : `🔒 已隐藏 ${privateCount} 个隐私目录（含 'private' 标签）。在上方输入口令可显示。`}
+            ? `🔓 已显示 ${privateCount} 个隐私目录（含 'private' 标签）。再次键入 magic code 可重新隐藏。`
+            : `🔒 已隐藏 ${privateCount} 个隐私目录（含 'private' 标签）。在页面任意处依次键入 magic code 可显示。`}
         </div>
       )}
 
