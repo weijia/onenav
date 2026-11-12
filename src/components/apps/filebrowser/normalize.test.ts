@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { filterTree, normalizeManifest, normalizeManifests } from './normalize'
+import { countTaggedNodes, filterTree, normalizeManifest, normalizeManifests } from './normalize'
 import type { FolderNodeView, FsNodeView } from './types'
 
 // 构造一个文件夹节点，便于测试
@@ -232,5 +232,86 @@ describe('filterTree 标签筛选', () => {
     expect(cDrive.name).toBe('C:')
     expect(kids(cDrive).some((n) => n.name === 'Tools')).toBe(true)
     expect(kids(cDrive).some((n) => n.name === 'Projects')).toBe(true)
+  })
+})
+
+describe('filterTree 隐私标签（hidePrivate）', () => {
+  // 根为「主机」，子为盘符；Secrets / Photos 带 'private' 标签。
+  function buildHostTreePriv(): FolderNodeView {
+    return folder('HOST', [
+      folder('C:', [
+        folder('Projects', [folder('onenav'), folder('my-data')]),
+        folder('Secrets', [folder('diary')], ['private']),
+      ]),
+      folder('D:', [folder('Photos', [], ['private'])]),
+    ])
+  }
+
+  it('hidePrivate 默认 false 时隐私目录保留', () => {
+    const r = filterTree(buildHostTreePriv(), '', { source: 'HOST', basePath: [] })
+    const c = kids(r!).find((n) => n.name === 'C:')!
+    expect(kids(c).some((n) => n.name === 'Secrets')).toBe(true)
+    const d = kids(r!).find((n) => n.name === 'D:')!
+    expect(kids(d).some((n) => n.name === 'Photos')).toBe(true)
+  })
+
+  it('hidePrivate 为 true 时隐私目录（含子树）被整体隐藏', () => {
+    const r = filterTree(buildHostTreePriv(), '', {
+      source: 'HOST',
+      basePath: [],
+      hidePrivate: true,
+    })
+    const c = kids(r!).find((n) => n.name === 'C:')!
+    expect(kids(c).some((n) => n.name === 'Secrets')).toBe(false)
+    expect(kids(c).some((n) => n.name === 'Projects')).toBe(true)
+    const d = kids(r!).find((n) => n.name === 'D:')!
+    expect(kids(d).some((n) => n.name === 'Photos')).toBe(false)
+  })
+
+  it('hidePrivate 也覆盖用户标签中的 private', () => {
+    const tree = folder('HOST', [
+      folder('C:', [folder('Bank', [folder('statements')]), folder('Public')]),
+    ])
+    const r = filterTree(tree, '', {
+      source: 'HOST',
+      basePath: [],
+      hidePrivate: true,
+      userTagsByKey: { 'HOST::C:': { 'C:/Bank': ['private'] } },
+    })
+    const c = kids(r!).find((n) => n.name === 'C:')!
+    expect(kids(c).some((n) => n.name === 'Bank')).toBe(false)
+    expect(kids(c).some((n) => n.name === 'Public')).toBe(true)
+  })
+})
+
+describe('countTaggedNodes', () => {
+  function buildHostTreePriv(): FolderNodeView {
+    return folder('HOST', [
+      folder('C:', [
+        folder('Projects', [folder('onenav'), folder('my-data')]),
+        folder('Secrets', [folder('diary')], ['private']),
+      ]),
+      folder('D:', [folder('Photos', [], ['private'])]),
+    ])
+  }
+
+  it('统计含 private 标签的清单节点数（大小写不敏感）', () => {
+    const ms = normalizeManifest(validManifest([buildHostTreePriv()]))!
+    expect(countTaggedNodes([ms], 'private')).toBe(2)
+    expect(countTaggedNodes([ms], 'PRIVATE')).toBe(2)
+  })
+
+  it('统计包含用户标签的 private 节点', () => {
+    const ms: ReturnType<typeof normalizeManifest> = {
+      source: 'HOST',
+      generatedAt: null,
+      generator: null,
+      root: folder('HOST', [folder('C:', [folder('Bank', [folder('x')]), folder('Public')])]),
+      folderCount: 0,
+      warnings: [],
+    }
+    expect(
+      countTaggedNodes([ms!], 'private', { 'HOST::C:': { 'C:/Bank': ['private'] } }),
+    ).toBe(1)
   })
 })

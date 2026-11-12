@@ -19,6 +19,9 @@ import {
   FileWarning,
   File,
   Tag,
+  Lock,
+  Eye,
+  EyeOff,
 } from 'lucide-react'
 import {
   fetchDirStructManifests,
@@ -31,10 +34,14 @@ import {
   RsNotConnectedError,
   RsAuthError,
 } from './filebrowser/fetch'
-import { filterTree, normalizeManifests } from './filebrowser/normalize'
+import { filterTree, normalizeManifests, countTaggedNodes } from './filebrowser/normalize'
 import type { FileNodeView, FolderNodeView, FsNodeView, ManifestView } from './filebrowser/types'
 
 type LoadState = 'loading' | 'error' | 'empty' | 'data'
+
+// 隐私目录：标签为 'private'（大小写不敏感）的目录缺省隐藏；输入此口令切换显示/隐藏。
+const PRIVATE_TAG = 'private'
+const MAGIC_CODE = 'wwssadadba'
 
 export default function FileBrowserApp() {
   const [state, setState] = useState<LoadState>('loading')
@@ -54,6 +61,18 @@ export default function FileBrowserApp() {
   const [tagEditor, setTagEditor] = useState<{ key: string; path: string; current: string[] } | null>(
     null,
   )
+  // 隐私目录：缺省隐藏（带 'private' 标签的目录）；输入口令后切换显示/隐藏。
+  const [showPrivate, setShowPrivate] = useState(false)
+  const [magicInput, setMagicInput] = useState('')
+  const onMagicCode = (v: string) => {
+    // 输入完整口令即切换隐私目录可见性，并清空输入框避免残留。
+    if (v === MAGIC_CODE) {
+      setShowPrivate((p) => !p)
+      setMagicInput('')
+    } else {
+      setMagicInput(v)
+    }
+  }
 
   const load = useCallback(async () => {
     setState('loading')
@@ -169,7 +188,8 @@ export default function FileBrowserApp() {
 
   const q = query.trim().toLowerCase()
   const filtered = useMemo(() => {
-    if (!q && !tagFilter) return manifests
+    const hidePrivate = !showPrivate
+    if (!q && !tagFilter && !hidePrivate) return manifests
     return manifests
       .map((m) => {
         const root = filterTree(m.root, q, {
@@ -177,11 +197,18 @@ export default function FileBrowserApp() {
           source: m.source,
           userTagsByKey: tagsByKey,
           basePath: [],
+          hidePrivate,
         })
         return root ? { ...m, root } : null
       })
       .filter((m): m is ManifestView => m !== null)
-  }, [manifests, q, tagFilter, tagsByKey])
+  }, [manifests, q, tagFilter, tagsByKey, showPrivate])
+
+  // 隐私目录总数（用于提示条「已隐藏 N 个」）。
+  const privateCount = useMemo(
+    () => countTaggedNodes(manifests, PRIVATE_TAG, tagsByKey),
+    [manifests, tagsByKey],
+  )
 
   const totalFolders = useMemo(
     () => manifests.reduce((s, m) => s + m.folderCount, 0),
@@ -247,6 +274,28 @@ export default function FileBrowserApp() {
         </div>
       )}
 
+      {state === 'data' && (
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="relative flex-1 min-w-[160px]">
+            <Lock className="w-3.5 h-3.5 text-white/35 absolute left-2.5 top-1/2 -translate-y-1/2" />
+            <input
+              value={magicInput}
+              onChange={(e) => onMagicCode(e.target.value)}
+              placeholder="输入口令以显示隐私目录…"
+              className="w-full pl-8 pr-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-white/85 text-sm placeholder:text-white/30 outline-none focus:border-white/25"
+            />
+          </div>
+          <span
+            className={`flex items-center gap-1 text-xs ${
+              showPrivate ? 'text-emerald-200/85' : 'text-white/45'
+            }`}
+          >
+            {showPrivate ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+            {showPrivate ? '隐私已显示' : '隐私已隐藏'}
+          </span>
+        </div>
+      )}
+
       {state === 'data' && totalMarks > 0 && (
         <div className="rounded-lg bg-sky-500/10 border border-sky-400/25 px-3 py-2 text-xs text-sky-100/85 leading-relaxed">
           ↳ 已标记 {totalMarks} 个目录「继续解析下一层」。标记后需在本机重新运行 dir-struct-gen 生成清单，再点「刷新」才会展开。
@@ -266,6 +315,20 @@ export default function FileBrowserApp() {
           <button onClick={() => setTagFilter(null)} className="text-white/40 hover:text-white">
             清除
           </button>
+        </div>
+      )}
+
+      {state === 'data' && privateCount > 0 && (
+        <div
+          className={`rounded-lg border px-3 py-2 text-xs leading-relaxed ${
+            showPrivate
+              ? 'bg-emerald-500/10 border-emerald-400/25 text-emerald-100/85'
+              : 'bg-amber-500/10 border-amber-400/25 text-amber-100/85'
+          }`}
+        >
+          {showPrivate
+            ? `🔓 已显示 ${privateCount} 个隐私目录（含 'private' 标签）。再次输入口令可重新隐藏。`
+            : `🔒 已隐藏 ${privateCount} 个隐私目录（含 'private' 标签）。在上方输入口令可显示。`}
         </div>
       )}
 

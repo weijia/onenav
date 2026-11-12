@@ -185,10 +185,13 @@ export function filterTree(
     source?: string
     markKey?: string
     basePath?: string[]
+    /** 隐私模式：true 时含 'private' 标签的节点及其子树整体被隐藏 */
+    hidePrivate?: boolean
   },
 ): FsNodeView | null {
   const q = query.trim().toLowerCase()
   const tag = opts?.tag ?? null
+  const hidePrivate = opts?.hidePrivate ?? false
   const userTagsByKey = opts?.userTagsByKey
   const basePath = opts?.basePath ?? []
   const path = basePath.join('/')
@@ -198,9 +201,20 @@ export function filterTree(
     node.type === 'folder' && userTagsByKey && opts?.markKey
       ? userTagsByKey[opts.markKey]?.[path] ?? []
       : []
-  const nameMatch = q ? node.name.toLowerCase().includes(q) : false
+  // 是否处于「按关键词/标签筛选」模式；非筛选模式下所有节点自匹配（保留整棵子树）。
+  const activeFilter = q.length > 0 || tag != null
+  const nameMatch = q.length > 0 && node.name.toLowerCase().includes(q)
   const tagHit = tag != null && (node.tags.includes(tag) || userTagsHere.includes(tag))
-  const selfMatch = nameMatch || tagHit
+
+  // 隐私标签（'private'）：隐藏模式下该节点及其整棵子树被排除（不展开、不计入筛选）。
+  if (hidePrivate) {
+    const isPrivate =
+      node.tags.some((t) => t.toLowerCase() === 'private') ||
+      userTagsHere.some((t) => t.toLowerCase() === 'private')
+    if (isPrivate) return null
+  }
+
+  const selfMatch = !activeFilter || nameMatch || tagHit
 
   if (node.type === 'file') {
     return selfMatch ? node : null
@@ -219,6 +233,7 @@ export function filterTree(
         source: opts?.source,
         markKey: childKey,
         basePath: [...basePath, c.name],
+        hidePrivate,
       })
     })
     .filter((c): c is FsNodeView => c !== null)
@@ -230,4 +245,44 @@ export function filterTree(
     return { ...node, children: kids }
   }
   return null
+}
+
+/**
+ * 统计全部清单中含某标签（大小写不敏感）的节点数量，用于隐私目录的「已隐藏 N 个」提示。
+ * 沿用 filterTree 的命名空间解析（盘符用 volumeId，回退 主机::盘符）。
+ */
+export function countTaggedNodes(
+  manifests: ManifestView[],
+  tag: string,
+  userTagsByKey?: Record<string, Record<string, string[]>>,
+): number {
+  let count = 0
+  const lower = tag.toLowerCase()
+  const walk = (
+    node: FsNodeView,
+    markKey: string | undefined,
+    source: string | undefined,
+    basePath: string[],
+  ) => {
+    const path = basePath.join('/')
+    const userTags: string[] =
+      node.type === 'folder' && userTagsByKey && markKey
+        ? userTagsByKey[markKey]?.[path] ?? []
+        : []
+    const hit =
+      node.tags.some((t) => t.toLowerCase() === lower) ||
+      userTags.some((t) => t.toLowerCase() === lower)
+    if (hit) count++
+    if (node.type === 'folder') {
+      for (const c of node.children) {
+        const childKey =
+          c.type === 'folder' && !markKey
+            ? (c as FolderNodeView).volumeId || `${source ?? ''}::${c.name}`
+            : markKey
+        walk(c, childKey, source, [...basePath, c.name])
+      }
+    }
+  }
+  for (const m of manifests) walk(m.root, undefined, m.source, [])
+  return count
 }
