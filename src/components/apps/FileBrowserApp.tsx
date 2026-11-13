@@ -5,6 +5,7 @@
 // 每个条目可打用户标签，独立存于 <base>/file-tags/（不改写 struct 清单）；
 // 带 'private' 标签的目录缺省隐藏且不显示任何提示（静默），在页面键入 magic code
 // 切换显示/隐藏（键盘序列，无输入框）；解锁后的状态提示可点击，直接切回隐藏态。
+// 磁盘行（盘符，depth=0）悬浮显示卷信息卡片：卷标识、挂载主机、统计、分片来源、标签等。
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -22,6 +23,7 @@ import {
   File,
   Tag,
   Eye,
+  HardDrive,
 } from 'lucide-react'
 import {
   fetchDirStructManifests,
@@ -904,10 +906,91 @@ function HostCard({
                   onSetTags={onSetTags}
                   onTagClick={onTagClick}
                   onEditTags={onEditTags}
+                  driveInfo={{
+                    hostSource: manifest.source,
+                    generatedAt: manifest.generatedAt,
+                    warnings: manifest.warnings.length,
+                  }}
                 />
               )
             })
         )}
+      </div>
+    </div>
+  )
+}
+
+// 递归统计某节点下的文件夹数量（不含自身），用于悬浮卡片展示磁盘规模。
+function countDescendantFolders(node: FolderNodeView): number {
+  let n = 0
+  for (const c of node.children) {
+    if (c.type === 'folder') n += 1 + countDescendantFolders(c)
+  }
+  return n
+}
+
+/**
+ * 磁盘（驱动层节点）悬浮信息卡片：鼠标悬浮在盘符行上时，汇总该盘的
+ * 卷身份、挂载主机、统计、分片来源、标签与清单元信息。仅 depth=0 的盘符行渲染。
+ * 纯展示、pointer-events-none，不拦截下方目录行的点击。
+ */
+function DriveTooltip({
+  node,
+  hostSource,
+  generatedAt,
+  tags,
+  markedCount,
+  warnings,
+}: {
+  node: FolderNodeView
+  hostSource: string
+  generatedAt: string | null
+  tags: string[]
+  markedCount: number
+  warnings: number
+}) {
+  const rows: Array<[string, string]> = []
+  rows.push(['挂载主机', hostSource])
+  rows.push([
+    '卷标识',
+    node.volumeId ?? '未写入 .dir-struct-id（按 主机::盘符 去重）',
+  ])
+  rows.push(['子目录', `${formatCount(countDescendantFolders(node))} 个（递归）`])
+  if (node.fileCount !== undefined) rows.push(['文件数', `${formatCount(node.fileCount)} 个`])
+  if (node.totalSize !== undefined) rows.push(['逻辑大小', formatSize(node.totalSize)])
+  // 占用与逻辑大小相同时不重复展示（Windows 下常按逻辑大小替代）。
+  if (node.totalSizeOnDisk !== undefined && node.totalSizeOnDisk !== node.totalSize) {
+    rows.push(['占用空间', formatSize(node.totalSizeOnDisk)])
+  }
+  if (node.sizePartial) {
+    rows.push(['统计完整性', '下界：子树有部分无法读取，实际值 ≥ 以上数值'])
+  }
+  const mtime = formatMtime(node.mtime)
+  if (mtime) rows.push(['目录修改时间', mtime])
+  if (node.sources && node.sources.length > 1) {
+    rows.push(['分片来源', `${node.sources.length} 台：${node.sources.join('、')}`])
+  }
+  const allTags = [...new Set([...node.tags, ...tags])]
+  if (allTags.length) rows.push(['标签', allTags.join('、')])
+  if (markedCount > 0) rows.push(['待深挖标记', `${markedCount} 个目录`])
+  const gen = formatGeneratedAt(generatedAt)
+  if (gen) rows.push(['清单生成于', gen])
+  if (warnings > 0) rows.push(['解析告警', `${warnings} 条`])
+
+  return (
+    <div className="pointer-events-none absolute left-8 top-full z-30 mt-1 hidden w-80 rounded-lg border border-white/15 bg-slate-900/95 p-3 text-xs shadow-xl backdrop-blur-sm group-hover:block">
+      <div className="mb-2 flex items-center gap-2 border-b border-white/10 pb-2">
+        <HardDrive className="w-4 h-4 text-sky-300/80" />
+        <span className="font-medium text-white/90">磁盘 {node.name}</span>
+        <span className="ml-auto text-white/35">卷信息</span>
+      </div>
+      <div className="space-y-1">
+        {rows.map(([label, value]) => (
+          <div key={label} className="flex gap-2">
+            <span className="w-20 shrink-0 text-white/40">{label}</span>
+            <span className="min-w-0 flex-1 break-all text-white/80">{value}</span>
+          </div>
+        ))}
       </div>
     </div>
   )
@@ -926,6 +1009,7 @@ function FolderTree({
   onSetTags,
   onTagClick,
   onEditTags,
+  driveInfo,
 }: {
   node: FsNodeView
   depth: number
@@ -939,6 +1023,8 @@ function FolderTree({
   onSetTags: (key: string, path: string, tags: string[]) => void
   onTagClick: (tag: string) => void
   onEditTags: (key: string, path: string, current: string[]) => void
+  // 仅磁盘行（depth=0）传入；普通目录递归时不传，因而不显示悬浮卡片。
+  driveInfo?: { hostSource: string; generatedAt: string | null; warnings: number }
 }) {
   // 默认展开顶层（盘符/根目录），深层收起；筛选命中时整棵匹配树强制展开。
   const [open, setOpen] = useState(depth === 0 && !forceExpand)
@@ -959,7 +1045,7 @@ function FolderTree({
   return (
     <div>
       <div
-        className="group flex items-center gap-1 py-1 pr-2 rounded hover:bg-white/5"
+        className="group relative flex items-center gap-1 py-1 pr-2 rounded hover:bg-white/5"
         style={indent}
       >
         {hasChildren ? (
@@ -1055,6 +1141,16 @@ function FolderTree({
             <Tag className="w-3.5 h-3.5" />
           </button>
         </span>
+        {driveInfo && node.type === 'folder' && (
+          <DriveTooltip
+            node={node}
+            hostSource={driveInfo.hostSource}
+            generatedAt={driveInfo.generatedAt}
+            tags={tags}
+            markedCount={marked.size}
+            warnings={driveInfo.warnings}
+          />
+        )}
       </div>
 
       {expanded && node.type === 'folder' && node.children.length > 0 && (
