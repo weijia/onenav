@@ -60,6 +60,12 @@ export default function FileBrowserApp() {
   const [tagsByKey, setTagsByKey] = useState<Record<string, Record<string, string[]>>>({})
   // 标签筛选：点击标签芯片时按该标签过滤整棵树；null 表示不按标签筛。
   const [tagFilter, setTagFilter] = useState<string | null>(null)
+  // 目录大小筛选：控件状态（比较方向 / 阈值数值 / 单位）与已应用的条件（字节）。
+  // 仅点「应用」后才生效，避免输入过程中反复重算整棵树。
+  const [sizeOp, setSizeOp] = useState<'gt' | 'lt'>('gt')
+  const [sizeValue, setSizeValue] = useState('500')
+  const [sizeUnit, setSizeUnit] = useState<'MB' | 'GB'>('MB')
+  const [sizeFilter, setSizeFilter] = useState<{ op: 'gt' | 'lt'; bytes: number } | null>(null)
   // 标签编辑弹窗状态：null 表示关闭；非空携带所在盘的命名空间与 host-relative 路径与当前标签。
   const [tagEditor, setTagEditor] = useState<{ key: string; path: string; current: string[] } | null>(
     null,
@@ -214,6 +220,17 @@ export default function FileBrowserApp() {
     void load()
   }, [baseInput, load])
 
+  // 应用目录大小筛选：空值 / 非正数视为关闭；单位按 1024 进制换算为字节。
+  const applySizeFilter = () => {
+    const v = Number(sizeValue)
+    if (!isFinite(v) || v <= 0) {
+      setSizeFilter(null)
+      return
+    }
+    const unitBytes = sizeUnit === 'GB' ? 1024 * 1024 * 1024 : 1024 * 1024
+    setSizeFilter({ op: sizeOp, bytes: v * unitBytes })
+  }
+
   useEffect(() => {
     void load()
   }, [load])
@@ -226,7 +243,7 @@ export default function FileBrowserApp() {
   const q = query.trim().toLowerCase()
   const filtered = useMemo(() => {
     const hidePrivate = !showPrivate
-    if (!q && !tagFilter && !hidePrivate) return manifests
+    if (!q && !tagFilter && !hidePrivate && !sizeFilter) return manifests
     return manifests
       .map((m) => {
         const root = filterTree(m.root, q, {
@@ -235,11 +252,12 @@ export default function FileBrowserApp() {
           userTagsByKey: tagsByKey,
           basePath: [],
           hidePrivate,
+          sizeFilter,
         })
         return root ? { ...m, root } : null
       })
       .filter((m): m is ManifestView => m !== null)
-  }, [manifests, q, tagFilter, tagsByKey, showPrivate])
+  }, [manifests, q, tagFilter, tagsByKey, showPrivate, sizeFilter])
 
   // 隐私目录总数：仅供解锁态的状态提示使用（锁定态不渲染任何相关信息）。
   const privateCount = useMemo(
@@ -325,6 +343,73 @@ export default function FileBrowserApp() {
         </div>
       )}
 
+      {state === 'data' && (
+        <div className="flex items-center gap-2 flex-wrap text-xs">
+          <span className="text-white/45">目录大小</span>
+          <select
+            value={sizeOp}
+            onChange={(e) => setSizeOp(e.target.value as 'gt' | 'lt')}
+            title="比较方向"
+            className="px-2 py-1 rounded-lg bg-slate-800 border border-white/10 text-white/80 outline-none focus:border-white/25"
+          >
+            <option value="gt" className="bg-slate-800 text-white/85">大于</option>
+            <option value="lt" className="bg-slate-800 text-white/85">小于</option>
+          </select>
+          <input
+            value={sizeValue}
+            onChange={(e) => setSizeValue(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') applySizeFilter() }}
+            inputMode="decimal"
+            placeholder="500"
+            title="阈值数值"
+            className="w-20 px-2 py-1 rounded-lg bg-white/5 border border-white/10 text-white/85 outline-none focus:border-white/25"
+          />
+          <select
+            value={sizeUnit}
+            onChange={(e) => setSizeUnit(e.target.value as 'MB' | 'GB')}
+            title="单位（1024 进制）"
+            className="px-2 py-1 rounded-lg bg-slate-800 border border-white/10 text-white/80 outline-none focus:border-white/25"
+          >
+            <option value="MB" className="bg-slate-800 text-white/85">MB</option>
+            <option value="GB" className="bg-slate-800 text-white/85">GB</option>
+          </select>
+          <button
+            type="button"
+            onClick={applySizeFilter}
+            className="px-2.5 py-1 rounded-lg bg-sky-500/20 text-sky-100/90 hover:bg-sky-500/30 transition-colors"
+          >
+            应用
+          </button>
+          {sizeFilter && (
+            <button
+              type="button"
+              onClick={() => setSizeFilter(null)}
+              className="text-white/40 hover:text-white"
+            >
+              清除
+            </button>
+          )}
+          <span className="text-white/30">仅统计过大小的目录参与；与关键词/标签为「或」关系</span>
+        </div>
+      )}
+
+      {state === 'data' && sizeFilter && (
+        <div className="flex items-center gap-2 text-xs">
+          <span className="text-white/45">大小筛选：</span>
+          <button
+            type="button"
+            onClick={() => setSizeFilter(null)}
+            className="px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-100/90 ring-1 ring-sky-400/30 flex items-center gap-1 hover:bg-sky-500/30"
+          >
+            目录 {sizeFilter.op === 'gt' ? '大于' : '小于'} {formatSize(sizeFilter.bytes)}
+            <span className="leading-none">✕</span>
+          </button>
+          <button type="button" onClick={() => setSizeFilter(null)} className="text-white/40 hover:text-white">
+            清除
+          </button>
+        </div>
+      )}
+
       {state === 'data' && totalMarks > 0 && (
         <div className="rounded-lg bg-sky-500/10 border border-sky-400/25 px-3 py-2 text-xs text-sky-100/85 leading-relaxed">
           ↳ 已标记 {totalMarks} 个目录「继续解析下一层」。标记后需在本机重新运行 dir-struct-gen 生成清单，再点「刷新」才会展开。
@@ -368,7 +453,7 @@ export default function FileBrowserApp() {
       {state === 'data' &&
         (filtered.length === 0 ? (
           <div className="text-white/30 text-sm text-center py-8">
-            {q || tagFilter ? '无匹配的文件或文件夹' : `${getFoldersBase()}/struct 下暂无目录结构清单`}
+            {q || tagFilter || sizeFilter ? '无匹配的文件或文件夹' : `${getFoldersBase()}/struct 下暂无目录结构清单`}
           </div>
         ) : (
           <div className="space-y-3">
@@ -380,6 +465,7 @@ export default function FileBrowserApp() {
                 marksByKey={marksByKey}
                 tagsByKey={tagsByKey}
                 tagFilter={tagFilter}
+                sizeActive={!!sizeFilter}
                 onToggleMark={toggleMark}
                 onSetTags={setNodeTags}
                 onTagClick={(t) => setTagFilter((prev) => (prev === t ? null : t))}
@@ -839,6 +925,7 @@ function HostCard({
   marksByKey,
   tagsByKey,
   tagFilter,
+  sizeActive,
   onToggleMark,
   onSetTags,
   onTagClick,
@@ -849,6 +936,7 @@ function HostCard({
   marksByKey: Record<string, Set<string>>
   tagsByKey: Record<string, Record<string, string[]>>
   tagFilter: string | null
+  sizeActive: boolean
   onToggleMark: (key: string, path: string) => void
   onSetTags: (key: string, path: string, tags: string[]) => void
   onTagClick: (tag: string) => void
@@ -896,7 +984,7 @@ function HostCard({
                   key={`${child.name}-${i}`}
                   node={child}
                   depth={0}
-                  forceExpand={!!query || !!tagFilter}
+                  forceExpand={!!query || !!tagFilter || sizeActive}
                   basePath={[child.name]}
                   markKey={key}
                   marked={marksByKey[key] || EMPTY_SET}

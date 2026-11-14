@@ -284,6 +284,97 @@ describe('filterTree 隐私标签（hidePrivate）', () => {
   })
 })
 
+describe('filterTree 目录大小筛选', () => {
+  const MB = 1024 * 1024
+
+  function sized(name: string, over: Partial<FolderNodeView> = {}): FolderNodeView {
+    return { ...folder(name), ...over }
+  }
+
+  // 真实结构：主机根 > 盘符 > 一级目录（只有一级及以下参与大小匹配）
+  function buildSizedTree(): FolderNodeView {
+    return folder('HOST', [
+      folder('C:', [
+        sized('Big', { totalSize: 800 * MB }),
+        sized('Small', { totalSize: 100 * MB }),
+        sized('OnDiskOnly', { totalSizeOnDisk: 900 * MB }),
+        sized('PartialBig', { totalSize: 700 * MB, sizePartial: true }),
+        sized('PartialSmall', { totalSize: 10 * MB, sizePartial: true }),
+        sized('Nested', { totalSize: 600 * MB, children: [sized('Leaf', { totalSize: 10 * MB })] }),
+        folder('NoStats'),
+      ]),
+    ])
+  }
+
+  function driveChildren(r: FsNodeView | null): string[] {
+    return kids(kids(r!)[0]).map((n) => n.name)
+  }
+
+  it('大于阈值：命中目录保留，主机根/盘符仅作祖先路径', () => {
+    const r = filterTree(buildSizedTree(), '', { sizeFilter: { op: 'gt', bytes: 500 * MB } })
+    expect(r).not.toBeNull()
+    expect(kids(r!)[0].name).toBe('C:')
+    const names = driveChildren(r)
+    expect(names).toContain('Big')
+    expect(names).toContain('OnDiskOnly') // totalSize 缺失时回退 totalSizeOnDisk
+    expect(names).toContain('PartialBig') // 下界已超阈值 → 实际必超，可命中
+    expect(names).toContain('Nested')
+    expect(names).not.toContain('Small')
+    expect(names).not.toContain('NoStats') // 未统计大小不参与
+  })
+
+  it('盘符自身的累积大小不参与匹配，避免整棵树退化命中', () => {
+    const tree = folder('HOST', [
+      sized('C:', { totalSize: 50 * 1024 * MB, children: [folder('a')] }),
+    ])
+    expect(filterTree(tree, '', { sizeFilter: { op: 'gt', bytes: 500 * MB } })).toBeNull()
+  })
+
+  it('小于阈值：sizePartial（仅下界）的目录不参与，避免误报「实际小于」', () => {
+    const r = filterTree(buildSizedTree(), '', { sizeFilter: { op: 'lt', bytes: 500 * MB } })
+    const names = driveChildren(r)
+    expect(names).toContain('Small')
+    expect(names).toContain('Nested') // 其下 Leaf 命中 → 作为祖先链保留
+    const nested = kids(kids(r!)[0]).find((n) => n.name === 'Nested')!
+    expect(kids(nested).map((n) => n.name)).toContain('Leaf')
+    expect(names).not.toContain('PartialSmall')
+    expect(names).not.toContain('Big')
+    expect(names).not.toContain('NoStats')
+  })
+
+  it('与关键词为「或」关系', () => {
+    const r = filterTree(buildSizedTree(), 'Small', {
+      sizeFilter: { op: 'gt', bytes: 500 * MB },
+    })
+    const names = driveChildren(r)
+    expect(names).toContain('Big') // 大小命中
+    expect(names).toContain('Small') // 关键词命中
+  })
+
+  it('sizeFilter 为 null / 未传时保持原行为（整棵树）', () => {
+    const tree = buildSizedTree()
+    expect(filterTree(tree, '', { sizeFilter: null })).toEqual(tree)
+    expect(filterTree(tree, '')).toEqual(tree)
+  })
+
+  it('与 hidePrivate 叠加：隐私目录即使很大也不显示', () => {
+    const tree = folder('HOST', [
+      folder('C:', [
+        sized('Big', { totalSize: 800 * MB }),
+        sized('Secrets', { totalSize: 900 * MB, tags: ['private'] }),
+      ]),
+    ])
+    const names = driveChildren(
+      filterTree(tree, '', {
+        sizeFilter: { op: 'gt', bytes: 500 * MB },
+        hidePrivate: true,
+      }),
+    )
+    expect(names).toContain('Big')
+    expect(names).not.toContain('Secrets')
+  })
+})
+
 describe('countTaggedNodes', () => {
   function buildHostTreePriv(): FolderNodeView {
     return folder('HOST', [

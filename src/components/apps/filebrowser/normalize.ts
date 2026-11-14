@@ -164,17 +164,19 @@ export function normalizeManifests(raws: unknown[]): ManifestView[] {
 }
 
 /**
- * 按关键词与/或标签筛选节点树：返回只包含「匹配节点及其祖先链」的树。
+ * 按关键词 / 标签 / 目录大小筛选节点树：返回只包含「匹配节点及其祖先链」的树。
  * - 关键词命中：节点名命中 query → 保留该节点；其子节点仅保留同样命中的分支。
  * - 标签命中：节点的清单自带标签（node.tags）或用户标签（userTagsByKey[markKey][path]）含该标签。
- * - 关键词 / 标签任一命中即保留；均未命中但有命中后代时作为祖先路径保留。
- * - 文件节点只能自匹配，命中时作为叶子保留。
+ * - 大小命中：目录的 totalSize（缺失时用 totalSizeOnDisk）满足阈值；仅「非根、非盘符」的目录参与。
+ * - 三者任一命中即保留（「或」关系）；均未命中但有命中后代时作为祖先路径保留。
+ * - 文件节点只能自匹配（关键词/标签），命中时作为叶子保留；不参与大小筛选。
  *
  * opts（全部可选，向后兼容旧的两参调用）：
  *  - tag：筛选标签（null / 空不生效）
  *  - userTagsByKey：用户标签表（与页面 tagsByKey 同结构）
  *  - source：清单来源（用于回退 markKey = source::盘符）
  *  - markKey / basePath：内部递归透传，按盘符命名空间定位用户标签
+ *  - sizeFilter：目录大小阈值（字节）与比较方向
  */
 export function filterTree(
   node: FsNodeView,
@@ -187,11 +189,14 @@ export function filterTree(
     basePath?: string[]
     /** 隐私模式：true 时含 'private' 标签的节点及其子树整体被隐藏 */
     hidePrivate?: boolean
+    /** 目录大小筛选（字节）；gt = 大于，lt = 小于。null / 未传 = 不启用 */
+    sizeFilter?: { op: 'gt' | 'lt'; bytes: number } | null
   },
 ): FsNodeView | null {
   const q = query.trim().toLowerCase()
   const tag = opts?.tag ?? null
   const hidePrivate = opts?.hidePrivate ?? false
+  const sizeFilter = opts?.sizeFilter ?? null
   const userTagsByKey = opts?.userTagsByKey
   const basePath = opts?.basePath ?? []
   const path = basePath.join('/')
@@ -201,10 +206,25 @@ export function filterTree(
     node.type === 'folder' && userTagsByKey && opts?.markKey
       ? userTagsByKey[opts.markKey]?.[path] ?? []
       : []
-  // 是否处于「按关键词/标签筛选」模式；非筛选模式下所有节点自匹配（保留整棵子树）。
-  const activeFilter = q.length > 0 || tag != null
+  // 是否处于筛选模式；非筛选模式下所有节点自匹配（保留整棵子树）。
+  const activeFilter = q.length > 0 || tag != null || sizeFilter != null
   const nameMatch = q.length > 0 && node.name.toLowerCase().includes(q)
   const tagHit = tag != null && (node.tags.includes(tag) || userTagsHere.includes(tag))
+
+  // 目录大小是「含全部子孙」的累积值：主机根与盘符几乎必然大于任何阈值，
+  // 若让它们参与命中，筛选会退化成整棵树都显示。故只从盘符下的子目录层开始匹配
+  // （结构固定为 主机根 basePath=[] → 盘符 length=1 → 子目录 length>=2），
+  // 上层节点仅靠「有命中后代」作为祖先路径保留。
+  let sizeHit = false
+  if (sizeFilter != null && node.type === 'folder' && basePath.length >= 2) {
+    const bytes = node.totalSize ?? node.totalSizeOnDisk
+    if (bytes !== undefined) {
+      sizeHit =
+        sizeFilter.op === 'gt'
+          ? bytes > sizeFilter.bytes           // 下界已超阈值 → 实际必超，可命中
+          : !node.sizePartial && bytes < sizeFilter.bytes // 下界无法证明「实际小于」→ 不参与 lt
+    }
+  }
 
   // 隐私标签（'private'）：隐藏模式下该节点及其整棵子树被排除（不展开、不计入筛选）。
   if (hidePrivate) {
@@ -214,7 +234,7 @@ export function filterTree(
     if (isPrivate) return null
   }
 
-  const selfMatch = !activeFilter || nameMatch || tagHit
+  const selfMatch = !activeFilter || nameMatch || tagHit || sizeHit
 
   if (node.type === 'file') {
     return selfMatch ? node : null
@@ -234,6 +254,7 @@ export function filterTree(
         markKey: childKey,
         basePath: [...basePath, c.name],
         hidePrivate,
+        sizeFilter,
       })
     })
     .filter((c): c is FsNodeView => c !== null)
