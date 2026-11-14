@@ -136,15 +136,30 @@ window.__loadNoteSidebar = loadSidebar
  * IIFE 包自带完整依赖链，闭包隔离，与页面 esm.sh zenfs 栈双实例并存安全
  * （kerium 结构体注册表在 bundle 闭包内，非全局）。两栈之间只传递鸭子类型
  * fs 对象（AppDataGroup.fs.promises → note-core 的 appdata provider）。
- * 三个云后端（Gitee/GitHub/RemoteStorage）走 UMD 全局包：
- * zen-fs-config 的 importOptionalBackend 会探测 window.ZenFSGitee /
- * ZenFSGitHub / ZenFSRemoteStorage，命中即用（无需 import map）。
+ * Gitee / RemoteStorage 走 UMD 全局包：zen-fs-config 的 importOptionalBackend
+ * 会探测 window.ZenFSGitee / ZenFSRemoteStorage，命中即用（无需 import map）。
  * 这些全局包同样闭包隔离，只服务「配置仓库 / 数据同步组」这条新链路，
- * 页面原生的 Gitee 笔记库（note-core 直连）不受影响。 */
+ * 页面原生的 Gitee 笔记库（note-core 直连）不受影响。
+ *
+ * ⚠️ 版本：必须 >= 0.5.41。0.5.40 的 Gitee 工厂把 Gitee 导出当成「类构造器」
+ *   （typeof === 'function'），而 zen-fs-gitee 1.2.x 导出的是后端描述符对象
+ *   （含 .create），于是每个 Gitee 数据组都报
+ *   "Gitee export is not a constructor (typeof=object)" 而挂载失败。
+ *   0.5.41 起放宽为「描述符或构造器均可」。这里选 0.5.41（而非 0.7.x）是为了
+ *   与下方 zen-fs-config-ui@0.3.6 内嵌的 0.5.x 保持同一代磁盘格式；
+ *   若要升级到 0.7.x，需同步把 UI 升到 >=0.3.25 一起换。
+ *
+ * ⚠️ GitHub 全局包已停用（原 'zen-fs-github@1.1.3/dist/zen-fs-github.global.js'）：
+ *   该 IIFE 内有 5 处顶层 __require("buffer")（另有 events/stream），浏览器无
+ *   require，加载即抛 "Dynamic require of \"buffer\" is not supported"。
+ *   而且 zen-fs-github 1.1.3 的 Github 导出同样是描述符对象，
+ *   zen-fs-config 的 GitHub 工厂却仍要求 typeof === 'function'，
+ *   即使修好 buffer 也过不了守卫。因此不加载它，避免污染控制台；
+ *   代价是配置仓库/数据同步组暂时不能新增 GitHub 后端（Gitee/RemoteStorage 正常）。
+ *   待上游修复这两点后再恢复该脚本。 */
 const ZFC_SCRIPTS = [
-  'https://unpkg.com/zen-fs-config@0.5.40/dist/zen-fs-config.js',
+  'https://unpkg.com/zen-fs-config@0.5.41/dist/zen-fs-config.js',
   'https://unpkg.com/zen-fs-gitee@1.2.34/dist/zen-fs-gitee.global.js',
-  'https://unpkg.com/zen-fs-github@1.1.3/dist/zen-fs-github.global.js',
   'https://unpkg.com/zen-fs-remotestoragejs@1.3.20/dist/zen-fs-remotestoragejs.global.js',
 ]
 function loadScript(url) {
@@ -1142,7 +1157,7 @@ const app = createApp({
       syncPanelTab.value = 'backends'
       backendType.value = 'git'
       backendOpen.value = true
-      // 后台预热数据同步模块（首次会拉取三个后端 UMD 包 + esm.sh 模块）
+      // 后台预热数据同步模块（首次会拉取 zen-fs-config + 两个后端 UMD 包 + esm.sh 模块）
       ensureZfc().then(() => { zfcReady.value = !!zfcRepo.value })
       // 切到同步页签时才需要 UI 组件；预加载它（shadow DOM 自带样式）
       window.__loadZenFsConfigUI().catch((e) => console.warn('[zfc-ui] 预加载失败:', e))
@@ -1212,7 +1227,7 @@ const app = createApp({
       }
       // Gitee 文档库：改走「数据同步组」——一个文档库 = 一个组，组内
       // Gitee 后端由 zen-fs-config 自动双向同步；后续可在「同步设置」里
-      // 给同一文档库追加更多后端（GitHub / RemoteStorage 镜像）。
+      // 给同一文档库追加更多后端（RemoteStorage 镜像；GitHub 后端当前停用，见上方加载器注释）。
       if (c.gitee) {
         const g = c.gitee
         const repoUrl = (g.repoUrl || '').trim()
