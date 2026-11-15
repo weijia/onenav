@@ -7,7 +7,7 @@
 
 <!-- 组件样式（来自 vue-note-sidebar / vue-note-editor / vue-note-backend-config） -->
 <link rel="stylesheet" href="https://unpkg.com/@richard432/vue-note-sidebar@0.3.3/style.css">
-<link rel="stylesheet" href="https://unpkg.com/vue-note-editor@0.2.5/style.css">
+<link rel="stylesheet" href="https://unpkg.com/vue-note-editor@0.2.6/style.css">
 <link rel="stylesheet" href="https://unpkg.com/vue-note-backend-config@0.2.2/style.css">
 
 <!--
@@ -74,7 +74,7 @@
   "imports": {
     "vue": "https://unpkg.com/vue@3.5.13/dist/vue.esm-browser.prod.js",
     "@richard432/vue-note-sidebar": "https://esm.sh/@richard432/vue-note-sidebar@0.3.3?external=vue",
-    "vue-note-editor": "https://esm.sh/vue-note-editor@0.2.5?external=vue",
+    "vue-note-editor": "https://esm.sh/vue-note-editor@0.2.6?external=vue",
     "vue-note-backend-config": "https://esm.sh/vue-note-backend-config@0.2.2?external=vue",
     "isomorphic-git": "https://esm.sh/isomorphic-git@1.27.0",
     "isomorphic-git/http/web": "https://esm.sh/isomorphic-git@1.27.0/http/web",
@@ -490,7 +490,7 @@ body { font-family: -apple-system, "Microsoft YaHei", sans-serif; height:100vh; 
 </div>
 <script>
   // 页面版本号（单一来源）。每次修改本文件后请同步递增，便于确认浏览器加载的是不是最新版。
-  window.__APP_VERSION__ = 'v2026.11.15.3';
+  window.__APP_VERSION__ = 'v2026.11.15.4';
   document.getElementById('appVer').textContent = '版本 ' + window.__APP_VERSION__;
 
   /* 调试辅助：清空 Gitee 相关的 IndexedDB 缓存（zen-fs-cache 的 CachedFileSystem
@@ -1635,11 +1635,13 @@ const app = createApp({
     async function captureCurrentNote() {
       const p = nb.currentProvider.value
       const cur = currentNote.value
-      const vd = editorRef.value && typeof editorRef.value.vditor === 'function'
-        ? editorRef.value.vditor() : null
+      const er = editorRef.value
+      const vd = er && typeof er.vditor === 'function' ? er.vditor() : null
       let draft = null
       try {
-        draft = vd && typeof vd.getValue === 'function' ? vd.getValue() : null
+        // 优先走组件 getContent：源码模式读 textarea，IR 模式读 Vditor；旧版组件回退到原始实例
+        draft = er && typeof er.getContent === 'function' ? er.getContent()
+          : vd && typeof vd.getValue === 'function' ? vd.getValue() : null
       } catch (e) { console.warn('[sync] 读取编辑器内容失败', e) }
       let disk = null
       try {
@@ -1674,9 +1676,10 @@ const app = createApp({
         console.warn('[sync] 重新读取当前笔记失败', e)
         return
       }
-      const vd = editorRef.value && typeof editorRef.value.vditor === 'function'
-        ? editorRef.value.vditor() : null
-      const editorContent = vd && typeof vd.getValue === 'function' ? vd.getValue() : null
+      const er = editorRef.value
+      const vd = er && typeof er.vditor === 'function' ? er.vditor() : null
+      const editorContent = er && typeof er.getContent === 'function' ? er.getContent()
+        : vd && typeof vd.getValue === 'function' ? vd.getValue() : null
       const freshContent = fresh && typeof fresh.content === 'string' ? fresh.content : null
       console.log('[sync] 同步后对比', {
         id: cur._id,
@@ -1723,7 +1726,9 @@ const app = createApp({
         // 不销毁组件：卸载会触发组件内 onUnmounted 的 flush 保存，反而把草稿写回。
         // 先让 currentNote 与 setValue 内容一致，随后即便触发自动保存也会被判定为「未变化」。
         currentNote.value = fresh
-        if (vd && typeof vd.setValue === 'function') vd.setValue(freshContent, true)
+        // 走组件 loadContent：同时刷新 Vditor 与源码缓冲区；旧版组件回退到原始 setValue
+        if (er && typeof er.loadContent === 'function') er.loadContent(freshContent)
+        else if (vd && typeof vd.setValue === 'function') vd.setValue(freshContent, true)
         syncMsg.value += ' · 已加载同步版本'
         console.log('[sync] 用户选择加载同步版本', cur._id)
       } else {
