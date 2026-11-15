@@ -490,7 +490,7 @@ body { font-family: -apple-system, "Microsoft YaHei", sans-serif; height:100vh; 
 </div>
 <script>
   // 页面版本号（单一来源）。每次修改本文件后请同步递增，便于确认浏览器加载的是不是最新版。
-  window.__APP_VERSION__ = 'v2026.11.15.2';
+  window.__APP_VERSION__ = 'v2026.11.15.3';
   document.getElementById('appVer').textContent = '版本 ' + window.__APP_VERSION__;
 
   /* 调试辅助：清空 Gitee 相关的 IndexedDB 缓存（zen-fs-cache 的 CachedFileSystem
@@ -508,6 +508,31 @@ body { font-family: -apple-system, "Microsoft YaHei", sans-serif; height:100vh; 
     console.log('[index] clearNoteCache:', msg)
     return msg
   };
+
+  /* Service Worker 更新接管：本页是独立静态页，没有 React 外壳里的 UpdateToast，
+     这里补齐同款逻辑——若已有等待中的新 SW，发 SKIP_WAITING 让其接管；
+     controllerchange（新 SW 成为控制器）后重载一次，拿到最新预缓存的页面与依赖。 */
+  (function () {
+    if (!('serviceWorker' in navigator)) return
+    let reloaded = false
+    const activateWaiting = (reg) => {
+      if (reg && reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' })
+    }
+    navigator.serviceWorker.getRegistration().then((reg) => {
+      if (!reg) return
+      activateWaiting(reg)
+      reg.addEventListener('updatefound', () => {
+        const w = reg.installing
+        if (!w) return
+        w.addEventListener('statechange', () => {
+          if (w.state === 'installed' && navigator.serviceWorker.controller) activateWaiting(reg)
+        })
+      })
+    }).catch(() => { /* 无 SW 或查询失败时忽略 */ })
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!reloaded) { reloaded = true; window.location.reload() }
+    })
+  })();
 </script>
 
 <div id="app" class="layout" v-cloak>
