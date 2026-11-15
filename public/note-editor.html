@@ -259,7 +259,7 @@ body { font-family: -apple-system, "Microsoft YaHei", sans-serif; height:100vh; 
 .topbar a.home-btn { display:inline-flex; align-items:center; padding:6px 10px; border-radius:6px; background:#2d6cdf; color:#fff; text-decoration:none; font-size:13px; white-space:nowrap; }
 .topbar a.home-btn:hover { background:#3b7af0; }
 .spacer { flex:1; }
-.status { font-size:12px; color:#9fb3d9; }
+.status { font-size:12px; color:#9fb3d9; max-width:46vw; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .status.err { color:#ffb4b4; }
 
 /* 侧边栏（沿用你提供的暗色目录风格） */
@@ -421,7 +421,9 @@ body { font-family: -apple-system, "Microsoft YaHei", sans-serif; height:100vh; 
   /* ① 顶栏瘦身：隐藏标题与状态文字，把次要按钮收进「⋯」 */
   .brand { display:none; }
   .status { display:none; }
-  .status.err { display:inline; }
+  /* 同步结果在手机上也要可见（统计数字 + 冲突策略），其余状态文字仍隐藏 */
+  .status.err, .status.sync-status { display:inline; }
+  .status.sync-status { max-width:34vw; }
   .topbar-actions { display:none; }
   .more-wrap { display:block; }
   .topbar { padding:6px 8px; gap:6px; flex-wrap:nowrap; }
@@ -477,7 +479,7 @@ body { font-family: -apple-system, "Microsoft YaHei", sans-serif; height:100vh; 
 </div>
 <script>
   // 页面版本号（单一来源）。每次修改本文件后请同步递增，便于确认浏览器加载的是不是最新版。
-  window.__APP_VERSION__ = 'v2026.10.29.1';
+  window.__APP_VERSION__ = 'v2026.11.15.1';
   document.getElementById('appVer').textContent = '版本 ' + window.__APP_VERSION__;
 
   /* 调试辅助：清空 Gitee 相关的 IndexedDB 缓存（zen-fs-cache 的 CachedFileSystem
@@ -520,7 +522,7 @@ body { font-family: -apple-system, "Microsoft YaHei", sans-serif; height:100vh; 
 
     <span class="status" v-if="loading">⏳ 加载中…</span>
     <span class="status err" v-if="error">⚠ {{ error }}</span>
-    <span class="status" v-if="syncMsg">{{ syncMsg }}</span>
+    <span class="status sync-status" v-if="syncMsg" :title="syncDetail">{{ syncMsg }}</span>
 
     <!-- 宽屏：按钮平铺 -->
     <div class="topbar-actions">
@@ -616,6 +618,7 @@ body { font-family: -apple-system, "Microsoft YaHei", sans-serif; height:100vh; 
     <!-- 主编辑区 -->
     <main class="main">
       <note-editor
+        ref="editorRef"
         v-if="!isEmpty"
         :note="displayNote"
         :auto-save-delay="800"
@@ -788,8 +791,17 @@ const app = createApp({
     const expanded = ref(new Set())
     const saveStatus = ref('idle')
     const syncMsg = ref('')
+    const syncDetail = ref('') // 状态栏 hover 明细：冲突文件列表 / 错误全文
     const backendOpen = ref(false)
     const backendType = ref('git')
+
+    /* 同步可见化（v2026.11.15.1）
+     * - editorRef：拿 Vditor 实例，读取编辑器里尚未保存的草稿 / 直接 setValue 加载同步版本。
+     * - groupHandles：保存 zen-fs-config 数据同步组句柄，用于读取 syncAll() 的冲突明细。
+     *   加载同步版本时先 currentNote = fresh 再 setValue：即使 Vditor 触发一次自动保存，
+     *   saveCurrentNote 的内容比较也会判定「未变化」而跳过，不会把草稿写回。 */
+    const editorRef = ref(null)
+    const groupHandles = new Map()
 
     // ★ 类型适配：vue-note-sidebar 内部的排序函数用
     //   (a.updatedAt ?? '').localeCompare(b.updatedAt ?? '')，假定 updatedAt 是**字符串**；
@@ -1047,6 +1059,8 @@ const app = createApp({
       try {
         const group = await repo.getAppDataGroup(groupId)
         registerAppDataFS(ZFC_APP_ID, groupId, group)
+        // 保留句柄：同步按钮需要读 getSyncStatuses() 拿本次 syncAll 的冲突明细
+        groupHandles.set(groupId, group)
         return group
       } catch (e) {
         console.warn('[zfc] 数据同步组不可用:', groupId, e)
@@ -1282,6 +1296,7 @@ const app = createApp({
           const hit = registry.notebooks.find((n) => n.name === cur.name)
           if (hit) {
             await zfcRepo.value.removeAppDataGroup(hit.groupId)
+            groupHandles.delete(hit.groupId)
             await writeNotebookRegistry(zfcRepo.value, registry.notebooks.filter((n) => n.name !== cur.name))
           }
         } catch (e) { console.warn('[zfc] 删除数据同步组失败（仍删除本地条目）:', e) }
@@ -1289,17 +1304,188 @@ const app = createApp({
       nb.deleteProvider(currentName.value)
     }
 
+    /** 读取当前「数据同步组」本次 syncAll 的明细。
+     *  note-core 的 AppDataProvider.sync() 只返回 pushed/pulled（恒为 1），
+     *  真正的 filesUpdated / conflicts 在 group.getSyncStatuses() 的 lastResult 里。 */
+    function readGroupSyncStats() {
+      const cur = providers.value.find((p) => p.name === currentName.value)
+      const gid = cur && cur.config && cur.config.appdata && cur.config.appdata.groupId
+      const group = gid ? groupHandles.get(gid) : null
+      if (!group || typeof group.getSyncStatuses !== 'function') return null
+      const out = { created: 0, updated: 0, deleted: 0, skipped: 0, conflicts: [] }
+      try {
+        const statuses = group.getSyncStatuses()
+        const list = statuses && typeof statuses.values === 'function'
+          ? [...statuses.values()] : []
+        for (const st of list) {
+          const r = st && st.lastResult
+          if (!r) continue
+          out.created += r.filesCreated || 0
+          out.updated += r.filesUpdated || 0
+          out.deleted += r.filesDeleted || 0
+          out.skipped += r.filesSkipped || 0
+          if (Array.isArray(r.conflicts)) {
+            for (const c of r.conflicts) {
+              out.conflicts.push({ path: c.path, resolvedWith: c.resolvedWith || 'unknown' })
+            }
+          }
+        }
+      } catch (e) { console.warn('[sync] 读取同步组状态失败', e) }
+      return out
+    }
+
+    /** 同步前给当前笔记拍一次快照：磁盘版本 + 编辑器里尚未保存的草稿。
+     *  用于区分「只有远端变了」/「只有本地变了」/「两端都变了」。 */
+    async function captureCurrentNote() {
+      const p = nb.currentProvider.value
+      const cur = currentNote.value
+      const vd = editorRef.value && typeof editorRef.value.vditor === 'function'
+        ? editorRef.value.vditor() : null
+      let draft = null
+      try {
+        draft = vd && typeof vd.getValue === 'function' ? vd.getValue() : null
+      } catch (e) { console.warn('[sync] 读取编辑器内容失败', e) }
+      let disk = null
+      try {
+        if (p && cur && cur._id) {
+          const n = await p.getNote(cur._id)
+          disk = n && typeof n.content === 'string' ? n.content : null
+        }
+      } catch (e) { console.warn('[sync] 同步前读取当前笔记失败', e) }
+      console.log('[sync] 同步前快照', {
+        id: cur && cur._id,
+        diskLen: disk == null ? null : disk.length,
+        draftLen: draft == null ? null : draft.length,
+        hasDraft: disk !== null && draft !== null && draft !== disk,
+      })
+      return { id: cur && cur._id, disk, draft }
+    }
+
+    /** 同步后重新读取当前笔记，与编辑器里的内容对比。
+     *  vue-note-editor 只在 note._id 变化时重建，同一篇笔记内容变了不会刷新，
+     *  所以这里显式提示，由用户决定加载同步版本还是保留本地草稿。 */
+    async function inspectCurrentNoteAfterSync(before) {
+      const p = nb.currentProvider.value
+      const cur = currentNote.value
+      if (!p || !cur || !cur._id) return
+      if (nb.syncError.value) {
+        // 同步失败时磁盘版本没有变化依据，避免紧接着再弹一个内容对比框
+        console.log('[sync] 同步存在错误，跳过内容对比提示', nb.syncError.value)
+        return
+      }
+      let fresh
+      try { fresh = await p.getNote(cur._id) } catch (e) {
+        console.warn('[sync] 重新读取当前笔记失败', e)
+        return
+      }
+      const vd = editorRef.value && typeof editorRef.value.vditor === 'function'
+        ? editorRef.value.vditor() : null
+      const editorContent = vd && typeof vd.getValue === 'function' ? vd.getValue() : null
+      const freshContent = fresh && typeof fresh.content === 'string' ? fresh.content : null
+      console.log('[sync] 同步后对比', {
+        id: cur._id,
+        editorLen: editorContent == null ? null : editorContent.length,
+        diskLen: freshContent == null ? null : freshContent.length,
+      })
+      if (!fresh || freshContent === null) {
+        syncMsg.value += ' · 当前笔记在同步后已不存在'
+        return
+      }
+      const hasDraft = !!(before && before.disk !== null && before.draft !== null &&
+        before.draft !== before.disk)
+      const diskChanged = !!(before && before.disk !== null && freshContent !== before.disk)
+      if (editorContent === null || editorContent === freshContent) {
+        // 内容已一致：若同步前的草稿在同步期间被自动保存写盘，明确提醒一次
+        if (hasDraft && freshContent === before.draft) {
+          syncMsg.value += ' · 注意：同步期间草稿已写盘'
+          console.warn('[sync] 草稿在同步期间被写盘，远端版本可能已被本地覆盖')
+        }
+        return
+      }
+      const preview = (s) => String(s || '').replace(/\s+/g, ' ').slice(0, 60)
+      const beforeLen = !before || before.disk === null ? '?' : before.disk.length
+      const stats = readGroupSyncStats()
+      const conflictHint = stats && stats.conflicts.length
+        ? '\n冲突解决：' + [...new Set(stats.conflicts.map((c) => c.resolvedWith))].join(', ')
+        : ''
+      const bothChanged = hasDraft && diskChanged
+      const headline = bothChanged
+        ? '⚠ 两端都有改动（本地有未保存编辑，磁盘版本也在同步中变化）\n'
+        : diskChanged
+          ? '远端有更新（磁盘版本在同步中变化）\n'
+          : '当前编辑内容与同步后的磁盘版本不同\n'
+      const load = window.confirm(
+        headline +
+        '同步前磁盘 ' + beforeLen + ' 字 / 同步后磁盘 ' + freshContent.length + ' 字\n' +
+        '当前编辑 ' + editorContent.length + ' 字：' + preview(editorContent) + '\n' +
+        '同步版本 ' + freshContent.length + ' 字：' + preview(freshContent) +
+        conflictHint + '\n\n' +
+        '【确定】加载同步后的版本（当前未保存的编辑内容会被替换）\n' +
+        '【取消】保留当前编辑内容（稍后自动保存会写回本地，可能覆盖同步版本）'
+      )
+      if (load) {
+        // 不销毁组件：卸载会触发组件内 onUnmounted 的 flush 保存，反而把草稿写回。
+        // 先让 currentNote 与 setValue 内容一致，随后即便触发自动保存也会被判定为「未变化」。
+        currentNote.value = fresh
+        if (vd && typeof vd.setValue === 'function') vd.setValue(freshContent, true)
+        syncMsg.value += ' · 已加载同步版本'
+        console.log('[sync] 用户选择加载同步版本', cur._id)
+      } else {
+        syncMsg.value += ' · 已保留本地编辑（注意会覆盖同步版本）'
+        console.log('[sync] 用户选择保留本地草稿', cur._id)
+      }
+    }
+
     async function pushPull() {
       const p = nb.currentProvider.value
-      if (p && typeof p.sync === 'function') {
-        syncMsg.value = '同步中…'
-        try {
-          const r = await p.sync('both')
-          syncMsg.value = '推送 ' + r.pushed + ' · 拉取 ' + r.pulled +
-            (r.errors.length ? ' · 错误: ' + r.errors.join('; ') : '')
-        } catch (e) { syncMsg.value = '同步失败: ' + (e.message || e) }
-      } else {
+      if (!p || typeof p.sync !== 'function') {
         syncMsg.value = '当前后端不支持直接同步'
+        return
+      }
+      syncMsg.value = '同步中…'
+      syncDetail.value = ''
+      console.log('[sync] pushPull START', { name: currentName.value, type: p.type })
+      let before = null
+      try {
+        // 先记录磁盘版本与编辑器草稿，才能区分「只有远端变了」/「两端都变了」
+        before = await captureCurrentNote()
+      } catch (e) { console.warn('[sync] 同步前快照失败', e) }
+      try {
+        // 改走 useNotebook.sync('both')：内部仍是 provider.sync('both')，
+        // 但额外 refreshNotes() 刷新 allNotes，并维护 syncing / syncProgress / syncError。
+        await nb.sync('both')
+        const stats = readGroupSyncStats()
+        const parts = []
+        if (stats) {
+          parts.push('更新 ' + stats.updated, '新建 ' + stats.created, '删除 ' + stats.deleted)
+          if (stats.conflicts.length) {
+            const how = [...new Set(stats.conflicts.map((c) => c.resolvedWith))].join(',')
+            parts.push('冲突 ' + stats.conflicts.length + '（' + how + '）')
+            console.warn('[sync] 本次冲突明细', stats.conflicts)
+          }
+        } else if (nb.syncProgress.value) {
+          parts.push(String(nb.syncProgress.value).replace(/^完成：/, ''))
+        }
+        if (nb.syncError.value) parts.push('错误: ' + nb.syncError.value)
+        syncMsg.value = (nb.syncError.value ? '同步结束（有错误）' : '同步完成') +
+          (parts.length ? ' · ' + parts.join(' · ') : '')
+        const detailLines = []
+        if (stats) {
+          detailLines.push('更新 ' + stats.updated + ' / 新建 ' + stats.created +
+            ' / 删除 ' + stats.deleted + ' / 跳过 ' + stats.skipped)
+          for (const c of stats.conflicts) {
+            detailLines.push('冲突文件: ' + c.path + ' → ' + c.resolvedWith)
+          }
+        }
+        if (nb.syncError.value) detailLines.push('错误: ' + nb.syncError.value)
+        syncDetail.value = detailLines.join('\n')
+        console.log('[sync] pushPull DONE', {
+          stats, progress: nb.syncProgress.value, error: nb.syncError.value,
+        })
+        await inspectCurrentNoteAfterSync(before)
+      } catch (e) {
+        syncMsg.value = '同步失败: ' + (e.message || e)
+        console.error('[sync] pushPull FAIL', e)
       }
     }
 
@@ -1332,7 +1518,7 @@ const app = createApp({
       providers, currentName, allNotes, currentNote,
       loading, error, syncing, syncProgress, syncError,
       sidebarOpen, searchKeywords, activeFolder, activeTags, expanded,
-      saveStatus, syncMsg, backendOpen, backendType,
+      saveStatus, syncMsg, syncDetail, backendOpen, backendType, editorRef,
       // 同步设置（zen-fs-config 数据同步组）
       zfcReady, syncPanelTab, closeSyncPanel, applySyncChanges,
       // 手机适配
