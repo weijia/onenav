@@ -187,9 +187,18 @@ OneNav 已支持作为手机系统的 Web Share Target（PWA 分享目标）。�
 - 网络中断时分享：先保存到本地 PouchDB 的临时队列（`cfg:pendingShares`），连接恢复后自动上传
 
 ## TODO
-1. 笔记本编辑器里面增加源码编辑模式，修改使用的库的代码（也是我的repo）？
-2. 笔记本编辑器里面侧边栏除了显示目录，全部文件以外，还显示最新修改文件，以commit时间为准，应该也是修改我自己的库代码？
-3. 笔记本编辑器里面让文档库信息可以被显示，并且显示一个配置字符串，可以直接在别的机器上导入这个配置，能不能兼容C:\codes\my-data\docs\formats\config-sync-backend-format.md
+
+- [x] 1. 笔记本编辑器增加源码编辑模式
+  - 改动自有库 `vue-note-editor`（0.2.5）：编辑器状态栏新增「源码 / 排版」切换；源码模式为纯 textarea，IR ↔ 源码双向同步，保存与字数统计按当前模式取正文。
+- [x] 2. 侧边栏新增「最新修改」视图，按 commit 时间倒序
+  - `vue-note-core`（0.4.2）：各 Provider 的笔记描述符补 `commitTime`（远端 commit / mtime，兜底 `updatedAt`）。
+  - `vue-note-sidebar`（0.3.3）：新增 `recentTime` / `sortByRecent`（`commitTime` 优先，兜底 `updatedAt`）。
+  - 页面 `note-editor.html`：侧栏新增「🕒 最新修改」页签，与目录 / 全部文件同一套搜索与标签过滤，按时间倒序展示路径与修改时间。
+- [x] 3. 文档库信息展示 + 可跨机导入的配置字符串
+  - 页面顶栏「ℹ️ 库信息」弹窗：列出各文档库名称、类型、后端明细（令牌脱敏）；导出配置字符串，格式兼容 `config-sync-backend-format.md`（`type:id:key=value,...,desc=...`，`desc` / `accountBackendId` 为保留段，空值过滤；WebDAV 字段用规范的 `baseUrl` / `basePath`）。
+  - 弹窗内可粘贴字符串导入：Gitee / GitHub 走数据同步组创建，Git 走直连 Git 库；WebDAV / RemoteStorage 直连当前在页面层受限，提示在「同步设置」面板添加。
+
+> **已发布**：note-core 0.4.2 / vue-note-sidebar 0.3.3 / vue-note-editor 0.2.5 已通过 CI（OIDC Trusted Publisher）发到 npm；`note-editor.html` 的 importmap 与顶部 CSS 链接版本号已同步升到 0.4.2 / 0.3.3 / 0.2.5。
 
 ---
 

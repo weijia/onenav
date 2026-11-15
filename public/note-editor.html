@@ -6,8 +6,8 @@
 <title>Git/Gitee 笔记 · 多文档库</title>
 
 <!-- 组件样式（来自 vue-note-sidebar / vue-note-editor / vue-note-backend-config） -->
-<link rel="stylesheet" href="https://unpkg.com/@richard432/vue-note-sidebar@0.3.2/style.css">
-<link rel="stylesheet" href="https://unpkg.com/vue-note-editor@0.2.4/style.css">
+<link rel="stylesheet" href="https://unpkg.com/@richard432/vue-note-sidebar@0.3.3/style.css">
+<link rel="stylesheet" href="https://unpkg.com/vue-note-editor@0.2.5/style.css">
 <link rel="stylesheet" href="https://unpkg.com/vue-note-backend-config@0.2.2/style.css">
 
 <!--
@@ -28,7 +28,7 @@
   - vue：统一实例（所有组件 ?external=vue 都解析到这里）
   - vue-note-sidebar / vue-note-editor / vue-note-backend-config：沿用原仓库组件
   - isomorphic-git + @isomorphic-git/lightning-fs：供 note-core 的 Git 后端使用
-  - note-core：核心库（@richard432/note-core@0.4.1，esm.sh 加载），内置 Git / Gitee /
+  - note-core：核心库（@richard432/note-core@0.4.2，esm.sh 加载），内置 Git / Gitee /
     PouchDB / WebDAV / AppData 五种 Provider；Git 走 isomorphic-git，Gitee 走
     zen-fs-gitee，AppData 挂载 zen-fs-config 的数据同步组（registerAppDataFS 注入）。
   - zen-fs-config：数据同步组管理（connect/createAppDataGroup），走官方 IIFE
@@ -73,8 +73,8 @@
 {
   "imports": {
     "vue": "https://unpkg.com/vue@3.5.13/dist/vue.esm-browser.prod.js",
-    "@richard432/vue-note-sidebar": "https://esm.sh/@richard432/vue-note-sidebar@0.3.2?external=vue",
-    "vue-note-editor": "https://esm.sh/vue-note-editor@0.2.4?external=vue",
+    "@richard432/vue-note-sidebar": "https://esm.sh/@richard432/vue-note-sidebar@0.3.3?external=vue",
+    "vue-note-editor": "https://esm.sh/vue-note-editor@0.2.5?external=vue",
     "vue-note-backend-config": "https://esm.sh/vue-note-backend-config@0.2.2?external=vue",
     "isomorphic-git": "https://esm.sh/isomorphic-git@1.27.0",
     "isomorphic-git/http/web": "https://esm.sh/isomorphic-git@1.27.0/http/web",
@@ -93,7 +93,7 @@
     "utilium/misc": "https://esm.sh/utilium@^3.7.0/misc",
     "utilium/requests": "https://esm.sh/utilium@^3.7.0/requests",
     "utilium/string": "https://esm.sh/utilium@^3.7.0/string",
-    "note-core": "https://esm.sh/@richard432/note-core@0.4.1?external=vue,@zenfs/core,zen-fs-gitee,zen-fs-cache,isomorphic-git,@isomorphic-git/lightning-fs"
+    "note-core": "https://esm.sh/@richard432/note-core@0.4.2?external=vue,@zenfs/core,zen-fs-gitee,zen-fs-cache,isomorphic-git,@isomorphic-git/lightning-fs"
   }
 }
 </script>
@@ -105,8 +105,8 @@
  *   1) esm.sh（首选，import map 里已解析，且与其余依赖共享 vue 单实例）
  *   2) unpkg dist ESM 构建（兜底；其内部 import 'vue' 同样走 import map，单实例不受影响）
  * 两者都失败才抛错。 */
-const SIDEBAR_ESM = 'https://esm.sh/@richard432/vue-note-sidebar@0.3.2?external=vue'
-const SIDEBAR_UNPKG = 'https://unpkg.com/@richard432/vue-note-sidebar@0.3.2/dist/vue-note-sidebar.js'
+const SIDEBAR_ESM = 'https://esm.sh/@richard432/vue-note-sidebar@0.3.3?external=vue'
+const SIDEBAR_UNPKG = 'https://unpkg.com/@richard432/vue-note-sidebar@0.3.3/dist/vue-note-sidebar.js'
 
 async function loadSidebar() {
   const urls = [SIDEBAR_ESM, SIDEBAR_UNPKG]
@@ -332,6 +332,17 @@ body { font-family: -apple-system, "Microsoft YaHei", sans-serif; height:100vh; 
 .modal p, .modal li { font-size:14px; color:#444; margin:6px 0; }
 .modal code { background:#f0f0f0; padding:1px 6px; border-radius:4px; font-size:12.5px; }
 .modal button { margin-top:16px; background:#2d6cdf; color:#fff; border:none; padding:8px 16px; border-radius:8px; cursor:pointer; }
+.info-modal { width:min(620px, 92vw); }
+.info-modal h4 { margin:14px 0 6px; color:#16213a; font-size:14px; }
+.info-group { border:1px solid #e3e8f2; border-radius:10px; padding:10px 12px; margin:8px 0; background:#f8fafd; }
+.info-group-name { font-weight:600; color:#16213a; margin-bottom:4px; }
+.info-detail { display:flex; flex-wrap:wrap; gap:4px 14px; font-size:13px; color:#444; }
+.info-item { white-space:nowrap; }
+.info-textarea { width:100%; box-sizing:border-box; border:1px solid #c9d4e8; border-radius:8px; padding:8px 10px; font-size:12.5px; font-family:ui-monospace,Consolas,monospace; color:#222; background:#fff; resize:vertical; }
+.info-actions { display:flex; align-items:center; gap:10px; margin-top:8px; }
+.info-actions .primary { margin-top:0; }
+.info-msg { font-size:12.5px; color:#2d6cdf; }
+.info-note { font-size:12px; color:#777; margin-top:10px; }
 
 /* 致命错误兜底 */
 #fatal { position:fixed; inset:0; background:#1e1e2e; color:#ffb4b4; padding:28px; font-family:monospace; white-space:pre-wrap; z-index:999; overflow:auto; display:none; }
@@ -479,7 +490,7 @@ body { font-family: -apple-system, "Microsoft YaHei", sans-serif; height:100vh; 
 </div>
 <script>
   // 页面版本号（单一来源）。每次修改本文件后请同步递增，便于确认浏览器加载的是不是最新版。
-  window.__APP_VERSION__ = 'v2026.11.15.1';
+  window.__APP_VERSION__ = 'v2026.11.15.2';
   document.getElementById('appVer').textContent = '版本 ' + window.__APP_VERSION__;
 
   /* 调试辅助：清空 Gitee 相关的 IndexedDB 缓存（zen-fs-cache 的 CachedFileSystem
@@ -526,6 +537,7 @@ body { font-family: -apple-system, "Microsoft YaHei", sans-serif; height:100vh; 
 
     <!-- 宽屏：按钮平铺 -->
     <div class="topbar-actions">
+      <button class="ghost" @click="openInfo">ℹ️ 库信息</button>
       <button class="ghost" @click="openAdd">＋ 添加文档库</button>
     </div>
 
@@ -538,6 +550,7 @@ body { font-family: -apple-system, "Microsoft YaHei", sans-serif; height:100vh; 
         <button @click="pushPull" :disabled="syncing || loading">⇅ 推送/拉取</button>
         <button @click="removeLibrary" :disabled="loading || providers.length <= 1">🗑 删除文档库</button>
         <hr>
+        <button @click="openInfo">ℹ️ 库信息 / 配置字符串</button>
         <button @click="openAdd">＋ 添加文档库</button>
       </div>
     </div>
@@ -559,10 +572,11 @@ body { font-family: -apple-system, "Microsoft YaHei", sans-serif; height:100vh; 
           <input v-model="searchKeywords" placeholder="🔍 搜索标题/内容/标签">
         </div>
 
-        <!-- 列表模式切换：目录树 / 全部文件（扁平，含所有层级） -->
+        <!-- 列表模式切换：目录树 / 全部文件 / 最新修改（按 commit 时间倒序） -->
         <div class="mode-tabs">
           <span class="mode-tab" :class="{ on: listMode === 'folder' }" @click="listMode = 'folder'">🗂 目录</span>
           <span class="mode-tab" :class="{ on: listMode === 'all' }" @click="listMode = 'all'">📋 全部文件</span>
+          <span class="mode-tab" :class="{ on: listMode === 'recent' }" @click="listMode = 'recent'">🕒 最新修改</span>
         </div>
 
         <div class="tree" v-show="listMode === 'folder'">
@@ -578,9 +592,10 @@ body { font-family: -apple-system, "Microsoft YaHei", sans-serif; height:100vh; 
 
         <div class="notes-head">
           <span v-if="listMode === 'folder'">笔记 <span class="hint" style="display:inline">({{ visibleNotes.length }})</span></span>
-          <span v-else>全部文件 <span class="hint" style="display:inline">({{ allFilesFlat.length }})</span></span>
+          <span v-else-if="listMode === 'all'">全部文件 <span class="hint" style="display:inline">({{ allFilesFlat.length }})</span></span>
+          <span v-else>最新修改 <span class="hint" style="display:inline">({{ recentNotes.length }})</span></span>
         </div>
-        <div class="notes" :class="{ fill: listMode === 'all' }">
+        <div class="notes" :class="{ fill: listMode !== 'folder' }">
           <!-- 目录模式：当前文件夹下的笔记 -->
           <template v-if="listMode === 'folder'">
             <div v-if="visibleNotes.length === 0" class="hint">暂无笔记</div>
@@ -592,7 +607,7 @@ body { font-family: -apple-system, "Microsoft YaHei", sans-serif; height:100vh; 
             </div>
           </template>
           <!-- 全部文件模式：跨层级的扁平列表，显示完整路径 -->
-          <template v-else>
+          <template v-else-if="listMode === 'all'">
             <div v-if="allFilesFlat.length === 0" class="hint">暂无笔记</div>
             <div v-for="n in allFilesFlat" :key="n._id" class="note-row all-file"
                  :class="{ active: displayNote && displayNote._id === n._id }"
@@ -601,6 +616,19 @@ body { font-family: -apple-system, "Microsoft YaHei", sans-serif; height:100vh; 
               <span class="label">
                 {{ n.title || n._id }}
                 <em class="path">{{ n._id }}</em>
+              </span>
+            </div>
+          </template>
+          <!-- 最新修改模式：按 commit/修改时间倒序，显示路径与时间 -->
+          <template v-else>
+            <div v-if="recentNotes.length === 0" class="hint">暂无笔记</div>
+            <div v-for="n in recentNotes" :key="n._id" class="note-row all-file"
+                 :class="{ active: displayNote && displayNote._id === n._id }"
+                 @click="onPickNote(n)" :title="n._id">
+              <span class="icon">🕒</span>
+              <span class="label">
+                {{ n.title || n._id }}
+                <em class="path">{{ n._id }} · {{ formatRecentTime(n) }}</em>
               </span>
             </div>
           </template>
@@ -679,6 +707,32 @@ body { font-family: -apple-system, "Microsoft YaHei", sans-serif; height:100vh; 
     </div>
   </div>
 
+  <!-- 文档库信息 / 配置字符串弹窗 -->
+  <div v-if="infoOpen" class="modal-mask" @click.self="closeInfo">
+    <div class="modal info-modal">
+      <h3>📚 文档库信息与配置字符串</h3>
+      <div v-for="g in infoGroups" :key="g.name" class="info-group">
+        <div class="info-group-name">{{ g.name }}</div>
+        <div class="info-detail">
+          <span v-for="d in g.detail" :key="d.label" class="info-item">{{ d.label }}：{{ d.value }}</span>
+        </div>
+      </div>
+      <h4>配置字符串（可复制到其他设备导入）</h4>
+      <textarea :value="infoText" readonly class="info-textarea" rows="5"></textarea>
+      <div class="info-actions">
+        <button class="primary" @click="copyInfoText">📋 复制全部</button>
+      </div>
+      <h4>从配置字符串导入</h4>
+      <textarea v-model="importText" class="info-textarea" rows="4"
+        placeholder="粘贴 type:id:key=value,...,desc= 形式的字符串，每行一个"></textarea>
+      <div class="info-actions">
+        <button class="primary" @click="importConfigString">⬆ 导入</button>
+        <span v-if="importMsg" class="info-msg">{{ importMsg }}</span>
+      </div>
+      <p class="info-note">格式：type:id:key=value,desc=名称；value 不能含 : , =。字符串含访问令牌等敏感信息，请勿分享到公开场合。</p>
+      <button @click="closeInfo">关闭</button>
+    </div>
+  </div>
 
 </div>
 
@@ -732,6 +786,85 @@ function flattenFolders(tree, expandedSet) {
   }
   walk(tree, 0)
   return out
+}
+
+/** 取笔记最新修改时间（毫秒）：优先 commitTime（远端 commit/mtime），兜底 updatedAt */
+function recentTimeOf(n) {
+  if (typeof n.commitTime === 'number' && Number.isFinite(n.commitTime)) return n.commitTime
+  const u = n.updatedAt
+  if (typeof u === 'number' && Number.isFinite(u)) return u
+  if (typeof u === 'string') { const t = Date.parse(u); if (!Number.isNaN(t)) return t }
+  return 0
+}
+
+/** 列表里展示的修改时间（YYYY-MM-DD HH:mm） */
+function formatRecentTime(n) {
+  const t = recentTimeOf(n)
+  if (!t) return ''
+  const d = new Date(t)
+  const p = (x) => String(x).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
+/* ------------------------------------------------------------------
+ * 配置字符串序列化 / 反序列化
+ * 格式（与 docs/formats/config-sync-backend-format.md 一致）：
+ *   type:id:key=value,key=value,desc=描述[,accountBackendId=id]
+ * - desc / accountBackendId 为保留段，不进入 options
+ * - 空值选项不写出；value 内不得含 : , =（格式限制，UI 有提示）
+ * ------------------------------------------------------------------ */
+function pickOptions(obj, keys) {
+  const out = {}
+  for (const k of keys) {
+    const v = obj == null ? undefined : obj[k]
+    if (v === '' || v == null) continue
+    out[k] = v
+  }
+  return out
+}
+
+function serializeBackend(b) {
+  const pairs = Object.entries(b.options || {})
+    .filter(([, v]) => v !== '' && v != null)
+    .map(([k, v]) => `${k}=${v}`)
+  if (b.description) pairs.push(`desc=${b.description}`)
+  if (b.accountBackendId) pairs.push(`accountBackendId=${b.accountBackendId}`)
+  const parts = [b.type, b.id]
+  if (pairs.length) parts.push(pairs.join(','))
+  return parts.join(':')
+}
+
+function deserializeBackend(str) {
+  const t = (str || '').trim()
+  if (!t) return null
+  const first = t.indexOf(':')
+  if (first < 0) return null
+  const type = t.slice(0, first)
+  const rest = t.slice(first + 1)
+  const second = rest.indexOf(':')
+  let id, optsStr
+  if (second < 0) { id = rest; optsStr = '' } else { id = rest.slice(0, second); optsStr = rest.slice(second + 1) }
+  if (!id.trim()) return null
+  const options = {}
+  let description = '', accountBackendId
+  if (optsStr) {
+    for (const pair of optsStr.split(',')) {
+      const eq = pair.indexOf('=')
+      if (eq < 0) continue
+      const k = pair.slice(0, eq), v = pair.slice(eq + 1)
+      if (k === 'desc') description = v
+      else if (k === 'accountBackendId') accountBackendId = v
+      else options[k] = v
+    }
+  }
+  return { type, id: id.trim(), options, description, accountBackendId }
+}
+
+/** 令牌脱敏：仅保留末 4 位，用于界面展示（导出字符串里仍是完整令牌） */
+function maskSecret(v) {
+  const s = String(v || '')
+  if (!s) return ''
+  return s.length <= 4 ? '••••' : '••••' + s.slice(-4)
 }
 
 const app = createApp({
@@ -794,6 +927,11 @@ const app = createApp({
     const syncDetail = ref('') // 状态栏 hover 明细：冲突文件列表 / 错误全文
     const backendOpen = ref(false)
     const backendType = ref('git')
+
+    // 文档库信息 / 配置字符串弹窗
+    const infoOpen = ref(false)
+    const importText = ref('')
+    const importMsg = ref('')
 
     /* 同步可见化（v2026.11.15.1）
      * - editorRef：拿 Vditor 实例，读取编辑器里尚未保存的草稿 / 直接 setValue 加载同步版本。
@@ -909,6 +1047,17 @@ const app = createApp({
         activeTags: activeTags.value,
       })
       return [...list].sort((a, b) => String(a._id || '').localeCompare(String(b._id || '')))
+    })
+
+    /* 「最新修改」视图：与全部文件同一套搜索/标签过滤，按 commit 时间倒序 */
+    const recentNotes = computed(() => {
+      const list = filterNotes(notesForView.value || [], {
+        keywords: (searchKeywords.value || '').trim(),
+        activeTags: activeTags.value,
+      })
+      return [...list].sort(
+        (a, b) => recentTimeOf(b) - recentTimeOf(a) || String(a._id || '').localeCompare(String(b._id || '')),
+      )
     })
 
     // 目录诊断：打印 path 分布，便于确认子目录是否被正确识别
@@ -1200,6 +1349,128 @@ const app = createApp({
       } catch (e) {
         window.alert('应用失败：' + (e.message || e))
       }
+    }
+
+    /* ------------------------------------------------------------------
+     * 文档库信息展示 + 配置字符串导出 / 导入（兼容 config-sync-backend-format.md）
+     * ------------------------------------------------------------------ */
+    function providerDetail(p) {
+      const cfg = p.config || {}
+      const detail = []
+      if (p.type === 'gitee' && cfg.gitee) {
+        const g = cfg.gitee
+        detail.push({ label: '类型', value: 'Gitee 文档库' })
+        detail.push({ label: '仓库', value: `${g.owner || ''}/${g.repo || ''}` })
+        detail.push({ label: '分支', value: g.branch || 'master' })
+        detail.push({ label: '令牌', value: maskSecret(g.token) })
+      } else if (p.type === 'git' && cfg.git) {
+        const g = cfg.git
+        detail.push({ label: '类型', value: 'Git 文档库' })
+        detail.push({ label: '远端', value: g.repoUrl || '（纯本地库）' })
+        detail.push({ label: '分支', value: g.branch || 'main' })
+        if (g.localPath) detail.push({ label: '本地目录', value: g.localPath })
+        if (g.token) detail.push({ label: '令牌', value: maskSecret(g.token) })
+      } else if (p.type === 'webdav' && cfg.webdav) {
+        const w = cfg.webdav
+        detail.push({ label: '类型', value: 'WebDAV 文档库' })
+        detail.push({ label: '地址', value: w.baseUrl || w.url })
+        if (w.basePath || w.rootPath) detail.push({ label: '根目录', value: w.basePath || w.rootPath })
+        detail.push({ label: '用户名', value: w.username || '' })
+      } else if (p.type === 'appdata' && cfg.appdata) {
+        detail.push({ label: '类型', value: '数据同步组' })
+        detail.push({ label: '组 ID', value: cfg.appdata.groupId })
+        const group = groupHandles.get(cfg.appdata.groupId)
+        let n = 0
+        try { n = group && typeof group.listDeclaredBackends === 'function' ? group.listDeclaredBackends().length : 0 } catch { n = 0 }
+        detail.push({ label: '后端数', value: String(n) })
+      }
+      return detail
+    }
+
+    function providerLines(p) {
+      const cfg = p.config || {}
+      if (p.type === 'gitee' && cfg.gitee) {
+        const g = cfg.gitee
+        const id = `${g.owner || ''}/${g.repo || ''}`.replace(/^\/+/, '')
+        return [serializeBackend({ id, type: 'Gitee', options: pickOptions(g, ['owner', 'repo', 'branch', 'token']), description: p.name })]
+      }
+      if (p.type === 'git' && cfg.git) {
+        const g = cfg.git
+        let type = 'Git'
+        if (/gitee\.com/i.test(g.repoUrl || '')) type = 'Gitee'
+        else if (/github\.com/i.test(g.repoUrl || '')) type = 'GitHub'
+        const id = g.repoUrl ? String(g.repoUrl).split('/').filter(Boolean).pop().replace(/\.git$/, '') : p.name
+        return [serializeBackend({ id, type, options: pickOptions(g, ['repoUrl', 'branch', 'token', 'username', 'corsProxy', 'localPath']), description: p.name })]
+      }
+      if (p.type === 'webdav' && cfg.webdav) {
+        const w = cfg.webdav
+        const options = pickOptions(
+          { baseUrl: w.baseUrl || w.url, username: w.username, password: w.password, token: w.token, basePath: w.basePath || w.rootPath },
+          ['baseUrl', 'username', 'password', 'token', 'basePath'],
+        )
+        return [serializeBackend({ id: String(w.baseUrl || w.url || '').replace(/^https?:\/\//, ''), type: 'WebDAV', options, description: p.name })]
+      }
+      if (p.type === 'appdata' && cfg.appdata) {
+        const group = groupHandles.get(cfg.appdata.groupId)
+        let backends = []
+        try { backends = group && typeof group.listDeclaredBackends === 'function' ? group.listDeclaredBackends() : [] } catch { backends = [] }
+        if (!backends.length) return [`AppDataGroup:${cfg.appdata.groupId}:appId=${cfg.appdata.appId},desc=${p.name}`]
+        return backends.map((b) => serializeBackend({ ...b, description: b.description || p.name }))
+      }
+      return []
+    }
+
+    const infoGroups = computed(() => providers.value.map((p) => ({
+      name: p.name,
+      detail: providerDetail(p),
+      lines: providerLines(p),
+    })))
+    const infoText = computed(() => infoGroups.value.flatMap((g) => g.lines).filter(Boolean).join('\n'))
+
+    function openInfo() { importMsg.value = ''; importText.value = ''; infoOpen.value = true }
+    function closeInfo() { infoOpen.value = false }
+
+    async function copyInfoText() {
+      const text = infoText.value
+      if (!text) { importMsg.value = '当前没有可复制的配置字符串'; return }
+      try {
+        await navigator.clipboard.writeText(text)
+        importMsg.value = '已复制到剪贴板'
+      } catch {
+        const ta = document.createElement('textarea')
+        ta.value = text
+        document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove()
+        importMsg.value = '已复制到剪贴板'
+      }
+    }
+
+    async function importConfigString() {
+      const lines = (importText.value || '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
+      if (!lines.length) { importMsg.value = '请先粘贴配置字符串'; return }
+      const ok = [], errs = []
+      for (const line of lines) {
+        const d = deserializeBackend(line)
+        if (!d) { errs.push('无法解析：' + line); continue }
+        const name = d.description || d.id
+        try {
+          if (d.type === 'Gitee' || d.type === 'GitHub') {
+            const created = await createSyncGroupLibrary(name, d.type, d.options)
+            if (!created) { errs.push(name + '：创建失败'); continue }
+          } else if (d.type === 'Git') {
+            await nb.createProvider('git', name, { git: d.options })
+          } else if (d.type === 'WebDAV') {
+            errs.push('WebDAV 直连库暂不支持导入（' + name + '）'); continue
+          } else if (d.type === 'RemoteStorage') {
+            errs.push('RemoteStorage 请在「同步设置」面板添加（' + name + '）'); continue
+          } else {
+            errs.push('未知后端类型 ' + d.type + '（' + name + '）'); continue
+          }
+          ok.push(name)
+        } catch (e) { errs.push(name + '：' + (e.message || e)) }
+      }
+      importMsg.value = (ok.length ? `已导入 ${ok.length} 个：${ok.join('、')}` : '') +
+        (errs.length ? (ok.length ? '；' : '') + '失败：' + errs.join('；') : '')
+      if (ok.length) importText.value = ''
     }
 
     onMounted(async () => {
@@ -1528,7 +1799,10 @@ const app = createApp({
       // 已配置 Gitee 时进入页面自动展开侧栏
       hasGiteeConfig,
       // 全部文件模式 + 快照缓存
-      listMode, allFilesFlat, displayNote, snapshotNotes,
+      listMode, allFilesFlat, recentNotes, formatRecentTime, displayNote, snapshotNotes,
+      // 库信息 / 配置字符串
+      infoOpen, infoGroups, infoText, importText, importMsg,
+      openInfo, closeInfo, copyInfoText, importConfigString,
       // 方法
       onSwitchRepo, openAdd, addLibrary, removeLibrary, pushPull,
       toggleFolder, selectFolder, selectNoteById, onPickNote, onCreateNote,
