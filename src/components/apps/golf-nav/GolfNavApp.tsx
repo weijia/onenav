@@ -9,7 +9,9 @@ import { findPath } from '@/golf-nav-engine/nav/astar.js'
 import { adviseShot } from '@/golf-nav-engine/nav/shot-advisor.js'
 import { createAdapter, sdkReady } from '@/golf-nav-engine/map-adapters/index.js'
 import { buildCourseGeometry, toBusinessPoint } from '@/golf-nav-engine/map-adapters/geometry.js'
-import rawCourse from '@/golf-nav-engine/data/sample-course.json'
+import { golfDataToCourse, useSharedGolfData } from '@/lib/golf-shared'
+import rawSampleCourse from '@/golf-nav-engine/data/sample-course.json'
+import GolfSyncPanel from './GolfSyncPanel'
 
 type Provider = 'amap' | 'tencent' | 'canvas'
 type Mode = 'route' | 'shot'
@@ -22,7 +24,18 @@ const PROVIDER_LABELS: Record<Provider, string> = {
 }
 
 export default function GolfNavApp() {
-  const course = useMemo(() => loadCourse(rawCourse as any).course, [])
+  const { data: sharedData, loading: sharedLoading } = useSharedGolfData()
+  // 共享数据（球场地图标注）优先；尚无 tee/green 标注时回退内置示例球场。
+  const course = useMemo(() => {
+    const converted = golfDataToCourse(sharedData)
+    const result = loadCourse(converted)
+    if (result.ok && result.course.holes.length > 0) return result.course
+    return loadCourse(rawSampleCourse as any).course
+  }, [sharedData])
+  const usingShared = useMemo(
+    () => golfDataToCourse(sharedData).holes.length > 0,
+    [sharedData],
+  )
   const mapEl = useRef<HTMLDivElement>(null)
   const adapterRef = useRef<any>(null)
   const courseGeom = useMemo(() => buildCourseGeometry(course), [course])
@@ -177,6 +190,10 @@ export default function GolfNavApp() {
       </div>
 
       {notice && <div className="rounded bg-amber-900/40 px-3 py-2 text-sm">{notice}</div>}
+      <p className="text-xs opacity-70">
+        数据源：{usingShared ? '球场地图共享标注（独立库 golf）' : '内置示例球场（共享数据尚无 tee/green 标注）'}
+        {sharedLoading ? ' · 加载中…' : ''}
+      </p>
 
       <div className="flex flex-col md:flex-row gap-3 flex-1 min-h-0">
         <div className="w-full md:w-64 shrink-0 flex flex-col gap-3">
@@ -201,6 +218,8 @@ export default function GolfNavApp() {
         </div>
         <div ref={mapEl} className="flex-1 min-h-[420px] rounded-lg overflow-hidden bg-slate-200" />
       </div>
+
+      <GolfSyncPanel />
     </div>
   )
 }

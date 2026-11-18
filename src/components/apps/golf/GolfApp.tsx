@@ -2,8 +2,9 @@
  * 高尔夫球场地图 —— 主组件
  *
  * 负责：状态编排、绘制工具、搜索定位、GPS/导航、导入导出、管理模式门禁。
- * 数据层直接复用项目已有的 useAppData('golf')，因此自动获得
- * PouchDB 本地存储 + WebDAV + RemoteStorage 的多端同步，无需为此应用写同步代码。
+ * 数据层走共享层 useSharedGolfData（内部仍是 useAppData('golf')）：
+ * PouchDB 本地存储 + WebDAV + RemoteStorage 多端同步，且与球场避障导航页共享同一份数据。
+ * 任一页面标注的更新，另一页面刷新后即可见。
  *
  * 【坐标约定】所有业务坐标都是 GCJ-02 [lng, lat]。
  * 唯一例外：浏览器 Geolocation 返回的是 WGS-84，因此定位回调里要转成 GCJ-02 再入库/计算。
@@ -12,7 +13,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import L from 'leaflet'
 import { Check, Circle, Locate, Menu, Plus, Ruler, Search, Square, X, ZoomIn, ZoomOut } from 'lucide-react'
-import { useAppData } from '@/lib/app-data'
+import { useSharedGolfData } from '@/lib/golf-shared'
+import GolfSyncPanel from '@/components/apps/golf-nav/GolfSyncPanel'
 import {
   FACILITY_TYPES,
   AREA_TYPES,
@@ -51,7 +53,7 @@ function defaultPrefs(holeCount: number): LayerPrefs {
 
 export default function GolfApp() {
   const fallback = useMemo(() => createDefaultGolfData(), [])
-  const { data, loading, save } = useAppData<GolfData>('golf', fallback)
+  const { data, loading, save } = useSharedGolfData(fallback)
 
   // ── 视图状态 ───────────────────────────────────────────
   const [manageMode, setManageMode] = useState(false)
@@ -84,6 +86,7 @@ export default function GolfApp() {
 
   const [query, setQuery] = useState('')
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [syncOpen, setSyncOpen] = useState(false)
   const [online, setOnline] = useState(() => navigator.onLine)
 
   const [importOpen, setImportOpen] = useState(false)
@@ -669,6 +672,19 @@ export default function GolfApp() {
 
       {/* 地图区 */}
       <div className="flex-1 relative min-w-0">
+        {/* 数据同步组入口（appId: golf） */}
+        <button
+          onClick={() => setSyncOpen((v) => !v)}
+          className="absolute top-3 right-3 z-[650] px-3 py-1.5 rounded-lg bg-slate-900/90 border border-white/15 text-white/70 text-xs"
+          title="数据同步组设置"
+        >
+          同步组
+        </button>
+        {syncOpen && (
+          <div className="absolute top-14 right-3 z-[650] w-96 max-w-[calc(100%-1.5rem)] rounded-lg bg-slate-900/95 border border-white/15 text-white shadow-lg">
+            <GolfSyncPanel />
+          </div>
+        )}
         <MapCanvas
           data={data}
           basemapId={layerPrefs.basemap}
