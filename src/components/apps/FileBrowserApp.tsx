@@ -28,14 +28,13 @@ import {
 import {
   fetchDirStructManifests,
   getFolderDeepenMarks,
-  getFoldersBase,
-  setFoldersBase,
   putFolderDeepenMarks,
   getFileTags,
   putFileTags,
   RsNotConnectedError,
   RsAuthError,
 } from './filebrowser/fetch'
+import FileBrowserSyncPanel from './filebrowser/FileBrowserSyncPanel'
 import { filterTree, normalizeManifests, countTaggedNodes } from './filebrowser/normalize'
 import type { FileNodeView, FolderNodeView, FsNodeView, ManifestView } from './filebrowser/types'
 
@@ -52,8 +51,7 @@ export default function FileBrowserApp() {
   const [errorMsg, setErrorMsg] = useState('')
   const [errorCode, setErrorCode] = useState('')
   const [query, setQuery] = useState('')
-  // 清单基目录（与 dir-struct-gen 数据同步组 RemoteStorage 后端的 basePath 一致）
-  const [baseInput, setBaseInput] = useState(() => getFoldersBase())
+  // 清单基目录已下沉到同步后端配置；这里不再维护可编辑的基目录。
   // 深挖标记：key（volumeId 或 主机::盘符）→ 该盘下被标记 host-relative 路径集合
   const [marksByKey, setMarksByKey] = useState<Record<string, Set<string>>>({})
   // 用户标签：key（与深挖标记同一命名空间）→ host-relative 路径 → 标签数组
@@ -213,13 +211,6 @@ export default function FileBrowserApp() {
     })
   }, [])
 
-  // 应用新的清单基目录并重新读取（需与 dir-struct-gen 的 basePath 一致）。
-  const applyBase = useCallback(() => {
-    setFoldersBase(baseInput)
-    setBaseInput(getFoldersBase())
-    void load()
-  }, [baseInput, load])
-
   // 应用目录大小筛选：空值 / 非正数视为关闭；单位按 1024 进制换算为字节。
   const applySizeFilter = () => {
     const v = Number(sizeValue)
@@ -289,20 +280,6 @@ export default function FileBrowserApp() {
           文件浏览器
         </h1>
         <div className="flex items-center gap-2">
-          <input
-            value={baseInput}
-            onChange={(e) => setBaseInput(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') applyBase() }}
-            placeholder="app_data/folders"
-            title="目录结构清单基目录：需与 dir-struct-gen 数据同步组 RemoteStorage 后端的 basePath 一致"
-            className="w-44 px-2 py-1 rounded-lg text-xs bg-white/5 border border-white/10 text-white/75 outline-none focus:border-white/25"
-          />
-          <button
-            onClick={applyBase}
-            className="px-2.5 py-1.5 rounded-lg text-xs bg-white/5 text-white/70 hover:bg-white/15 hover:text-white transition-colors"
-          >
-            应用
-          </button>
           <button
             onClick={load}
             className="px-3 py-1.5 rounded-lg text-xs bg-white/5 text-white/70 hover:bg-white/15 hover:text-white flex items-center gap-1.5 transition-colors"
@@ -312,6 +289,8 @@ export default function FileBrowserApp() {
           </button>
         </div>
       </div>
+
+      <FileBrowserSyncPanel onReady={() => void load()} />
 
       {state === 'data' && (
         <div className="flex items-center gap-3 flex-wrap">
@@ -453,7 +432,7 @@ export default function FileBrowserApp() {
       {state === 'data' &&
         (filtered.length === 0 ? (
           <div className="text-white/30 text-sm text-center py-8">
-            {q || tagFilter || sizeFilter ? '无匹配的文件或文件夹' : `${getFoldersBase()}/struct 下暂无目录结构清单`}
+            {q || tagFilter || sizeFilter ? '无匹配的文件或文件夹' : '/struct 下暂无目录结构清单'}
           </div>
         ) : (
           <div className="space-y-3">
@@ -503,10 +482,10 @@ function EmptyState({ onRetry }: { onRetry: () => void }) {
   return (
     <div className="rounded-xl bg-white/5 border border-white/10 p-6 text-center space-y-3">
       <FolderTreeIcon className="w-8 h-8 text-white/40 mx-auto" />
-      <div className="text-white/70">{getFoldersBase()}/struct 下暂无目录结构清单</div>
+      <div className="text-white/70">/struct 下暂无目录结构清单</div>
       <div className="text-white/40 text-xs">
-        确认 dir-struct-gen 已向 RemoteStorage 写入主机目录清单（每台主机一个 .json）后重试。
-        基目录需与 dir-struct-gen 中数据同步组 RemoteStorage 后端的 basePath 一致。
+        确认生成端已向当前同步组写入主机目录清单（每台主机一个 .json）后重试；
+        后端基准路径在同步组面板里配置。
       </div>
       <button
         onClick={onRetry}
@@ -519,29 +498,21 @@ function EmptyState({ onRetry }: { onRetry: () => void }) {
 }
 
 function ErrorState({ code, message, onRetry }: { code: string; message: string; onRetry: () => void }) {
-  // 已连接、但当前令牌缺 app_data 作用域（服务端 401）——需断开重连换取新令牌。
+  // 后端已连接、但当前凭据缺目录权限（服务端 401/403）——需检查后端地址与 token。
   if (code === 'AUTH') {
     return (
       <div className="rounded-xl bg-amber-500/10 border border-amber-400/30 p-6 text-center space-y-3">
         <AlertTriangle className="w-8 h-8 text-amber-300/80 mx-auto" />
         <div className="text-amber-100">目录权限不足</div>
         <div className="text-white/55 text-sm leading-relaxed">
-          已连接 RemoteStorage，但当前令牌缺少 <span className="font-mono text-amber-200">app_data</span> 目录的读权限，
-          因此无法读取目录结构清单（服务端返回 401）。
+          同步后端已连接，但凭据缺少对应目录的读权限（服务端返回 401/403），
+          因此无法读取目录结构清单。
         </div>
         <div className="text-white/45 text-xs leading-relaxed text-left mx-auto max-w-sm">
-          解决：在 OneNav 主页「断开 RemoteStorage」，再用同一账号（user@host）重新连接一次——
-          OAuth 会请求新的权限范围，新令牌即可读取 app_data。重新连接后点「刷新」。
+          解决：展开上方「数据同步组」面板，检查后端地址、Bearer token 与基准路径是否正确，
+          必要时重新填写后点「刷新」。
         </div>
         <div className="flex justify-center gap-2">
-          <button
-            onClick={() => {
-              window.location.href = '../../index.html'
-            }}
-            className="px-4 py-2 rounded-lg bg-sky-500/80 hover:bg-sky-500 text-white text-sm"
-          >
-            去主页重新连接
-          </button>
           <button
             onClick={onRetry}
             className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-white/80 text-sm"
@@ -556,17 +527,11 @@ function ErrorState({ code, message, onRetry }: { code: string; message: string;
     return (
       <div className="rounded-xl bg-white/5 border border-white/10 p-6 text-center space-y-3">
         <Plug className="w-8 h-8 text-white/40 mx-auto" />
-        <div className="text-white/80">未连接远程存储</div>
-        <div className="text-white/45 text-sm">无法读取目录结构清单。请在主页完成 RemoteStorage 连接后重试。</div>
+        <div className="text-white/80">未连接数据同步组</div>
+        <div className="text-white/45 text-sm">
+          无法读取目录结构清单。请在上方「数据同步组」面板配置并连接一个含远端后端的组后重试。
+        </div>
         <div className="flex justify-center gap-2">
-          <button
-            onClick={() => {
-              window.location.href = '../../index.html'
-            }}
-            className="px-4 py-2 rounded-lg bg-sky-500/80 hover:bg-sky-500 text-white text-sm"
-          >
-            去连接
-          </button>
           <button
             onClick={onRetry}
             className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-white/80 text-sm"

@@ -1,13 +1,14 @@
-// 数据获取层：从 onenav 同账号 RemoteStorage 读取目录结构清单。
-// 复用 onenav 现有 OAuth 连接（Q1=A），无需额外配置。
+// 数据获取层：从 zen-fs-config 的 dir-struct-gen 数据组读取目录结构清单。
+// 复用配置面板（zen-fs-config-ui）里配置的同步后端（RemoteStorage / Gitee …），
+// 不再直连 onenav 账号的 RemoteStorage、也不再维护基目录前缀。
 //
-// 存储模型（dir-struct-manifest-format.md v2）。基目录 <base> 默认 app_data/folders，可配置，
-// 与 dir-struct-gen 里数据同步组 RemoteStorage 后端的 basePath 必须一致：
-//   <base>/struct/<host>.json                   — 主机索引 { version:2, source, mounts:[{volumeId,files:[<基名>]}] }
-//   <base>/struct/<volumeId>.<createdAt>.json   — 某块盘「按次生成」的卷子树（每次生成一份，互不覆盖）
-//   <base>/struct/<volumeKey>.json              — 旧版单文件卷（历史数据，仍兼容）
-//   <base>/folder-deepen/<key>.json             — 深挖标记 { marks:[ "E:/Photos/2024", ... ] }
-//   <base>/file-tags/<key>.json                 — 用户标签 { tags:{ "E:/Photos/2024": ["旅行","2024"] } }
+// 存储模型（dir-struct-manifest-format.md v2）。路径相对数据组逻辑根，
+// 后端自己的基准路径在后端配置里指定：
+//   /struct/<host>.json                   — 主机索引 { version:2, source, mounts:[{volumeId,files:[<基名>]}] }
+//   /struct/<volumeId>.<createdAt>.json   — 某块盘「按次生成」的卷子树（每次生成一份，互不覆盖）
+//   /struct/<volumeKey>.json              — 旧版单文件卷（历史数据，仍兼容）
+//   /folder-deepen/<key>.json             — 深挖标记 { marks:[ "E:/Photos/2024", ... ] }
+//   /file-tags/<key>.json                 — 用户标签 { tags:{ "E:/Photos/2024": ["旅行","2024"] } }
 // 其中 volumeKey = 卷的 .dir-struct-id（UUID，跨主机一致）。
 // 读取侧：对主机索引的每个 mount 取该卷全部分片（files 优先，回退 file），按 volumeId 合并成一棵树。
 // 合并规则见 ./merge.ts（严格对齐生成器与格式文档「分片合并规则」）。
@@ -17,93 +18,77 @@
 // 本读取侧把上述结构「拼装」回 { root, source, ... } 形态（与 normalize 输入一致），
 // 因此对 FileBrowserApp / normalize 其余逻辑透明。
 
-import { RemoteStorageFileSystem } from '@/lib/remotestorage-fs'
-import {
-  claimAccess,
-  getStorageCredentials,
-  getSavedStorageCredentials,
-  isRemoteStorageAuthError,
-} from '@/lib/remotestorage-connection'
+import { getDirStructGroup } from '@/lib/dir-struct-group'
+import { isRemoteStorageAuthError } from '@/lib/remotestorage-connection'
 import { mergeShards } from './merge'
 import type { RawManifest } from './types'
 
-/** 未连接 RemoteStorage（无凭据） */
+/** 数据组未连接（无活动组 / 无 fs 视图） */
 export class RsNotConnectedError extends Error {
   code = 'NOT_CONNECTED'
-  constructor(message = '未连接 RemoteStorage') {
+  constructor(message = '未连接数据同步组') {
     super(message)
     this.name = 'RsNotConnectedError'
   }
 }
 
-/** 鉴权失败（401/403），需要重新连接 */
+/** 鉴权失败（401/403），需要重新检查后端凭据 */
 export class RsAuthError extends Error {
   code = 'AUTH'
-  constructor(message = 'RemoteStorage 鉴权失败') {
+  constructor(message = '数据同步组鉴权失败') {
     super(message)
     this.name = 'RsAuthError'
   }
 }
 
-// 目录结构清单的「基目录」（与 dir-struct-gen 数据同步组 RemoteStorage 后端的 basePath 一致）。
-// 默认 app_data/folders，可在设置里改；改了必须和 dir-struct-gen 同步，否则读不到清单。
-export const DEFAULT_FOLDERS_BASE = 'app_data/folders'
-const FOLDERS_BASE_STORAGE_KEY = 'onenav.filebrowser.foldersBase'
-
-/** 读取当前配置的基目录（去掉首尾斜杠，便于拼接） */
-export function getFoldersBase(): string {
-  try {
-    const v = localStorage.getItem(FOLDERS_BASE_STORAGE_KEY)
-    if (v) {
-      const t = v.trim().replace(/^\/+/, '').replace(/\/+$/, '')
-      if (t) return t
-    }
-  } catch {
-    // localStorage 不可用（SSR / 隐私模式）时回退默认值
-  }
-  return DEFAULT_FOLDERS_BASE
-}
-
-/** 写入基目录配置；传空字符串/空白表示恢复默认 */
-export function setFoldersBase(base: string): void {
-  const t = (base || '').trim().replace(/^\/+/, '').replace(/\/+$/, '')
-  try {
-    if (t && t !== DEFAULT_FOLDERS_BASE) localStorage.setItem(FOLDERS_BASE_STORAGE_KEY, t)
-    else localStorage.removeItem(FOLDERS_BASE_STORAGE_KEY)
-  } catch {
-    // 忽略持久化失败
-  }
-}
-
-// 实际读取的子目录：清单在基下的 struct/，深挖标记在 folder-deepen/，用户标签在 file-tags/。
-function foldersDir(): string {
-  return `${getFoldersBase()}/struct`
-}
-function deepenDir(): string {
-  return `${getFoldersBase()}/folder-deepen`
-}
-function fileTagsDir(): string {
-  return `${getFoldersBase()}/file-tags`
-}
+// 数据组内子目录：清单在 struct/，深挖标记在 folder-deepen/，用户标签在 file-tags/。
+const STRUCT_DIR = '/struct'
+const DEEPEN_DIR = '/folder-deepen'
+const FILE_TAGS_DIR = '/file-tags'
 
 /** 未索引卷（分片存在但无主机索引引用它们）的合成主机名 */
 const ORPHAN_SOURCE = '（未索引卷）'
 
-/** app_data 读权限不足时的错误说明：已连接，但当前令牌缺作用域，需断开重连换取新令牌 */
+/** 读权限不足时的错误说明：已连接后端，但当前凭据缺目录权限（服务端 401/403） */
 const FOLDERS_AUTH_MSG =
-  'RemoteStorage 已连接，但当前令牌缺少 app_data 目录的权限（服务端 401）。' +
-  '请在主页断开 RemoteStorage 并重新连接一次以授予该权限。'
+  '同步后端已连接，但凭据缺少对应目录的权限（服务端 401/403）。' +
+  '请在下方同步组面板检查后端地址与 token 后重试。'
 
 // RemoteStorage 路径只允许安全字符，其余替换为下划线（与 dir-struct-gen 的 sanitizeKey 一致）。
 function sanitizeKey(s: string): string {
   return (s || '').replace(/[^A-Za-z0-9._-]/g, '_')
 }
 
-/** 构建一个 RS 文件系统实例；未连接则抛 RsNotConnectedError */
-function getFS(): RemoteStorageFileSystem {
-  const credentials = getStorageCredentials() || getSavedStorageCredentials()
-  if (!credentials) throw new RsNotConnectedError()
-  return new RemoteStorageFileSystem({ href: credentials.href, token: credentials.token })
+/** 数据组 fs.promises 的最小形状 */
+interface GroupPromisesFs {
+  readFile(path: string, encoding?: string): Promise<any>
+  writeFile(path: string, data: string | Uint8Array, options?: any): Promise<void>
+  readdir(path: string): Promise<string[]>
+}
+
+/** 取活动数据组的文件视图；未连接则抛 RsNotConnectedError。 */
+function getFs(): GroupPromisesFs {
+  const group = getDirStructGroup()
+  const p = (group as any)?.fs?.promises as GroupPromisesFs | undefined
+  if (!p) throw new RsNotConnectedError()
+  return p
+}
+
+/** 列出目录条目，兼容条目为字符串或 { name } 对象；统一去掉 ./ 前缀。 */
+async function listNames(fs: GroupPromisesFs, dir: string): Promise<string[]> {
+  let entries: string[] = []
+  for (const d of [dir, `${dir}/`]) {
+    try {
+      const list = await fs.readdir(d)
+      if (list.length > 0) {
+        entries = list
+        break
+      }
+    } catch {
+      // 目录不存在 / 后端差异：换带斜杠的写法再试；最终空列表 → 空态
+    }
+  }
+  return entries.map((e) => (typeof e === 'string' ? e : String((e as any)?.name ?? e)))
 }
 
 /** 从主机索引的一个 mount 项取该卷全部分片基名（files 优先、回退 file），稳定排序 */
@@ -124,7 +109,7 @@ function mountShardBases(mount: Record<string, unknown>): string[] {
 }
 
 /**
- * 列出并读取 <base>/struct/ 下全部 .json，按形态分类拼装为原始清单数组：
+ * 列出并读取 /struct/ 下全部 .json，按形态分类拼装为原始清单数组：
  * - 含 mounts 数组 → 主机索引：对每个 mount 取该卷全部分片并合并成一棵树；
  * - 含 volumeId + children 且非 root/mounts → 卷分片，收入按基名的映射，等待被主机索引合并；
  * - 含 root 字段 → legacy v1 整树清单，原样透传。
@@ -133,46 +118,15 @@ function mountShardBases(mount: Record<string, unknown>): string[] {
  * 单文件解析/读取失败会被跳过，不导致整页崩溃。
  */
 export async function fetchDirStructManifests(): Promise<RawManifest[]> {
-  // best-effort：登记 app_data 读写权限（供后续重新授权时带上 scope）
-  try {
-    claimAccess('app_data', 'rw')
-  } catch {
-    // 忽略：claim 失败不应阻断读取
-  }
+  const fs = getFs()
 
-  const fs = getFS()
-
-  // 清掉目录列表缓存，确保本次能枚举到最新远端的结构。
-  try {
-    await fs.invalidateDirListing()
-  } catch (e) {
-    console.warn('[filebrowser] 清除目录列表缓存失败（已忽略）:', e)
-  }
-
-  // readdir 对结尾斜杠的要求因服务器而异：先试无斜杠，再试有斜杠。
-  let names: string[] = []
-  const FOLDERS_DIR = foldersDir()
-  for (const dir of [FOLDERS_DIR, `${FOLDERS_DIR}/`]) {
-    try {
-      const list = await fs.readdir(dir)
-      if (list.length > 0) {
-        names = list
-        break
-      }
-    } catch (e) {
-      if (isRemoteStorageAuthError(e)) throw new RsAuthError(FOLDERS_AUTH_MSG)
-      // 否则忽略，尝试带斜杠；目录不存在也会走到这里，最终得到空列表 → 空态
-    }
-  }
-
-  const jsonNames = names
-    .map((n) => n.replace(/^\.\//, '')) // zen-fs 可能返回带 ./ 前缀的条目
-    .filter((n) => n.endsWith('.json'))
+  const names = (await listNames(fs, STRUCT_DIR)).map((n) => n.replace(/^\.\//, ''))
+  const jsonNames = names.filter((n) => n.endsWith('.json'))
 
   // 读取全部 json 文件（保留去掉 .json 的基名，供 mounts 按基名引用分片）
   const docs: { base: string; raw: Record<string, unknown> }[] = []
   for (const n of jsonNames) {
-    const p = `${FOLDERS_DIR}/${n}`
+    const p = `${STRUCT_DIR}/${n}`
     try {
       const text = await fs.readFile(p, 'utf8')
       try {
@@ -283,13 +237,13 @@ export async function fetchDirStructManifests(): Promise<RawManifest[]> {
 }
 
 /**
- * 读取某块盘的深挖标记（<base>/folder-deepen/<key>.json）。
+ * 读取某块盘的深挖标记（/folder-deepen/<key>.json）。
  * 404 / 解析失败 / 未连接 → 返回空数组（不抛错，避免阻断浏览）。
  */
 export async function getFolderDeepenMarks(key: string): Promise<string[]> {
   try {
-    const fs = getFS()
-    const p = `${deepenDir()}/${sanitizeKey(key)}.json`
+    const fs = getFs()
+    const p = `${DEEPEN_DIR}/${sanitizeKey(key)}.json`
     const text = await fs.readFile(p, 'utf8')
     try {
       const obj = JSON.parse(text)
@@ -304,19 +258,18 @@ export async function getFolderDeepenMarks(key: string): Promise<string[]> {
     if (isRemoteStorageAuthError(e)) {
       // 权限问题仅告警，不打断浏览
       console.warn('[filebrowser] 读取深挖标记权限不足:', e)
-      return []
     }
     return []
   }
 }
 
 /**
- * 写回某块盘的深挖标记（<base>/folder-deepen/<key>.json）。
- * 权限错误（401）抛 RsAuthError，由调用方提示去重连；其它错误原样抛出。
+ * 写回某块盘的深挖标记（/folder-deepen/<key>.json）。
+ * 权限错误（401/403）抛 RsAuthError，由调用方提示检查后端；其它错误原样抛出。
  */
 export async function putFolderDeepenMarks(key: string, paths: string[]): Promise<void> {
-  const fs = getFS()
-  const p = `${deepenDir()}/${sanitizeKey(key)}.json`
+  const fs = getFs()
+  const p = `${DEEPEN_DIR}/${sanitizeKey(key)}.json`
   try {
     await fs.writeFile(p, JSON.stringify({ marks: paths }))
   } catch (e) {
@@ -329,13 +282,13 @@ export async function putFolderDeepenMarks(key: string, paths: string[]): Promis
 export type FileTagsMap = Record<string, string[]>
 
 /**
- * 读取某块盘的用户标签（<base>/file-tags/<key>.json）。
+ * 读取某块盘的用户标签（/file-tags/<key>.json）。
  * 404 / 解析失败 / 未连接 → 返回空对象（不抛错，避免阻断浏览）。
  */
 export async function getFileTags(key: string): Promise<FileTagsMap> {
   try {
-    const fs = getFS()
-    const p = `${fileTagsDir()}/${sanitizeKey(key)}.json`
+    const fs = getFs()
+    const p = `${FILE_TAGS_DIR}/${sanitizeKey(key)}.json`
     const text = await fs.readFile(p, 'utf8')
     try {
       const obj = JSON.parse(text)
@@ -355,19 +308,18 @@ export async function getFileTags(key: string): Promise<FileTagsMap> {
     if (isRemoteStorageAuthError(e)) {
       // 权限问题仅告警，不打断浏览
       console.warn('[filebrowser] 读取用户标签权限不足:', e)
-      return {}
     }
     return {}
   }
 }
 
 /**
- * 写回某块盘的用户标签（<base>/file-tags/<key>.json）。
- * 权限错误（401）抛 RsAuthError，由调用方提示去重连；其它错误原样抛出。
+ * 写回某块盘的用户标签（/file-tags/<key>.json）。
+ * 权限错误（401/403）抛 RsAuthError，由调用方提示检查后端；其它错误原样抛出。
  */
 export async function putFileTags(key: string, map: FileTagsMap): Promise<void> {
-  const fs = getFS()
-  const p = `${fileTagsDir()}/${sanitizeKey(key)}.json`
+  const fs = getFs()
+  const p = `${FILE_TAGS_DIR}/${sanitizeKey(key)}.json`
   try {
     await fs.writeFile(p, JSON.stringify({ tags: map }))
   } catch (e) {
