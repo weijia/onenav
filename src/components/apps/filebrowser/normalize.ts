@@ -25,6 +25,8 @@ interface RawNode {
   sizePartial?: unknown
   /** 可选：分片来源主机（并集） */
   sources?: unknown
+  /** 可选：驱动层携带的分片文件名基名（删除定位用） */
+  shardBases?: unknown
   /** 可选：磁盘上无子目录 */
   leaf?: unknown
   /** 可选：该目录自身在磁盘上的最后修改时间（filesystem mtime），毫秒级 epoch */
@@ -91,6 +93,11 @@ function normalizeNode(raw: unknown, warnings: string[]): FsNodeView | null {
   const out: FolderNodeView = { name, type: 'folder', tags, children }
   // 仅驱动层节点携带稳定身份（子目录不重复存）。
   if (volumeId) out.volumeId = volumeId
+  // 驱动层携带的分片文件名基名（删除时定位远端清单用）。
+  if (Array.isArray(node.shardBases)) {
+    const bases = node.shardBases.filter((b): b is string => typeof b === 'string')
+    if (bases.length) out.shardBases = bases
+  }
   // 可选统计字段：目录下所有文件（含子孙）的数量、逻辑大小、占用空间（由 dir-struct-gen「汇总文件数与大小」生成）。
   // 缺失（未开启统计 / 无访问权限）时该字段不出现，读取侧按需展示。
   if (typeof node.fileCount === 'number' && node.fileCount >= 0) out.fileCount = node.fileCount
@@ -139,7 +146,7 @@ export function normalizeManifest(raw: unknown): ManifestView | null {
   const generatedAt = toStr(obj.generatedAt)
   const generator = toStr(obj.generator)
 
-  return {
+  const view: ManifestView = {
     source,
     generatedAt,
     generator,
@@ -147,6 +154,9 @@ export function normalizeManifest(raw: unknown): ManifestView | null {
     folderCount: Math.max(0, countFolders(root) - 1), // 不含根（主机）自身
     warnings,
   }
+  const indexBase = toStr(obj.indexBase)
+  if (indexBase) view.indexBase = indexBase
+  return view
 }
 
 /**

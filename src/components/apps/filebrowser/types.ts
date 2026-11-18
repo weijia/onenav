@@ -70,6 +70,11 @@ export interface FolderNodeView {
    * 由生成器为每个进清单的节点写入，不参与合并取舍（分片合并规则第 9 条），仅作展示。
    */
   mtime?: number
+  /**
+   * 仅驱动层（盘符）节点：该卷引用的远端分片文件名基名（不含 .json）。
+   * 用于删除整盘/整台主机时定位 /struct 下的清单文件；子目录不携带。
+   */
+  shardBases?: string[]
 }
 
 /** 单台主机的目录结构清单视图 */
@@ -86,4 +91,9 @@ export interface ManifestView {
   folderCount: number
   /** 解析过程中的告警（如跳过非法子节点等） */
   warnings: string[]
+  /**
+   * 该主机索引对应的远端清单文件名基名（不含 .json）。
+   * 仅主机索引形态有；删除整台主机时连同引用的卷分片一并删除。
+   */
+  indexBase?: string
 }

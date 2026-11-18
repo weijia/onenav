@@ -24,6 +24,8 @@ import {
   Tag,
   Eye,
   HardDrive,
+  Trash2,
+  ChevronsDownUp,
 } from 'lucide-react'
 import {
   fetchDirStructManifests,
@@ -31,6 +33,8 @@ import {
   putFolderDeepenMarks,
   getFileTags,
   putFileTags,
+  deleteHostManifest,
+  deleteDriveShards,
   RsNotConnectedError,
   RsAuthError,
 } from './filebrowser/fetch'
@@ -72,6 +76,20 @@ export default function FileBrowserApp() {
   const [showPrivate, setShowPrivate] = useState(false)
   // 键盘序列缓冲：记录最近键入的字符，凑齐 MAGIC_CODE 即切换（无需任何输入框）。
   const magicBuf = useRef('')
+  // 「全部收起」信号：每次自增让所有 FolderTree 收回顶层；筛选强制展开除外。
+  const [collapseSignal, setCollapseSignal] = useState(0)
+  // 删除确认弹窗：null 关闭；非空携带待删主机/盘符信息与待删文件清单。
+  const [confirmDelete, setConfirmDelete] = useState<{
+    kind: 'host' | 'drive'
+    title: string
+    files: string[]
+    hostSource?: string
+    driveName?: string
+    indexBase?: string
+    shardBases?: string[]
+    shardGroups?: string[][]
+  } | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   useEffect(() => {
     const isTextInput = (t: EventTarget | null): boolean => {
@@ -211,7 +229,28 @@ export default function FileBrowserApp() {
     })
   }, [])
 
-  // 应用目录大小筛选：空值 / 非正数视为关闭；单位按 1024 进制换算为字节。
+  // 确认删除：走数据组 deleteFile（墓碑 + 自动同步），完成后刷新清单。
+  const confirmDeleteAndRun = useCallback(async () => {
+    if (!confirmDelete) return
+    setDeleting(true)
+    try {
+      if (confirmDelete.kind === 'host') {
+        await deleteHostManifest(confirmDelete.indexBase, confirmDelete.shardGroups ?? [])
+      } else {
+        await deleteDriveShards(confirmDelete.shardBases ?? [])
+      }
+      setConfirmDelete(null)
+      await load()
+    } catch (e) {
+      if (e instanceof RsAuthError) setErrorCode('AUTH')
+      else if (e instanceof RsNotConnectedError) setErrorCode(e.code)
+      else setErrorCode('UNKNOWN')
+      setErrorMsg(e instanceof Error ? e.message : String(e))
+      setConfirmDelete(null)
+    } finally {
+      setDeleting(false)
+    }
+  }, [confirmDelete, load])
   const applySizeFilter = () => {
     const v = Number(sizeValue)
     if (!isFinite(v) || v <= 0) {
@@ -280,6 +319,14 @@ export default function FileBrowserApp() {
           文件浏览器
         </h1>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => setCollapseSignal((v) => v + 1)}
+            title="收起全部目录（筛选命中时仍保持展开）"
+            className="px-3 py-1.5 rounded-lg text-xs bg-white/5 text-white/70 hover:bg-white/15 hover:text-white flex items-center gap-1.5 transition-colors"
+          >
+            <ChevronsDownUp className="w-3.5 h-3.5" />
+            全部收起
+          </button>
           <button
             onClick={load}
             className="px-3 py-1.5 rounded-lg text-xs bg-white/5 text-white/70 hover:bg-white/15 hover:text-white flex items-center gap-1.5 transition-colors"
@@ -445,10 +492,41 @@ export default function FileBrowserApp() {
                 tagsByKey={tagsByKey}
                 tagFilter={tagFilter}
                 sizeActive={!!sizeFilter}
+                collapseSignal={collapseSignal}
                 onToggleMark={toggleMark}
                 onSetTags={setNodeTags}
                 onTagClick={(t) => setTagFilter((prev) => (prev === t ? null : t))}
                 onEditTags={(key, path, current) => setTagEditor({ key, path, current })}
+                onRequestDeleteHost={() => {
+                  const shardGroups = m.root.children
+                    .filter((c): c is FolderNodeView => c.type === 'folder')
+                    .map((c) => c.shardBases ?? [])
+                  const shardBases = shardGroups.flat()
+                  setConfirmDelete({
+                    kind: 'host',
+                    title: `删除主机「${m.root.name}」的全部清单数据`,
+                    files: [
+                      ...(m.indexBase ? [`${m.indexBase}.json`] : []),
+                      ...shardBases.map((b) => `${b}.json`),
+                    ],
+                    hostSource: m.source,
+                    indexBase: m.indexBase,
+                    shardBases,
+                    shardGroups,
+                  })
+                }}
+                onRequestDeleteDrive={(drive) => {
+                  const bases = drive.shardBases ?? []
+                  if (!bases.length) return
+                  setConfirmDelete({
+                    kind: 'drive',
+                    title: `删除盘符「${drive.name}」的清单分片`,
+                    files: bases.map((b) => `${b}.json`),
+                    hostSource: m.source,
+                    driveName: drive.name,
+                    shardBases: bases,
+                  })
+                }}
               />
             ))}
           </div>
@@ -462,6 +540,13 @@ export default function FileBrowserApp() {
           if (tagEditor) setNodeTags(tagEditor.key, tagEditor.path, next)
           setTagEditor(null)
         }}
+      />
+
+      <DeleteConfirmModal
+        confirm={confirmDelete}
+        deleting={deleting}
+        onCancel={() => setConfirmDelete(null)}
+        onConfirm={confirmDeleteAndRun}
       />
     </div>
   )
@@ -529,7 +614,7 @@ function ErrorState({ code, message, onRetry }: { code: string; message: string;
         <Plug className="w-8 h-8 text-white/40 mx-auto" />
         <div className="text-white/80">未连接数据同步组</div>
         <div className="text-white/45 text-sm">
-          无法读取目录结构清单。请在上方「数据同步组」面板配置并连接一个含远端后端的组后重试。
+          无法读取目录结构清单。请在上方「数据同步组」面板配置并连接一个含远端后端的组后，点「重试」。
         </div>
         <div className="flex justify-center gap-2">
           <button
@@ -891,10 +976,13 @@ function HostCard({
   tagsByKey,
   tagFilter,
   sizeActive,
+  collapseSignal,
   onToggleMark,
   onSetTags,
   onTagClick,
   onEditTags,
+  onRequestDeleteHost,
+  onRequestDeleteDrive,
 }: {
   manifest: ManifestView
   query: string
@@ -902,10 +990,13 @@ function HostCard({
   tagsByKey: Record<string, Record<string, string[]>>
   tagFilter: string | null
   sizeActive: boolean
+  collapseSignal: number
   onToggleMark: (key: string, path: string) => void
   onSetTags: (key: string, path: string, tags: string[]) => void
   onTagClick: (tag: string) => void
   onEditTags: (key: string, path: string, current: string[]) => void
+  onRequestDeleteHost: () => void
+  onRequestDeleteDrive: (drive: FolderNodeView) => void
 }) {
   const genText = formatGeneratedAt(manifest.generatedAt)
   const stats = hostStats(manifest.root)
@@ -917,6 +1008,14 @@ function HostCard({
         {manifest.root.name !== manifest.source && (
           <span className="text-white/35 text-xs shrink-0">· {manifest.source}</span>
         )}
+        <button
+          type="button"
+          onClick={onRequestDeleteHost}
+          title="删除该主机的索引与全部卷分片（经同步组删除并同步到其它后端）"
+          className="ml-auto shrink-0 text-white/30 hover:text-red-300 px-1 leading-none"
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+        </button>
       </div>
       <div className="text-white/40 text-xs flex items-center gap-3 flex-wrap">
         <span>{manifest.folderCount} 个文件夹</span>
@@ -950,6 +1049,7 @@ function HostCard({
                   node={child}
                   depth={0}
                   forceExpand={!!query || !!tagFilter || sizeActive}
+                  collapseSignal={collapseSignal}
                   basePath={[child.name]}
                   markKey={key}
                   marked={marksByKey[key] || EMPTY_SET}
@@ -959,6 +1059,7 @@ function HostCard({
                   onSetTags={onSetTags}
                   onTagClick={onTagClick}
                   onEditTags={onEditTags}
+                  onRequestDeleteDrive={onRequestDeleteDrive}
                   driveInfo={{
                     hostSource: manifest.source,
                     generatedAt: manifest.generatedAt,
@@ -1053,6 +1154,7 @@ function FolderTree({
   node,
   depth,
   forceExpand,
+  collapseSignal,
   basePath,
   markKey,
   marked,
@@ -1062,11 +1164,13 @@ function FolderTree({
   onSetTags,
   onTagClick,
   onEditTags,
+  onRequestDeleteDrive,
   driveInfo,
 }: {
   node: FsNodeView
   depth: number
   forceExpand: boolean
+  collapseSignal: number
   basePath: string[]
   markKey: string
   marked: Set<string>
@@ -1076,11 +1180,16 @@ function FolderTree({
   onSetTags: (key: string, path: string, tags: string[]) => void
   onTagClick: (tag: string) => void
   onEditTags: (key: string, path: string, current: string[]) => void
+  onRequestDeleteDrive?: (drive: FolderNodeView) => void
   // 仅磁盘行（depth=0）传入；普通目录递归时不传，因而不显示悬浮卡片。
   driveInfo?: { hostSource: string; generatedAt: string | null; warnings: number }
 }) {
   // 默认展开顶层（盘符/根目录），深层收起；筛选命中时整棵匹配树强制展开。
   const [open, setOpen] = useState(depth === 0 && !forceExpand)
+  // 「全部收起」信号：自增后所有节点收回顶层；筛选强制展开除外。
+  useEffect(() => {
+    if (!forceExpand) setOpen(false)
+  }, [collapseSignal, forceExpand])
   const expanded = forceExpand || open
   const isFolder = node.type === 'folder'
   const hasChildren = isFolder && node.children.length > 0
@@ -1193,6 +1302,19 @@ function FolderTree({
           >
             <Tag className="w-3.5 h-3.5" />
           </button>
+          {depth === 0 && node.type === 'folder' && node.shardBases && node.shardBases.length > 0 && onRequestDeleteDrive && (
+            <button
+              type="button"
+              onClick={(ev) => {
+                ev.stopPropagation()
+                onRequestDeleteDrive(node)
+              }}
+              title="删除该盘符的清单分片（经同步组删除并同步到其它后端）"
+              className="shrink-0 opacity-0 group-hover:opacity-100 text-white/30 hover:text-red-300 px-1 leading-none"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          )}
         </span>
         {driveInfo && node.type === 'folder' && (
           <DriveTooltip
@@ -1214,6 +1336,7 @@ function FolderTree({
               node={c}
               depth={depth + 1}
               forceExpand={forceExpand}
+              collapseSignal={collapseSignal}
               basePath={[...basePath, c.name]}
               markKey={markKey}
               marked={marked}
@@ -1227,6 +1350,71 @@ function FolderTree({
           ))}
         </div>
       )}
+    </div>
+  )
+}
+
+/** 删除确认弹窗：列出将删除的清单文件，确认后走数据组 deleteFile（墓碑 + 自动同步）。 */
+function DeleteConfirmModal({
+  confirm,
+  deleting,
+  onCancel,
+  onConfirm,
+}: {
+  confirm: {
+    kind: 'host' | 'drive'
+    title: string
+    files: string[]
+  } | null
+  deleting: boolean
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  if (!confirm) return null
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onClick={onCancel}
+    >
+      <div
+        className="w-full max-w-md rounded-xl bg-zinc-900 border border-white/10 p-5 space-y-3"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-2 text-red-200">
+          <AlertTriangle className="w-4 h-4" />
+          <span className="font-medium">{confirm.title}</span>
+        </div>
+        <div className="text-white/55 text-xs leading-relaxed">
+          删除经数据同步组写入墓碑，会自动同步到已配置的远端后端；该主机/盘符下次重新扫描生成清单后才会再次出现。
+        </div>
+        <div className="max-h-40 overflow-auto rounded-lg bg-white/5 p-2">
+          {confirm.files.length === 0 ? (
+            <div className="text-white/35 text-xs">（无可删除的清单文件）</div>
+          ) : (
+            <ul className="text-xs font-mono text-white/65 space-y-1">
+              {confirm.files.map((f) => (
+                <li key={f}>struct/{f}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={onCancel}
+            disabled={deleting}
+            className="px-3 py-1.5 rounded-lg text-xs bg-white/5 text-white/70 hover:bg-white/15 disabled:opacity-50"
+          >
+            取消
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={deleting || confirm.files.length === 0}
+            className="px-3 py-1.5 rounded-lg text-xs bg-red-500/80 hover:bg-red-500 text-white disabled:opacity-50"
+          >
+            {deleting ? '删除中…' : '确认删除'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

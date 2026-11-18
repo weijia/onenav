@@ -63,6 +63,7 @@ function sanitizeKey(s: string): string {
 interface GroupPromisesFs {
   readFile(path: string, encoding?: string): Promise<any>
   writeFile(path: string, data: string | Uint8Array, options?: any): Promise<void>
+  unlink(path: string): Promise<void>
   readdir(path: string): Promise<string[]>
 }
 
@@ -142,13 +143,13 @@ export async function fetchDirStructManifests(): Promise<RawManifest[]> {
   }
 
   // 分类
-  const hostIndexes: Record<string, unknown>[] = []
+  const hostIndexes: { base: string; raw: Record<string, unknown> }[] = []
   const shardByBase = new Map<string, Record<string, unknown>>()
   const legacy: Record<string, unknown>[] = []
   for (const d of docs) {
     const raw = d.raw
     if (Array.isArray(raw.mounts)) {
-      hostIndexes.push(raw)
+      hostIndexes.push({ base: d.base, raw })
     } else if ('volumeId' in raw && Array.isArray(raw.children) && !raw.root) {
       // 卷分片 / 旧版单文件卷：都按基名收好，等待被主机索引引用后合并
       shardByBase.set(d.base, raw)
@@ -164,7 +165,7 @@ export async function fetchDirStructManifests(): Promise<RawManifest[]> {
 
   // 主机索引：对每个 mount 取该卷全部分片 → 合并成一棵树 → 挂在该主机根下
   const referencedBases = new Set<string>()
-  for (const hi of hostIndexes) {
+  for (const { base: indexBase, raw: hi } of hostIndexes) {
     const source = typeof hi.source === 'string' ? hi.source : 'unknown'
     const drives: Record<string, unknown>[] = []
     const mounts = Array.isArray(hi.mounts) ? (hi.mounts as unknown[]) : []
@@ -187,6 +188,8 @@ export async function fetchDirStructManifests(): Promise<RawManifest[]> {
       if (!drive.volumeId && typeof mount.volumeId === 'string' && mount.volumeId) {
         drive.volumeId = mount.volumeId
       }
+      // 挂载该卷引用的分片基名（不含 .json），供删除整盘/整台主机时定位远端文件。
+      drive.shardBases = bases
       drives.push(drive)
     }
     // 盘符顺序：按名称自然排序，保证多主机展示稳定
@@ -197,6 +200,7 @@ export async function fetchDirStructManifests(): Promise<RawManifest[]> {
       source,
       generatedAt: typeof hi.generatedAt === 'string' ? hi.generatedAt : undefined,
       generator: typeof hi.generator === 'string' ? hi.generator : undefined,
+      indexBase,
       root: { name: source, type: 'folder', children: drives },
     })
   }
@@ -326,4 +330,65 @@ export async function putFileTags(key: string, map: FileTagsMap): Promise<void> 
     if (isRemoteStorageAuthError(e)) throw new RsAuthError(FOLDERS_AUTH_MSG)
     throw e
   }
+}
+
+/** 删除清单文件时需要调用的接口：数据组 deleteFile（墓碑感知，删除会经同步传播到其它后端） */
+interface GroupDeletable {
+  deleteFile?(path: string): Promise<void>
+}
+
+/**
+ * 删除 /struct 下的一个清单文件（主机索引或卷分片）。
+ * 优先走数据组权威的 deleteFile（写墓碑，避免同步时被对端复活）；
+ * 数据组未暴露 deleteFile 时退回 fs.promises.unlink。
+ * 路径按数据组逻辑根计算，不存在的文件视为已删除（幂等）。
+ */
+async function deleteStructFile(base: string): Promise<void> {
+  const group = getDirStructGroup()
+  if (!group) throw new RsNotConnectedError()
+  const path = `${STRUCT_DIR}/${sanitizeKey(base)}.json`
+  const deletable = group as unknown as GroupDeletable
+  try {
+    if (typeof deletable.deleteFile === 'function') {
+      await deletable.deleteFile(path)
+    } else {
+      await getFs().unlink(path)
+    }
+  } catch (e) {
+    if (isRemoteStorageAuthError(e)) throw new RsAuthError(FOLDERS_AUTH_MSG)
+    throw e
+  }
+}
+
+/**
+ * 删除整台主机：主机索引文件 + 其各盘符引用的全部卷分片。
+ * 注意：被多台主机共享的卷分片不会因本次删除被其它主机复活问题——
+ * 墓碑保证远端删除；若分片仍被其它主机引用，生成端下次扫描会重新写入。
+ * 返回本次实际删除的文件名（基名）列表，供确认/提示。
+ */
+export async function deleteHostManifest(indexBase: string | undefined, shardBases: string[][]): Promise<string[]> {
+  const removed: string[] = []
+  if (indexBase) {
+    await deleteStructFile(indexBase)
+    removed.push(`${indexBase}.json`)
+  }
+  const allShards = [...new Set(shardBases.flat())]
+  for (const base of allShards) {
+    await deleteStructFile(base)
+    removed.push(`${base}.json`)
+  }
+  return removed
+}
+
+/**
+ * 删除单个卷分片（按盘符的 shardBases）。
+ * 仅删该盘符引用的分片文件；主机索引保留（下次刷新后该盘可能从索引引用中消失）。
+ */
+export async function deleteDriveShards(shardBases: string[]): Promise<string[]> {
+  const removed: string[] = []
+  for (const base of [...new Set(shardBases)]) {
+    await deleteStructFile(base)
+    removed.push(`${base}.json`)
+  }
+  return removed
 }

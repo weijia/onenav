@@ -17,6 +17,8 @@ import {
 export default function FileBrowserSyncPanel({ onReady }: { onReady?: () => void }) {
   const [ready, setReady] = useState(false)
   const [message, setMessage] = useState('')
+  // 未就绪时默认展开，避免配置入口被折叠、被下方错误提示挤到看不到。
+  const [open, setOpen] = useState(true)
 
   useEffect(() => {
     registerFsConfigBackends()
@@ -50,7 +52,11 @@ export default function FileBrowserSyncPanel({ onReady }: { onReady?: () => void
   const onError = useCallback((data: any) => setMessage(`配置错误：${data?.message ?? ''}`), [])
 
   return (
-    <details className="rounded-lg bg-white/5 p-3 text-sm">
+    <details
+      className="rounded-lg bg-white/5 p-3 text-sm"
+      open={open}
+      onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
+    >
       <summary className="cursor-pointer font-medium">
         数据同步组（appId: {DIR_STRUCT_APP_ID}）{ready ? '· 已连接' : '· 未连接'}
       </summary>
