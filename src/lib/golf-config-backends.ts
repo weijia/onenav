@@ -1,41 +1,16 @@
 /**
- * zen-fs-config 浏览器后端注册。
+ * golf 数据同步组的后端注册入口。
  *
- * zen-fs-config 内置 InMemory / IndexedDB 两种本地后端；要让用户能在
- * SyncGroupConfigurator 里选 RemoteStorage 作为数据组同步后端，必须先在这里注册。
- * 后端类型注册表是模块级全局，重复 register 同一 type 是安全的（覆盖），
- * 但本模块用 guard 保证只执行一次。
+ * 实际注册表在 fs-config-backends.ts（RemoteStorage + Gitee 等），
+ * golf / filebrowser 共用同一套，避免两份重复实现各自漏注册某个后端。
  *
- * RemoteStorage 实现复用 onenav 已装的 zen-fs-remotestoragejs；
- * WebFinger 解析 user@host → storage URL，与 admin 端行为一致。
+ * 历史背景：早期本文件自己注册 RemoteStorage，但没注册 Gitee，
+ * 导致 golf 数据组选「🦊 Gitee」时报
+ * "Backend package \"zen-fs-gitee\" is not available"。
  */
-import { registerBackend, connect } from 'zen-fs-config'
+import { connect } from 'zen-fs-config'
 import type { AppDataGroup } from 'zen-fs-config'
-
-let registered = false
-
-async function resolveStorageUrl(userAddress: string): Promise<string> {
-  if (/^https?:\/\//.test(userAddress)) return userAddress.replace(/\/$/, '')
-  const at = userAddress.lastIndexOf('@')
-  if (at < 0) throw new Error(`RemoteStorage 地址无效：${userAddress}（应为 URL 或 user@host）`)
-  const user = userAddress.slice(0, at)
-  const host = userAddress.slice(at + 1)
-  const res = await fetch(`https://${host}/.well-known/webfinger?resource=acct:${user}@${host}`, {
-    headers: { Accept: 'application/json' },
-    credentials: 'omit',
-  })
-  if (!res.ok) throw new Error(`WebFinger 解析失败：${res.status}`)
-  const links: any[] = (await res.json()).links || []
-  const link = links.find((l) =>
-    l?.rel === 'http://remotestorage.io/spec/version' ||
-    l?.rel === 'remotestorage' ||
-    l?.rel === 'http://tools.ietf.org/id/draft-dejong-remotestorage' ||
-    /^http:\/\/tools\.ietf\.org\/id\/draft-dejong-remotestorage-\d+$/.test(l?.rel || '') ||
-    l?.properties?.['http://remotestorage.io/spec/version'],
-  )
-  if (!link?.href) throw new Error('WebFinger 响应中没有 RemoteStorage 存储地址')
-  return link.href.replace(/\/$/, '')
-}
+import { registerFsConfigBackends } from './fs-config-backends'
 
 /**
  * 从 config-ui 的 onConnected 数据里解析出可用的数据组实例。
@@ -66,40 +41,5 @@ export async function resolveGolfDataGroup(connected: any): Promise<AppDataGroup
 }
 
 export function registerGolfBackends(): void {
-  if (registered) return
-  registered = true
-
-  registerBackend('RemoteStorage', async (options: Record<string, unknown>) => {
-    const rs = await import('zen-fs-remotestoragejs')
-    const Ctor = (rs as any).RemoteStorageFileSystem || (rs as any).default
-    if (typeof Ctor !== 'function') throw new Error('zen-fs-remotestoragejs 未导出 RemoteStorageFileSystem')
-    const rawHref = String(options.href ?? '')
-    const token = String(options.token ?? '')
-    if (!rawHref || !token) throw new Error('RemoteStorage 后端需要 href 与 token')
-    const href = await resolveStorageUrl(rawHref)
-    const basePath = (options.basePath as string) || undefined
-    // RemoteStorageFileSystem 本身实现了 zen-fs 的 FileSystem 接口，且
-    // config-ui 的 createBackend 会识别并返回它；不要再用 wrapZenFSFileSystem
-    // 包一层（{ fs: instance } 不是合法的 mount config，会导致
-    // "Invalid mount configuration"）。与 zen-fs-config 内置 RemoteStorage 注册
-    // 保持一致：直接 new 出实例返回，preciseMtime/persistCache 启用以获得精确 mtime。
-    return new Ctor({
-      href,
-      token,
-      basePath,
-      preciseMtime: true,
-      persistCache: true,
-    })
-  }, {
-    type: 'RemoteStorage',
-    label: 'RemoteStorage',
-    icon: '\u2601',
-    fields: [
-      { key: 'href', label: '存储地址 (URL 或 user@host)', type: 'text' },
-      { key: 'token', label: 'Bearer token', type: 'password' },
-      { key: 'basePath', label: '基准路径 (可选)', type: 'text' },
-    ],
-    defaultOptions: { basePath: '' },
-    identityFields: ['href', 'basePath'],
-  })
+  registerFsConfigBackends()
 }

@@ -8,10 +8,12 @@
  *
  * RemoteStorage 实现复用 onenav 已装的 zen-fs-remotestoragejs；
  * WebFinger 解析 user@host → storage URL，与 admin 端行为一致。
+ * Gitee 必须在这里覆盖注册：zen-fs-config 内置工厂用变量式 import(pkg)，
+ * Vite 无法静态分析，浏览器端必然报 "is not available"。
  *
  * 本模块与具体 appId 无关，golf / dir-struct-gen(filebrowser) 共用同一套注册。
  */
-import { registerBackend, connect } from 'zen-fs-config'
+import { registerBackend, connect, wrapZenFSFileSystem } from 'zen-fs-config'
 import type { AppDataGroup } from 'zen-fs-config'
 
 let registered = false
@@ -109,5 +111,48 @@ export function registerFsConfigBackends(): void {
     ],
     defaultOptions: { basePath: '' },
     identityFields: ['href', 'basePath'],
+  })
+
+  // Gitee：zen-fs-config 内置的 Gitee 工厂走的是 importOptionalBackend(pkg)，
+  // 即 `await import(pkg)` 这种「变量形式的动态导入」。Vite 无法静态分析，
+  // 打包后浏览器拿到的是裸模块名 "zen-fs-gitee"，直接抛
+  // Failed to resolve module specifier → 上层显示
+  // "Backend package \"zen-fs-gitee\" is not available"。npm install 装上了也没用。
+  // 这里用字面量 import('zen-fs-gitee')，让 Vite 把它收成独立 chunk，
+  // 再按内置注册的语义（描述符 + wrapZenFSFileSystem）覆盖同一 type。
+  registerBackend('Gitee', async (options: Record<string, unknown>) => {
+    const mod: any = await import('zen-fs-gitee')
+    const Gitee = mod?.Gitee ?? mod?.default
+    // zen-fs-gitee 导出的是后端描述符对象（name/options/isAvailable/create），
+    // 不是类构造器，@zenfs/core 的 resolveMountConfig 直接接受描述符。
+    if (!Gitee || (typeof Gitee !== 'function' && typeof Gitee.create !== 'function')) {
+      throw new Error('zen-fs-gitee 未导出可用的 Gitee 后端（缺少 Gitee 描述符）')
+    }
+    const token = String(options.token ?? '')
+    const owner = String(options.owner ?? '')
+    const repo = String(options.repo ?? '')
+    if (!owner || !repo) throw new Error('Gitee 后端需要 owner 与 repo')
+    return wrapZenFSFileSystem({
+      backend: Gitee,
+      token,
+      owner,
+      repo,
+      branch: options.branch,
+      baseUrl: (options.baseUrl as string) || undefined,
+    })
+  }, {
+    type: 'Gitee',
+    label: 'Gitee',
+    icon: '🦊',
+    fields: [
+      { key: 'owner', label: 'Owner', type: 'text', placeholder: 'weijia', required: true },
+      { key: 'repo', label: 'Repo', type: 'text', placeholder: 'my-configs', required: true },
+      { key: 'branch', label: 'Branch', type: 'text', placeholder: 'master' },
+      { key: 'token', label: 'Token', type: 'password', placeholder: 'gitee token' },
+      { key: 'baseUrl', label: 'API URL', type: 'text', placeholder: 'https://gitee.com/api/v5' },
+    ],
+    defaultOptions: { owner: '', repo: '', branch: 'master', token: '', baseUrl: '' },
+    accountFields: ['token', 'owner', 'baseUrl'],
+    identityFields: ['owner', 'repo', 'branch', 'baseUrl'],
   })
 }
