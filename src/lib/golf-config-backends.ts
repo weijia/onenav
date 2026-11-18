@@ -9,7 +9,7 @@
  * RemoteStorage 实现复用 onenav 已装的 zen-fs-remotestoragejs；
  * WebFinger 解析 user@host → storage URL，与 admin 端行为一致。
  */
-import { registerBackend, wrapZenFSFileSystem, connect } from 'zen-fs-config'
+import { registerBackend, connect } from 'zen-fs-config'
 import type { AppDataGroup } from 'zen-fs-config'
 
 let registered = false
@@ -78,9 +78,18 @@ export function registerGolfBackends(): void {
     if (!rawHref || !token) throw new Error('RemoteStorage 后端需要 href 与 token')
     const href = await resolveStorageUrl(rawHref)
     const basePath = (options.basePath as string) || undefined
-    // zen-fs-remotestoragejs 提供 fs.promises 风格 API，wrap 成 zen-fs-config 的 BackendInstance。
-    const instance = new Ctor({ href, token, basePath })
-    return wrapZenFSFileSystem({ fs: instance })
+    // RemoteStorageFileSystem 本身实现了 zen-fs 的 FileSystem 接口，且
+    // config-ui 的 createBackend 会识别并返回它；不要再用 wrapZenFSFileSystem
+    // 包一层（{ fs: instance } 不是合法的 mount config，会导致
+    // "Invalid mount configuration"）。与 zen-fs-config 内置 RemoteStorage 注册
+    // 保持一致：直接 new 出实例返回，preciseMtime/persistCache 启用以获得精确 mtime。
+    return new Ctor({
+      href,
+      token,
+      basePath,
+      preciseMtime: true,
+      persistCache: true,
+    })
   }, {
     type: 'RemoteStorage',
     label: 'RemoteStorage',
