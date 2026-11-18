@@ -12,6 +12,8 @@
     "moduleDetection": "force",
     "noEmit": true,
     "resolveJsonModule": true,
+    "allowJs": true,
+    "checkJs": false,
     "jsx": "react-jsx",
     "noUnusedLocals": true,
     "noUnusedParameters": true,

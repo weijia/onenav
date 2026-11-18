@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react'
-import { Flag, FolderTree, NotebookPen, Server, Wallet } from 'lucide-react'
+import { Compass, Flag, FolderTree, NotebookPen, Server, Wallet } from 'lucide-react'
 
 /**
  * 内置小应用的轻量元信息。
@@ -44,6 +44,14 @@ export const APP_MANIFEST: AppMeta[] = [
     accent: 'from-green-500 to-emerald-600',
     description: '球场地图与码数标注',
     entry: 'apps/golf/index.html',
+  },
+  {
+    id: 'golf-nav',
+    name: '球场避障导航',
+    icon: Compass,
+    accent: 'from-emerald-500 to-teal-700',
+    description: '场内找路与击球决策',
+    entry: 'apps/golf-nav/index.html',
   },
   {
     id: 'hostmonitor',
