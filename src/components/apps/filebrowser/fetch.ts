@@ -19,9 +19,14 @@
 // 因此对 FileBrowserApp / normalize 其余逻辑透明。
 
 import { getDirStructGroup } from '@/lib/dir-struct-group'
+import type { AppDataGroup } from 'zen-fs-config'
 import { isRemoteStorageAuthError } from '@/lib/remotestorage-connection'
 import { mergeShards } from './merge'
 import type { RawManifest } from './types'
+
+/** 空清单重试轮数与间隔：等待后台同步把远端分片拉进本地缓存。 */
+const RETRY_ROUNDS = 4
+const RETRY_INTERVAL_MS = 1200
 
 /** 数据组未连接（无活动组 / 无 fs 视图） */
 export class RsNotConnectedError extends Error {
@@ -119,6 +124,37 @@ function mountShardBases(mount: Record<string, unknown>): string[] {
  * 单文件解析/读取失败会被跳过，不导致整页崩溃。
  */
 export async function fetchDirStructManifests(): Promise<RawManifest[]> {
+  const group = getDirStructGroup()
+
+  // 数据组 fs 是本地缓存层：远端文件要等初始同步（syncAll）拉到本地后才能读到。
+  // 挂载组后立即读可能命中空缓存，这里先 flush() 触发一次双向同步；清单仍为空时
+  // 按间隔重试几轮，等待后台轮询把远端分片补齐。
+  await flushGroup(group)
+
+  let out = await readOnce()
+  for (let attempt = 1; out.length === 0 && attempt < RETRY_ROUNDS; attempt++) {
+    await sleep(RETRY_INTERVAL_MS)
+    await flushGroup(group)
+    out = await readOnce()
+  }
+  return out
+}
+
+/** 触发数据组一次双向同步（pull 远端到本地缓存）；未就绪/无 flush 方法时忽略。 */
+async function flushGroup(group: AppDataGroup | null): Promise<void> {
+  try {
+    if (group && typeof group.flush === 'function') await group.flush()
+  } catch (e) {
+    console.warn('[filebrowser] 同步组刷新失败:', e)
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/** 单轮读取：从本地缓存 fs 读 /struct 清单并拼装。 */
+async function readOnce(): Promise<RawManifest[]> {
   const fs = getFs()
 
   const names = (await listNames(fs, STRUCT_DIR)).map((n) => n.replace(/^\.\//, ''))

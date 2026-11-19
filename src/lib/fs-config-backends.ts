@@ -41,10 +41,29 @@ async function resolveStorageUrl(userAddress: string): Promise<string> {
   return link.href.replace(/\/$/, '')
 }
 
+/** 本地后端类型：这类后端不跨设备同步，组里只有它们时不算「已连上可用数据组」。 */
+const LOCAL_BACKEND_TYPES = new Set(['IndexedDB', 'InMemory'])
+
+/** 取数据组当前已连接后端列表（兼容 listBackends / listDeclaredBackends）。 */
+function listGroupBackends(group: any): any[] {
+  if (!group) return []
+  const connected = typeof group.listBackends === 'function' ? group.listBackends() : []
+  const declared = typeof group.listDeclaredBackends === 'function' ? group.listDeclaredBackends() : []
+  return [...(connected || []), ...(declared || [])]
+}
+
+/** 组里是否存在非本地（远端）后端。 */
+function hasRemoteBackend(group: any): boolean {
+  return listGroupBackends(group).some((b) => b && !LOCAL_BACKEND_TYPES.has(b.type))
+}
+
 /**
  * 从 config-ui 的 onConnected 数据里解析出可用的数据组实例。
  * config-sync 模式只给 repo（数据组在内部 groupInstances，未 emit）；
- * data-sync 模式给 dataGroup。兜底用 connect(appId) 重新加载。
+ * data-sync 模式给 dataGroup。
+ *
+ * 多个候选组时优先选「带已连接远端后端」的组；纯本地/空组排后，避免误选到
+ * 只有 IndexedDB/InMemory 的空组导致读侧报未连接。
  */
 export async function resolveDataGroup(
   connected: any,
@@ -52,26 +71,33 @@ export async function resolveDataGroup(
 ): Promise<AppDataGroup | null> {
   const direct = connected?.dataGroup as AppDataGroup | undefined
   if (direct?.fs?.promises) return direct
+
+  const candidates: AppDataGroup[] = []
   const repo = connected?.repo as any
   if (repo?.listAppDataGroups && repo?.getAppDataGroup) {
     try {
       const descriptors = await repo.listAppDataGroups()
       for (const d of descriptors) {
         const g = await repo.getAppDataGroup(d.id)
-        if (g?.fs?.promises) return g
+        if (g?.fs?.promises) candidates.push(g)
       }
     } catch {
       /* 落到 connect 兜底 */
     }
   }
-  try {
-    const result = await connect(appId)
-    const groups = result.appDataGroups || []
-    return groups.find((g) => g?.fs?.promises) || null
-  } catch (e) {
-    console.warn(`[${appId}] 无法解析数据组实例:`, e)
-    return null
+  if (candidates.length === 0) {
+    try {
+      const result = await connect(appId)
+      for (const g of result.appDataGroups || []) {
+        if (g?.fs?.promises) candidates.push(g)
+      }
+    } catch (e) {
+      console.warn(`[${appId}] 无法解析数据组实例:`, e)
+    }
   }
+  if (candidates.length === 0) return null
+  // 优先带远端后端的组；其次任意带 fs 的组。
+  return candidates.find((g) => hasRemoteBackend(g)) ?? candidates[0]
 }
 
 /** 注册 RemoteStorage 后端类型（幂等）。 */
