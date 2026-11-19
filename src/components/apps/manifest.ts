@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react'
-import { Compass, Flag, FolderTree, NotebookPen, Server, Wallet } from 'lucide-react'
+import { Compass, Flag, FolderTree, NotebookPen, Server, UtensilsCrossed, Wallet } from 'lucide-react'
 
 /**
  * 内置小应用的轻量元信息。
@@ -36,6 +36,14 @@ export const APP_MANIFEST: AppMeta[] = [
     accent: 'from-emerald-500 to-teal-600',
     description: '日常收支记账',
     entry: 'apps/bookkeeping/index.html',
+  },
+  {
+    id: 'dish-order',
+    name: '点菜助手',
+    icon: UtensilsCrossed,
+    accent: 'from-amber-500 to-orange-600',
+    description: '点菜记录与价格导入',
+    entry: 'apps/dish-order/index.html',
   },
   {
     id: 'golf',

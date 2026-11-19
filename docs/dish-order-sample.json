@@ -1,0 +1,26 @@
+[
+  {
+    "date": "2026-11-19",
+    "meal": "晚餐",
+    "restaurant": "老地方家常菜",
+    "people": 3,
+    "items": [
+      { "name": "宫保鸡丁", "qty": 1, "unit": "份", "price": 38, "note": "微辣" },
+      { "name": "米饭", "qty": 2, "unit": "碗", "price": 3 },
+      { "name": "酸辣汤", "qty": 1, "unit": "份", "price": null }
+    ],
+    "total": 44,
+    "note": "朋友聚餐",
+    "source": "photo-agent"
+  },
+  {
+    "date": "2026-11-18",
+    "meal": "午餐",
+    "restaurant": "街角面馆",
+    "items": [
+      { "name": "牛肉面", "qty": 1, "price": 28 },
+      { "name": "卤蛋", "qty": 1, "price": 3 }
+    ],
+    "total": null
+  }
+]
