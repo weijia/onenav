@@ -50,6 +50,26 @@ describe('normalizeOrder', () => {
     const b = normalizeOrder(SAMPLE_ORDER, 999999)
     expect(a.ok && b.ok && a.order.id === b.order.id).toBe(true)
   })
+
+  it('标记 tags 从数组或分隔字符串解析，去空去重', () => {
+    const a = normalizeOrder(
+      { date: '2026-01-02', items: [{ name: '菜', tags: ['好吃', ' 好吃 ', '', '回购'] }] },
+      1,
+    )
+    expect(a.ok && a.order.items[0].tags).toEqual(['好吃', '回购'])
+    const b = normalizeOrder({ date: '2026-01-02', items: [{ name: '菜', tags: '好吃，回购、想吃' }] }, 1)
+    expect(b.ok && b.order.items[0].tags).toEqual(['好吃', '回购', '想吃'])
+  })
+
+  it('tags/note 不影响 id，事后加标记不会导致路径漂移', () => {
+    const base = { date: '2026-01-02', items: [{ name: '菜', price: 10 }] }
+    const a = normalizeOrder(base, 1)
+    const b = normalizeOrder(
+      { date: '2026-01-02', items: [{ name: '菜', price: 10, tags: ['好吃'], note: '少辣' }], note: '整单备注' },
+      2,
+    )
+    expect(a.ok && b.ok && a.order.id === b.order.id).toBe(true)
+  })
 })
 
 describe('parseImportText', () => {

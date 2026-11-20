@@ -5,10 +5,11 @@
  *  - 数据同步组连接引导（DishOrderSyncPanel）；
  *  - 导入：粘贴 JSON / 上传 .json → 解析校验 → 预览表格 → 确认写入（跳过/覆盖重复）；
  *  - 记录：月份筛选 + 搜索 + 卡片列表 + 展开菜品明细（数量×单价小计）+ 删除确认；
+ *  - 单菜标记/笔记：明细表每行行内编辑（自由标签 chip + 快捷建议 + 笔记），保存覆盖写回原文件；
  *  - 手动新增一条记录（价格可留空）；
  *  - AI 提示词面板：一键复制给多模态 Agent，从照片生成可直接导入的 JSON。
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle,
   Check,
@@ -19,6 +20,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Tag,
   Trash2,
   Upload,
   X,
@@ -27,6 +29,7 @@ import {
   AI_PROMPT,
   itemSubtotal,
   normalizeOrder,
+  normalizeTags,
   orderTotal,
   parseImportText,
 } from './dish-order/format'
@@ -448,9 +451,74 @@ function ManualAddPanel({ onAdded, disabled }: { onAdded: () => void; disabled: 
 // 记录卡片
 // ───────────────────────────────────────────────────────────
 
-function OrderCard({ order, onDelete }: { order: DishOrder; onDelete: (o: DishOrder) => void }) {
+const QUICK_TAGS = ['好吃', '回购', '避雷', '想吃']
+
+function OrderCard({
+  order,
+  onDelete,
+  onUpdate,
+}: {
+  order: DishOrder
+  onDelete: (o: DishOrder) => void
+  onUpdate: (o: DishOrder) => Promise<void>
+}) {
   const [expanded, setExpanded] = useState(false)
+  const [editingIdx, setEditingIdx] = useState<number | null>(null)
+  const [draftTags, setDraftTags] = useState<string[]>([])
+  const [tagInput, setTagInput] = useState('')
+  const [draftNote, setDraftNote] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [itemError, setItemError] = useState('')
   const total = orderTotal(order)
+  const taggedCount = order.items.filter((it) => it.tags?.length).length
+
+  const openEditor = (i: number) => {
+    setEditingIdx(i)
+    setDraftTags([...(order.items[i].tags ?? [])])
+    setTagInput('')
+    setDraftNote(order.items[i].note ?? '')
+    setItemError('')
+  }
+
+  const addTag = (raw: string) => {
+    const one = normalizeTags(raw)
+    if (!one) return
+    setDraftTags((prev) => {
+      const next = [...prev]
+      for (const t of one) if (!next.includes(t)) next.push(t)
+      return next
+    })
+    setTagInput('')
+  }
+
+  const toggleQuickTag = (tag: string) => {
+    setDraftTags((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]))
+  }
+
+  const saveItem = async () => {
+    if (editingIdx === null) return
+    setSaving(true)
+    setItemError('')
+    try {
+      const items = order.items.map((it, idx) => {
+        if (idx !== editingIdx) return it
+        const next = { ...it }
+        const tags = normalizeTags(draftTags)
+        if (tags) next.tags = tags
+        else delete next.tags
+        const note = draftNote.trim()
+        if (note) next.note = note
+        else delete next.note
+        return next
+      })
+      await onUpdate({ ...order, items })
+      setEditingIdx(null)
+    } catch (e) {
+      setItemError(`保存失败：${errText(e)}`)
+    } finally {
+      setSaving(false)
+    }
+  }
 
   return (
     <div className="rounded-lg bg-white/5 border border-white/10 overflow-hidden">
@@ -462,6 +530,14 @@ function OrderCard({ order, onDelete }: { order: DishOrder; onDelete: (o: DishOr
             {order.meal && <span className="rounded bg-sky-500/20 text-sky-300 text-xs px-1.5 py-0.5">{order.meal}</span>}
             {order.restaurant && <span className="text-white/70 text-sm truncate">{order.restaurant}</span>}
             {order.source === 'photo-agent' && <span className="rounded bg-purple-500/20 text-purple-300 text-xs px-1.5 py-0.5">照片</span>}
+            {taggedCount > 0 && (
+              <span
+                className="flex items-center gap-1 rounded bg-amber-500/20 text-amber-300 text-xs px-1.5 py-0.5"
+                title={`${taggedCount} 道菜有标记`}
+              >
+                <Tag className="w-3 h-3" /> {taggedCount}
+              </span>
+            )}
           </div>
           <div className="text-xs text-white/50 mt-1 truncate">
             {order.items.length} 道菜{order.people ? ` · ${order.people} 人` : ''}
@@ -483,23 +559,123 @@ function OrderCard({ order, onDelete }: { order: DishOrder; onDelete: (o: DishOr
                 <th className="text-right py-1">单价</th>
                 <th className="text-right py-1">小计</th>
                 <th className="text-left py-1 pl-3">备注</th>
+                <th className="text-right py-1 pl-3">操作</th>
               </tr>
             </thead>
             <tbody>
               {order.items.map((it, i) => (
-                <tr key={i} className="border-t border-white/5 text-white/80">
-                  <td className="py-1.5">{it.name}</td>
-                  <td className="text-right py-1.5">{it.qty}{it.unit ?? ''}</td>
-                  <td className="text-right py-1.5">{money(it.price)}</td>
-                  <td className="text-right py-1.5">{money(itemSubtotal(it))}</td>
-                  <td className="py-1.5 pl-3 text-white/50 text-xs">{it.note ?? ''}</td>
-                </tr>
+                <Fragment key={i}>
+                  <tr className="border-t border-white/5 text-white/80">
+                    <td className="py-1.5">
+                      <div className="flex flex-wrap items-center gap-1">
+                        <span>{it.name}</span>
+                        {(it.tags ?? []).map((t) => (
+                          <span key={t} className="rounded bg-amber-500/20 text-amber-300 text-[10px] px-1.5 py-0.5">
+                            {t}
+                          </span>
+                        ))}
+                      </div>
+                    </td>
+                    <td className="text-right py-1.5">{it.qty}{it.unit ?? ''}</td>
+                    <td className="text-right py-1.5">{money(it.price)}</td>
+                    <td className="text-right py-1.5">{money(itemSubtotal(it))}</td>
+                    <td className="py-1.5 pl-3 text-white/50 text-xs">{it.note ?? ''}</td>
+                    <td className="text-right py-1.5 pl-3">
+                      <button
+                        onClick={() => openEditor(i)}
+                        title="给这道菜加标记或笔记"
+                        className="inline-flex items-center gap-1 text-xs text-sky-300 hover:text-sky-200"
+                      >
+                        <Tag className="w-3.5 h-3.5" />
+                        {(it.tags?.length ?? 0) > 0 || it.note ? '编辑' : '加标记'}
+                      </button>
+                    </td>
+                  </tr>
+                  {editingIdx === i && (
+                    <tr>
+                      <td colSpan={6} className="py-2 pl-3">
+                        <div className="rounded bg-white/5 border border-white/10 p-3 space-y-2">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="text-xs text-white/50 shrink-0">标记</span>
+                            {draftTags.map((t) => (
+                              <button
+                                key={t}
+                                onClick={() => setDraftTags((prev) => prev.filter((x) => x !== t))}
+                                title="点击移除"
+                                className="flex items-center gap-1 rounded bg-amber-500/20 text-amber-200 text-xs px-2 py-0.5 hover:bg-amber-500/30"
+                              >
+                                {t} <X className="w-3 h-3" />
+                              </button>
+                            ))}
+                            <input
+                              value={tagInput}
+                              onChange={(e) => setTagInput(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault()
+                                  addTag(tagInput)
+                                }
+                              }}
+                              placeholder="输入后回车"
+                              className="rounded bg-white/10 px-2 py-0.5 text-xs text-white/90 placeholder-white/30 outline-none w-28"
+                            />
+                            <button onClick={() => addTag(tagInput)} className="text-xs text-sky-300 hover:text-sky-200">
+                              添加
+                            </button>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="text-xs text-white/50 shrink-0">快捷</span>
+                            {QUICK_TAGS.map((t) => (
+                              <button
+                                key={t}
+                                onClick={() => toggleQuickTag(t)}
+                                className={`rounded text-xs px-2 py-0.5 ${
+                                  draftTags.includes(t)
+                                    ? 'bg-amber-500/30 text-amber-200'
+                                    : 'bg-white/10 text-white/60 hover:bg-white/20'
+                                }`}
+                              >
+                                {t}
+                              </button>
+                            ))}
+                          </div>
+                          <label className="flex items-center gap-2 text-xs text-white/50">
+                            笔记
+                            <input
+                              value={draftNote}
+                              onChange={(e) => setDraftNote(e.target.value)}
+                              placeholder="如：这次偏咸，下次少放盐"
+                              className="flex-1 rounded bg-white/10 px-2 py-1 text-sm text-white/90 placeholder-white/30 outline-none"
+                            />
+                          </label>
+                          {itemError && <p className="text-xs text-red-400">{itemError}</p>}
+                          <div className="flex justify-end gap-2">
+                            <button
+                              onClick={() => setEditingIdx(null)}
+                              className="rounded px-3 py-1 text-xs text-white/60 hover:bg-white/10"
+                            >
+                              取消
+                            </button>
+                            <button
+                              onClick={() => void saveItem()}
+                              disabled={saving}
+                              className="rounded bg-sky-600 px-3 py-1 text-xs text-white hover:bg-sky-500 disabled:opacity-40"
+                            >
+                              {saving ? '保存中…' : '保存'}
+                            </button>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               ))}
             </tbody>
             <tfoot className="border-t border-white/10">
               <tr className="text-white/90">
                 <td className="py-2" colSpan={3}>合计{order.total === null && <span className="text-white/40 text-xs">（按有价菜品累加）</span>}</td>
                 <td className="text-right py-2 font-medium">{money(total)}</td>
+                <td />
                 <td />
               </tr>
             </tfoot>
@@ -612,6 +788,14 @@ export default function DishOrderApp() {
 
   const reload = useCallback(() => setRefreshTick((n) => n + 1), [])
 
+  const onUpdate = useCallback(
+    async (order: DishOrder) => {
+      await writeOrder(order)
+      reload()
+    },
+    [reload],
+  )
+
   const onDelete = useCallback(
     async (order: DishOrder) => {
       try {
@@ -628,7 +812,13 @@ export default function DishOrderApp() {
     const q = query.trim().toLowerCase()
     if (!q) return orders
     return orders.filter((o) => {
-      const hay = [o.date, o.meal, o.restaurant, o.note, ...o.items.map((it) => it.name)]
+      const hay = [
+        o.date,
+        o.meal,
+        o.restaurant,
+        o.note,
+        ...o.items.flatMap((it) => [it.name, it.note ?? '', ...(it.tags ?? [])]),
+      ]
         .filter(Boolean)
         .join(' ')
         .toLowerCase()
@@ -667,10 +857,10 @@ export default function DishOrderApp() {
           </select>
           <div className="relative">
             <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-white/40" />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="搜索店名 / 菜名"
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="搜索店名 / 菜名 / 标记 / 笔记"
               className="rounded bg-white/10 pl-8 pr-3 py-1.5 text-sm text-white/90 placeholder-white/30 outline-none w-48"
             />
           </div>
@@ -692,9 +882,9 @@ export default function DishOrderApp() {
           </div>
         ) : (
           <div className="space-y-2">
-            {visible.map((o) => (
-              <OrderCard key={o.id} order={o} onDelete={() => void onDelete(o)} />
-            ))}
+              {visible.map((o) => (
+                <OrderCard key={o.id} order={o} onDelete={() => void onDelete(o)} onUpdate={onUpdate} />
+              ))}
           </div>
         )}
       </section>

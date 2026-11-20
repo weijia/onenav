@@ -5,7 +5,7 @@
     "restaurant": "老地方家常菜",
     "people": 3,
     "items": [
-      { "name": "宫保鸡丁", "qty": 1, "unit": "份", "price": 38, "note": "微辣" },
+      { "name": "宫保鸡丁", "qty": 1, "unit": "份", "price": 38, "note": "微辣", "tags": ["好吃", "回购"] },
       { "name": "米饭", "qty": 2, "unit": "碗", "price": 3 },
       { "name": "酸辣汤", "qty": 1, "unit": "份", "price": null }
     ],

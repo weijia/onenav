@@ -19,6 +19,8 @@ export interface DishItem {
   unit?: string
   price: number | null
   note?: string
+  /** 事后人工加的标记（好吃 / 回购 / 避雷…），AI 照片识别不生成此字段 */
+  tags?: string[]
 }
 
 /** 一条点菜记录（存储/展示格式，字段完整） */
@@ -49,6 +51,7 @@ export interface RawDishItem {
   unit?: unknown
   price?: unknown
   note?: unknown
+  tags?: unknown
 }
 
 /** 导入时允许缺省的宽松记录形态 */
@@ -123,6 +126,20 @@ function asPeople(v: unknown): number | undefined {
   return Number.isFinite(n) && n > 0 ? Math.round(n) : undefined
 }
 
+/** 标记：接受字符串数组或分隔字符串（逗号/顿号/空格），去空去重、限长 */
+export function normalizeTags(v: unknown): string[] | undefined {
+  if (!Array.isArray(v) && typeof v !== 'string') return undefined
+  const parts: unknown[] = Array.isArray(v) ? v : String(v).split(/[,，、\s]+/)
+  const out: string[] = []
+  for (const p of parts) {
+    const s = asString(p)
+    if (!s || out.includes(s)) continue
+    out.push(s.slice(0, 24))
+    if (out.length >= 12) break
+  }
+  return out.length ? out : undefined
+}
+
 function stableHash(s: string): string {
   // FNV-1a 32bit → 8 位十六进制，作为去重 id 的后缀，足够点到菜记录量级
   let h = 0x811c9dc5
@@ -189,6 +206,8 @@ export function normalizeOrder(raw: unknown, now = Date.now()): NormalizeResult 
     if (unit) item.unit = unit
     const note = asString((ri as RawDishItem).note)
     if (note) item.note = note
+    const tags = normalizeTags((ri as RawDishItem).tags)
+    if (tags) item.tags = tags
     items.push(item)
   }
 
@@ -212,6 +231,8 @@ export function normalizeOrder(raw: unknown, now = Date.now()): NormalizeResult 
 
   const givenId = asString(r.id)
   // 只用 AI/来源给定的 id 时，清洗为安全字符；缺失则按内容生成稳定 id。
+  // 注意：contentKey 故意只含 name/qty/price，不含 tags/note —— 事后加标记/笔记时 id 不变，
+  // 否则文件路径会漂移，旧文件残留变成重复记录。
   const contentKey = JSON.stringify({
     date: order.date,
     restaurant: order.restaurant ?? '',
@@ -229,8 +250,8 @@ function stripCodeFence(text: string): string {
   // 去掉首尾成对的围栏（允许 ```json / ```JSON / ``` 后跟换行）
   s = s.replace(/^\s*```(?:json|JSON)?\s*\r?\n?/, '').replace(/\r?\n?```\s*$/, '')
   // 若 AI 在围栏外还写了零碎说明，尝试截取第一个 [ 或 { 到最后一个 ] 或 }
-  if (!/^[\[{]/.test(s)) {
-    const start = s.search(/[\[{]/)
+  if (!/^[[{]/.test(s)) {
+    const start = s.search(/[[{]/)
     const end = Math.max(s.lastIndexOf(']'), s.lastIndexOf('}'))
     if (start >= 0 && end > start) s = s.slice(start, end + 1)
   }
