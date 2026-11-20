@@ -88,9 +88,16 @@ export default defineConfig({
     })
   ],
   resolve: {
-    alias: {
-      '@': path.resolve(__dirname, './src'),
-    },
+    alias: [
+      { find: '@', replacement: path.resolve(__dirname, './src') },
+      // pouchdb-browser 的 ESM 构建里写着 `import EE from 'events'`（Node 内置模块）。
+      // Vite 会把它换成 `__vite-browser-external` 的空对象，于是
+      // `class Changes extends EE` 在模块求值时就抛
+      // 「Class extends value #<Object> is not a constructor or null」，
+      // 整个 pouchdb 动态导入失败（golf 页的数据同步组因此连不上）。
+      // 指到 npm 的 events polyfill，让 EE 是一个真的构造器。
+      { find: /^events$/, replacement: path.resolve(__dirname, './node_modules/events/events.js') },
+    ],
   },
   build: {
     rollupOptions: {
