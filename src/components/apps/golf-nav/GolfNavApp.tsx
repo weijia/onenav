@@ -27,6 +27,8 @@ const PROVIDER_LABELS: Record<Provider, string> = {
 const LABELS = FEATURE_LABELS as Record<string, string>
 const COLORS = STYLE_COLORS as Record<string, string>
 
+const myMarker = (p: Point) => ({ id: 'me', styleId: 'me', position: toBusinessPoint(p) })
+
 export default function GolfNavApp() {
   const { data: sharedData, loading: sharedLoading } = useSharedGolfData()
   // 共享数据（球场地图标注）优先；尚无 tee/green 标注时回退内置示例球场。
@@ -57,6 +59,14 @@ export default function GolfNavApp() {
   const [selected, setSelected] = useState<any>(null)
   const selectedRef = useRef<string | null>(null)
   const routeRef = useRef<any[] | null>(null)
+  const positionRef = useRef<Point | null>(null)
+
+  // 统一绘制「我的位置」：me 标记始终在最前，extras 用于叠加击球建议的候选点
+  const syncMyPosition = useCallback((p: Point | null, extras: any[] = []) => {
+    positionRef.current = p
+    const a = adapterRef.current
+    if (a) a.setMarkers(p ? [myMarker(p), ...extras] : extras)
+  }, [])
 
   // 按分类过滤后的几何；中心线属于辅助线，始终显示
   const displayGeom = useMemo(() => ({
@@ -102,6 +112,7 @@ export default function GolfNavApp() {
       ])
       adapter.onClick((pt: Point) => {
         setPosition(pt)
+        syncMyPosition(pt)
         setSelected(null)
         selectedRef.current = null
         setResult('已手动设置位置。')
@@ -112,12 +123,13 @@ export default function GolfNavApp() {
         adapter.setSelection(hit.id)
       })
       if (selectedRef.current) adapter.setSelection(selectedRef.current)
+      if (positionRef.current) adapter.setMarkers([myMarker(positionRef.current)])
       setProvider(p)
       setNotice('')
     } catch (e: any) {
       setNotice(`地图初始化失败：${e.message}`)
     }
-  }, [course, center, displayGeom])
+  }, [course, center, displayGeom, syncMyPosition])
 
   // 分类筛选/切洞后的图层同步，保留已有路线与选中高亮
   const applyLines = useCallback(() => {
@@ -144,21 +156,23 @@ export default function GolfNavApp() {
   }, [])
 
   const locate = () => {
+    const apply = (p: Point, msg: string, doCenter = false) => {
+      setPosition(p)
+      syncMyPosition(p)
+      setResult(msg)
+      if (doCenter) centerOn(p)
+    }
     if (!navigator.geolocation) {
-      setPosition(normalizePoint(currentHole.tee))
-      setResult('浏览器不支持定位，已使用本洞发球台作为模拟位置。')
+      apply(normalizePoint(currentHole.tee), '浏览器不支持定位，已使用本洞发球台作为模拟位置。')
       return
     }
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         const p = { lat: pos.coords.latitude, lng: pos.coords.longitude }
-        setPosition(p)
-        setResult(`定位成功（精度约 ${Math.round(pos.coords.accuracy)} 米）。`)
-        centerOn(p)
+        apply(p, `定位成功（精度约 ${Math.round(pos.coords.accuracy)} 米）。`, true)
       },
       () => {
-        setPosition(normalizePoint(currentHole.tee))
-        setResult('定位不可用，已使用本洞发球台作为模拟位置；可点击地图手动设置。')
+        apply(normalizePoint(currentHole.tee), '定位不可用，已使用本洞发球台作为模拟位置；可点击地图手动设置。')
       },
       { enableHighAccuracy: true, timeout: 8000 },
     )
@@ -191,6 +205,7 @@ export default function GolfNavApp() {
     const pts = r.points.map((c: any) => cellToLatLng(ensureGrid(), c.col, c.row))
     routeRef.current = pts
     applyLines()
+    syncMyPosition(position)
     let dist = 0
     for (let i = 1; i < pts.length; i++) dist += latLngDistance(pts[i - 1], pts[i])
     setResult(`路线已生成\n目标：${target === 'tee' ? '发球台' : '果岭'}\n折线距离约 ${dist.toFixed(0)} 米\n路线点数 ${pts.length}`)
@@ -200,9 +215,7 @@ export default function GolfNavApp() {
     if (!position) { setResult('请先定位或点击地图设置位置。'); return }
     const r = adviseShot(ensureGrid(), position, currentHole.green)
     if (!r.ok || !r.recommended) { setResult(r.reason || '无法生成建议'); return }
-    const a = adapterRef.current
-    if (a) a.setMarkers([
-      { id: 'me', styleId: 'me', position: toBusinessPoint(position) },
+    syncMyPosition(position, [
       { id: 'green', styleId: 'target', position: toBusinessPoint(currentHole.green) },
       ...r.candidates.slice(0, 6).map((c: any, i: number) => ({ id: `land${i}`, styleId: 'landing', position: toBusinessPoint(c.latLng) })),
     ])
@@ -216,7 +229,8 @@ export default function GolfNavApp() {
     setSelected(null)
     selectedRef.current = null
     const a = adapterRef.current
-    if (a) { applyLines(); a.setSelection(null); a.setMarkers([]) }
+    if (a) { applyLines(); a.setSelection(null) }
+    syncMyPosition(position)
     const tee = normalizePoint(h.tee); const green = normalizePoint(h.green)
     centerOn({ lat: (tee.lat + green.lat) / 2, lng: (tee.lng + green.lng) / 2 })
     setResult(`已切换到第 ${n} 洞。`)
