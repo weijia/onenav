@@ -14,6 +14,19 @@ export const STYLE_COLORS = {
   cartPath: 'rgba(255, 255, 255, 0.9)',
 };
 
+export const FEATURE_LABELS = {
+  fairway: '球道',
+  green: '果岭',
+  tee: '发球台',
+  rough: '长草区',
+  bunker: '沙坑',
+  water: '水障碍',
+  tree: '树木',
+  cartPath: '球车道',
+  outOfBounds: '界外区',
+  center: '球道中心线',
+};
+
 export const LINE_STYLES = {
   center: { color: '#5a5a5a', width: 2, opacity: 0.6 },
   cart: { color: '#ffffff', width: 3, opacity: 1 },
@@ -54,18 +67,22 @@ export function buildCourseGeometry(course) {
   course.holes.forEach((hole) => {
     (hole.features || []).forEach((f, i) => {
       const id = `h${hole.number}-f${i}`;
+      const meta = { featureType: f.type, hole: hole.number, featureIndex: i };
       if (f.polygon && STYLE_COLORS[f.type] && f.type !== 'tree') {
-        polygons.push({ id, styleId: f.type, paths: f.polygon.map(toBusinessPoint) });
+        polygons.push({ ...meta, id, styleId: f.type, paths: f.polygon.map(toBusinessPoint) });
       }
       if (f.line && f.type === 'cartPath') {
-        lines.push({ id, styleId: 'cart', paths: f.line.map(toBusinessPoint) });
+        lines.push({ ...meta, id, styleId: 'cart', paths: f.line.map(toBusinessPoint) });
       }
       if (f.point && f.type === 'tree') {
-        polygons.push({ id, styleId: 'tree', paths: circlePaths(f.point, f.radiusMeters || 6) });
+        polygons.push({ ...meta, id, styleId: 'tree', paths: circlePaths(f.point, f.radiusMeters || 6) });
       }
     });
     lines.push({
       id: `h${hole.number}-center`,
+      featureType: 'center',
+      hole: hole.number,
+      featureIndex: -1,
       styleId: 'center',
       paths: hole.centerLine.map(toBusinessPoint),
     });

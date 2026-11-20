@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { loadCourse } from '@/golf-nav-engine/data/course-schema.js'
+import { FEATURE_TYPES, loadCourse } from '@/golf-nav-engine/data/course-schema.js'
 import { normalizePoint } from '@/golf-nav-engine/data/coordinates.js'
 import { buildGrid, worldToCell, cellToLatLng, snapToPassable } from '@/golf-nav-engine/geo/passability.js'
 import { latLngDistance } from '@/golf-nav-engine/geo/geometry.js'
 import { findPath } from '@/golf-nav-engine/nav/astar.js'
 import { adviseShot } from '@/golf-nav-engine/nav/shot-advisor.js'
 import { createAdapter, sdkReady } from '@/golf-nav-engine/map-adapters/index.js'
-import { buildCourseGeometry, toBusinessPoint } from '@/golf-nav-engine/map-adapters/geometry.js'
+import { buildCourseGeometry, toBusinessPoint, FEATURE_LABELS, STYLE_COLORS } from '@/golf-nav-engine/map-adapters/geometry.js'
 import { golfDataToCourse, useSharedGolfData } from '@/lib/golf-shared'
 import rawSampleCourse from '@/golf-nav-engine/data/sample-course.json'
 import GolfSyncPanel from './GolfSyncPanel'
@@ -22,6 +22,10 @@ const PROVIDER_LABELS: Record<Provider, string> = {
   tencent: '腾讯地图',
   canvas: '矢量示意图',
 }
+
+// geometry.js 导出的是字面量对象，TS 侧补索引签名以便按分类字符串取值
+const LABELS = FEATURE_LABELS as Record<string, string>
+const COLORS = STYLE_COLORS as Record<string, string>
 
 export default function GolfNavApp() {
   const { data: sharedData, loading: sharedLoading } = useSharedGolfData()
@@ -47,6 +51,18 @@ export default function GolfNavApp() {
   const [position, setPosition] = useState<Point | null>(null)
   const [result, setResult] = useState('点击「定位」或地图设置当前位置，再生成路线。')
   const [notice, setNotice] = useState('')
+  const [visibleTypes, setVisibleTypes] = useState<Record<string, boolean>>(
+    () => Object.fromEntries(FEATURE_TYPES.map((t: string) => [t, true])) as Record<string, boolean>,
+  )
+  const [selected, setSelected] = useState<any>(null)
+  const selectedRef = useRef<string | null>(null)
+  const routeRef = useRef<any[] | null>(null)
+
+  // 按分类过滤后的几何；中心线属于辅助线，始终显示
+  const displayGeom = useMemo(() => ({
+    polygons: courseGeom.polygons.filter((p: any) => visibleTypes[p.featureType] !== false),
+    lines: courseGeom.lines.filter((l: any) => l.styleId === 'center' || visibleTypes[l.featureType] !== false),
+  }), [courseGeom, visibleTypes])
 
   const currentHole = useMemo(
     () => course.holes.find((h: any) => h.number === hole) || course.holes[0],
@@ -79,18 +95,48 @@ export default function GolfNavApp() {
       const adapter = createAdapter(p, { region: course.region, L, course, canvas: mapEl.current })
       adapter.create(mapEl.current, center, 16)
       adapterRef.current = adapter
-      adapter.setPolygons(courseGeom.polygons)
-      adapter.setLines(courseGeom.lines)
+      adapter.setPolygons(displayGeom.polygons)
+      adapter.setLines([
+        ...displayGeom.lines,
+        ...(routeRef.current ? [{ id: 'route', styleId: 'route', paths: routeRef.current.map(toBusinessPoint) }] : []),
+      ])
       adapter.onClick((pt: Point) => {
         setPosition(pt)
+        setSelected(null)
+        selectedRef.current = null
         setResult('已手动设置位置。')
       })
+      adapter.onFeatureClick((hit: any) => {
+        setSelected(hit)
+        selectedRef.current = hit.id
+        adapter.setSelection(hit.id)
+      })
+      if (selectedRef.current) adapter.setSelection(selectedRef.current)
       setProvider(p)
       setNotice('')
     } catch (e: any) {
       setNotice(`地图初始化失败：${e.message}`)
     }
-  }, [course, center, courseGeom])
+  }, [course, center, displayGeom])
+
+  // 分类筛选/切洞后的图层同步，保留已有路线与选中高亮
+  const applyLines = useCallback(() => {
+    const a = adapterRef.current
+    if (!a) return
+    a.setLines([
+      ...displayGeom.lines,
+      ...(routeRef.current ? [{ id: 'route', styleId: 'route', paths: routeRef.current.map(toBusinessPoint) }] : []),
+    ])
+    if (selectedRef.current) a.setSelection(selectedRef.current)
+  }, [displayGeom])
+
+  useEffect(() => {
+    const a = adapterRef.current
+    if (!a) return
+    a.course = course
+    a.setPolygons(displayGeom.polygons)
+    applyLines()
+  }, [course, displayGeom, applyLines])
 
   useEffect(() => {
     initMap('amap')
@@ -141,10 +187,10 @@ export default function GolfNavApp() {
     if (!position) { setResult('请先定位或点击地图设置位置。'); return }
     const goal = target === 'tee' ? currentHole.tee : currentHole.green
     const r = findPath(ensureGrid(), cellFor(position), cellFor(goal as Point), { mode: 'walk' })
-    const a = adapterRef.current
     if (!r.found) { setResult('当前位置到目标无可行路线。'); return }
     const pts = r.points.map((c: any) => cellToLatLng(ensureGrid(), c.col, c.row))
-    if (a) a.setLines([...courseGeom.lines, { id: 'route', styleId: 'route', paths: pts.map(toBusinessPoint) }])
+    routeRef.current = pts
+    applyLines()
     let dist = 0
     for (let i = 1; i < pts.length; i++) dist += latLngDistance(pts[i - 1], pts[i])
     setResult(`路线已生成\n目标：${target === 'tee' ? '发球台' : '果岭'}\n折线距离约 ${dist.toFixed(0)} 米\n路线点数 ${pts.length}`)
@@ -166,8 +212,11 @@ export default function GolfNavApp() {
   const changeHole = (n: number) => {
     setHole(n)
     const h = course.holes.find((x: any) => x.number === n) || course.holes[0]
+    routeRef.current = null
+    setSelected(null)
+    selectedRef.current = null
     const a = adapterRef.current
-    if (a) { a.setLines(courseGeom.lines); a.setMarkers([]) }
+    if (a) { applyLines(); a.setSelection(null); a.setMarkers([]) }
     const tee = normalizePoint(h.tee); const green = normalizePoint(h.green)
     centerOn({ lat: (tee.lat + green.lat) / 2, lng: (tee.lng + green.lng) / 2 })
     setResult(`已切换到第 ${n} 洞。`)
@@ -200,6 +249,56 @@ export default function GolfNavApp() {
           <div className="rounded-lg bg-white/5 p-3">
             <h3 className="font-medium mb-2">状态</h3>
             <p className="text-sm whitespace-pre-line leading-relaxed">{result}</p>
+          </div>
+          {selected && (
+            <div className="rounded-lg bg-sky-950/40 p-3 ring-1 ring-sky-500/40">
+              <h3 className="font-medium mb-1">选中标注</h3>
+              <p className="text-sm">类型：{LABELS[selected.featureType] || selected.featureType}</p>
+              <p className="text-sm opacity-80">第 {selected.hole} 洞 · {selected.kind === 'polygon' ? '面状区域' : '线状要素'}</p>
+              <button
+                onClick={() => {
+                  setSelected(null)
+                  selectedRef.current = null
+                  if (adapterRef.current) adapterRef.current.setSelection(null)
+                }}
+                className="mt-2 rounded bg-white/10 px-2 py-1 text-xs"
+              >清除选中</button>
+            </div>
+          )}
+          <div className="rounded-lg bg-white/5 p-3">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="font-medium">标注分类</h3>
+              <button
+                onClick={() => setVisibleTypes(Object.fromEntries(FEATURE_TYPES.map((t: string) => [t, true])) as Record<string, boolean>)}
+                className="text-xs opacity-70 hover:opacity-100"
+              >全部显示</button>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {FEATURE_TYPES.map((type: string) => {
+                const on = visibleTypes[type] !== false
+                const color = COLORS[type] || 'rgba(148,163,184,0.8)'
+                return (
+                  <button
+                    key={type}
+                    onClick={() => {
+                      const next = !visibleTypes[type]
+                      setVisibleTypes((prev) => ({ ...prev, [type]: next }))
+                      if (!next && selected && selected.featureType === type) {
+                        setSelected(null)
+                        selectedRef.current = null
+                        if (adapterRef.current) adapterRef.current.setSelection(null)
+                      }
+                    }}
+                    title={on ? `隐藏${LABELS[type] || type}` : `显示${LABELS[type] || type}`}
+                    className={`flex items-center gap-1 rounded px-2 py-1 text-xs transition ${on ? 'bg-white/15 ring-1 ring-sky-400/50' : 'bg-white/5 opacity-40'}`}
+                  >
+                    <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: color }} />
+                    {LABELS[type] || type}
+                  </button>
+                )
+              })}
+            </div>
+            <p className="mt-2 text-xs opacity-60">点击标注可高亮并查看类型；点击空白处设置当前位置。</p>
           </div>
           {mode === 'route' && (
             <div className="rounded-lg bg-white/5 p-3">

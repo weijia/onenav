@@ -14,6 +14,10 @@ export class AmapAdapter {
     this.map = null;
     this.layers = {};
     this.clickHandler = null;
+    this.featureClickHandler = null;
+    this._hitLayers = {};
+    this._selectedId = null;
+    this._suppressMapClick = false;
   }
 
   toDisplayPoint(p) {
@@ -34,6 +38,8 @@ export class AmapAdapter {
     this.layers.lines = L.layerGroup().addTo(this.map);
     this.layers.markers = L.layerGroup().addTo(this.map);
     this.map.on('click', (evt) => {
+      // 点到标注时 layer 的 click 会冒泡到 map，跳过这一次，避免误设当前位置
+      if (this._suppressMapClick) { this._suppressMapClick = false; return; }
       const [lat, lng] = fromDisplay(evt.latlng.lat, evt.latlng.lng, this.region);
       this.clickHandler && this.clickHandler({ lat, lng });
     });
@@ -43,24 +49,60 @@ export class AmapAdapter {
   setPolygons(polys) {
     const L = this.L;
     this.layers.polygons.clearLayers();
+    Object.keys(this._hitLayers).forEach((k) => { if (this._hitLayers[k].kind === 'polygon') delete this._hitLayers[k]; });
     polys.forEach((p) => {
       const { color, opacity } = parseColor(STYLE_COLORS[p.styleId] || STYLE_COLORS.fairway);
-      L.polygon(p.paths.map((pt) => this.toDisplayPoint(pt)), {
-        color, weight: 1, fillColor: color, fillOpacity: opacity,
-      }).addTo(this.layers.polygons);
+      const baseStyle = { color, weight: 1, fillColor: color, fillOpacity: opacity };
+      const layer = L.polygon(p.paths.map((pt) => this.toDisplayPoint(pt)), baseStyle).addTo(this.layers.polygons);
+      if (p.featureType) this._bindFeatureClick(layer, p, baseStyle, 'polygon');
     });
   }
 
   setLines(lines) {
     const L = this.L;
     this.layers.lines.clearLayers();
+    Object.keys(this._hitLayers).forEach((k) => { if (this._hitLayers[k].kind === 'line') delete this._hitLayers[k]; });
     lines.forEach((l) => {
       const style = LINE_STYLES[l.styleId] || LINE_STYLES.center;
-      L.polyline(l.paths.map((pt) => this.toDisplayPoint(pt)), {
-        color: style.color, weight: style.width, opacity: style.opacity,
-      }).addTo(this.layers.lines);
+      const baseStyle = { color: style.color, weight: style.width, opacity: style.opacity };
+      const layer = L.polyline(l.paths.map((pt) => this.toDisplayPoint(pt)), baseStyle).addTo(this.layers.lines);
+      if (l.featureType) this._bindFeatureClick(layer, l, baseStyle, 'line');
     });
   }
+
+  _bindFeatureClick(layer, geom, baseStyle, kind) {
+    this._hitLayers[geom.id] = { layer, baseStyle, kind };
+    layer.on('click', () => {
+      this._suppressMapClick = true;
+      if (this.featureClickHandler) {
+        this.featureClickHandler({
+          id: geom.id,
+          featureType: geom.featureType,
+          hole: geom.hole,
+          featureIndex: geom.featureIndex,
+          styleId: geom.styleId,
+          kind,
+        });
+      }
+    });
+  }
+
+  setSelection(id) {
+    const prev = this._selectedId && this._hitLayers[this._selectedId]
+      ? this._hitLayers[this._selectedId] : null;
+    if (prev) prev.layer.setStyle(prev.baseStyle);
+    this._selectedId = id || null;
+    const cur = id && this._hitLayers[id] ? this._hitLayers[id] : null;
+    if (cur) {
+      const highlight = { ...cur.baseStyle, color: '#38bdf8', weight: 4 };
+      if (cur.kind === 'polygon') highlight.fillOpacity = Math.max(0.35, cur.baseStyle.fillOpacity || 0.5);
+      else highlight.opacity = 1;
+      cur.layer.setStyle(highlight);
+      if (cur.layer.bringToFront) cur.layer.bringToFront();
+    }
+  }
+
+  onFeatureClick(handler) { this.featureClickHandler = handler; }
 
   setMarkers(markers) {
     const L = this.L;
@@ -89,5 +131,8 @@ export class AmapAdapter {
     try { this.map && this.map.remove(); } catch (e) { /* ignore */ }
     this.map = null;
     this.layers = {};
+    this._hitLayers = {};
+    this._selectedId = null;
+    this._suppressMapClick = false;
   }
 }

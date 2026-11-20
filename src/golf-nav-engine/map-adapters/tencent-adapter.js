@@ -12,6 +12,10 @@ export class TencentAdapter {
     this.map = null;
     this.layers = {};
     this.clickHandler = null;
+    this.featureClickHandler = null;
+    this._baseGeoms = {};
+    this._selectedId = null;
+    this._suppressMapClickUntil = 0;
   }
 
   toDisplayPoint(p) {
@@ -52,19 +56,48 @@ export class TencentAdapter {
       },
       geometries: [],
     });
+    this.layers.polygons.on('click', (evt) => this._onGeomClick(evt, 'polygon'));
+    this.layers.lines.on('click', (evt) => this._onGeomClick(evt, 'line'));
+    // 高亮层最后创建，盖在普通图层之上
+    this.layers.selectionPolygons = new TMap.MultiPolygon({
+      map: this.map,
+      styles: {
+        selection: new TMap.PolygonStyle({
+          color: 'rgba(56,189,248,0.35)', borderColor: '#38bdf8', borderWidth: 4,
+        }),
+      },
+      geometries: [],
+    });
+    this.layers.selectionLines = new TMap.MultiPolyline({
+      map: this.map,
+      styles: {
+        selection: new TMap.PolylineStyle({ color: '#38bdf8', width: 6, borderWidth: 1, borderColor: '#ffffff' }),
+      },
+      geometries: [],
+    });
     return true;
   }
 
   setPolygons(polys) {
+    Object.keys(this._baseGeoms).forEach((k) => { if (this._baseGeoms[k].kind === 'polygon') delete this._baseGeoms[k]; });
+    polys.forEach((p) => {
+      if (p.featureType) this._baseGeoms[p.id] = { geom: p, kind: 'polygon', featureType: p.featureType, hole: p.hole, featureIndex: p.featureIndex, styleId: p.styleId };
+    });
     this.layers.polygons.setGeometries(polys.map((p) => ({
       id: p.id, styleId: p.styleId, paths: p.paths.map((pt) => this.toDisplayPoint(pt)),
     })));
+    this._refreshSelection();
   }
 
   setLines(lines) {
+    Object.keys(this._baseGeoms).forEach((k) => { if (this._baseGeoms[k].kind === 'line') delete this._baseGeoms[k]; });
+    lines.forEach((l) => {
+      if (l.featureType) this._baseGeoms[l.id] = { geom: l, kind: 'line', featureType: l.featureType, hole: l.hole, featureIndex: l.featureIndex, styleId: l.styleId };
+    });
     this.layers.lines.setGeometries(lines.map((l) => ({
       id: l.id, styleId: l.styleId, paths: l.paths.map((pt) => this.toDisplayPoint(pt)),
     })));
+    this._refreshSelection();
   }
 
   setMarkers(markers) {
@@ -81,6 +114,7 @@ export class TencentAdapter {
     if (this._boundMap === this.map) return;
     this._boundMap = this.map;
     this.map.on('click', (evt) => {
+      if (Date.now() < this._suppressMapClickUntil) return;
       const lat = evt.latLng.getLat();
       const lng = evt.latLng.getLng();
       const [bLat, bLng] = fromDisplay(lat, lng, this.region);
@@ -88,9 +122,47 @@ export class TencentAdapter {
     });
   }
 
+  _onGeomClick(evt, kind) {
+    const g = evt && evt.geometry;
+    if (!g || !this._baseGeoms[g.id]) return;
+    this._suppressMapClickUntil = Date.now() + 100;
+    const meta = this._baseGeoms[g.id];
+    if (this.featureClickHandler) {
+      this.featureClickHandler({ id: g.id, ...meta, kind });
+    }
+  }
+
+  onFeatureClick(handler) { this.featureClickHandler = handler; }
+
+  setSelection(id) {
+    this._selectedId = id || null;
+    this._refreshSelection();
+  }
+
+  _refreshSelection() {
+    if (!this.layers.selectionPolygons || !this.layers.selectionLines) return;
+    const cur = this._selectedId ? this._baseGeoms[this._selectedId] : null;
+    if (!cur) {
+      this.layers.selectionPolygons.setGeometries([]);
+      this.layers.selectionLines.setGeometries([]);
+      return;
+    }
+    const paths = cur.geom.paths.map((pt) => this.toDisplayPoint(pt));
+    if (cur.kind === 'polygon') {
+      this.layers.selectionPolygons.setGeometries([{ id: 'selection', styleId: 'selection', paths }]);
+      this.layers.selectionLines.setGeometries([]);
+    } else {
+      this.layers.selectionLines.setGeometries([{ id: 'selection', styleId: 'selection', paths }]);
+      this.layers.selectionPolygons.setGeometries([]);
+    }
+  }
+
   destroy() {
     try { this.map && this.map.destroy(); } catch (e) { /* ignore */ }
     this.map = null;
     this.layers = {};
+    this._baseGeoms = {};
+    this._selectedId = null;
+    this._suppressMapClickUntil = 0;
   }
 }
