@@ -636,8 +636,6 @@ export default function DishOrderApp() {
     })
   }, [orders, query])
 
-  const connected = state !== 'not-connected'
-
   return (
     <div className="w-full max-w-5xl mx-auto px-4 py-6 space-y-4 text-white">
       <div>
@@ -645,68 +643,72 @@ export default function DishOrderApp() {
         <p className="text-sm text-white/50 mt-1">导入点菜记录与价格，按月分片存到数据同步组；支持从照片经 AI Agent 生成后直接导入。</p>
       </div>
 
-      <DishOrderSyncPanel onReady={onSyncReady} />
-
       {error && (
         <p className="flex items-start gap-2 rounded-lg bg-red-500/10 border border-red-500/30 px-4 py-2 text-sm text-red-300">
           <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
         </p>
       )}
 
-      {state === 'not-connected' ? (
-        <div className="rounded-lg bg-white/5 p-8 text-center text-white/60">
-          <p className="mb-2">尚未连接数据同步组</p>
-          <p className="text-sm text-white/40">请在上方「数据同步组」面板中配置 dish-order 组的后端并连接，之后即可导入与查看记录。</p>
-        </div>
-      ) : (
-        <>
-          <ImportPanel onImported={reload} disabled={!connected} />
-          <ManualAddPanel onAdded={reload} disabled={!connected} />
-          <PromptPanel />
-
-          <div className="flex items-center gap-3 flex-wrap pt-2">
-            <h2 className="font-medium">点菜记录</h2>
-            <span className="text-xs text-white/40">{visible.length} 条</span>
-            <div className="flex-1" />
-            <select
-              value={month}
-              onChange={(e) => setMonth(e.target.value)}
-              className="rounded bg-white/10 px-2.5 py-1.5 text-sm text-white/90 outline-none"
-            >
-              <option value="all">全部月份</option>
-              {months.map((m) => (
-                <option key={m} value={m}>{m}</option>
-              ))}
-            </select>
-            <div className="relative">
-              <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-white/40" />
-              <input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="搜索店名 / 菜名"
-                className="rounded bg-white/10 pl-8 pr-3 py-1.5 text-sm text-white/90 placeholder-white/30 outline-none w-48"
-              />
-            </div>
-            <button onClick={reload} title="刷新" className="rounded p-1.5 text-white/60 hover:bg-white/10">
-              <RefreshCw className="w-4 h-4" />
-            </button>
+      {/* 点菜记录置顶 */}
+      <section className="space-y-2">
+        <div className="flex items-center gap-3 flex-wrap pt-2">
+          <h2 className="font-medium">点菜记录</h2>
+          <span className="text-xs text-white/40">{visible.length} 条</span>
+          <div className="flex-1" />
+          <select
+            value={month}
+            onChange={(e) => setMonth(e.target.value)}
+            className="rounded bg-white/10 px-2.5 py-1.5 text-sm text-white/90 outline-none"
+          >
+            <option value="all">全部月份</option>
+            {months.map((m) => (
+              <option key={m} value={m}>{m}</option>
+            ))}
+          </select>
+          <div className="relative">
+            <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-white/40" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="搜索店名 / 菜名"
+              className="rounded bg-white/10 pl-8 pr-3 py-1.5 text-sm text-white/90 placeholder-white/30 outline-none w-48"
+            />
           </div>
+          <button onClick={reload} title="刷新" className="rounded p-1.5 text-white/60 hover:bg-white/10">
+            <RefreshCw className="w-4 h-4" />
+          </button>
+        </div>
 
-          {state === 'loading' ? (
-            <p className="text-sm text-white/50 py-8 text-center">加载中…</p>
-          ) : visible.length === 0 ? (
-            <div className="rounded-lg bg-white/5 p-8 text-center text-white/50">
-              {orders.length === 0 ? '还没有点菜记录，先导入或手动新增一条吧。' : '没有匹配的记录。'}
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {visible.map((o) => (
-                <OrderCard key={o.id} order={o} onDelete={() => void onDelete(o)} />
-              ))}
-            </div>
-          )}
+        {state === 'not-connected' ? (
+          <div className="rounded-lg bg-white/5 p-8 text-center text-white/60">
+            <p className="mb-2">尚未连接数据同步组</p>
+            <p className="text-sm text-white/40">请在页面底部「数据同步组」面板中配置 dish-order 组的后端并连接，之后即可导入与查看记录。</p>
+          </div>
+        ) : state === 'loading' ? (
+          <p className="text-sm text-white/50 py-8 text-center">加载中…</p>
+        ) : visible.length === 0 ? (
+          <div className="rounded-lg bg-white/5 p-8 text-center text-white/50">
+            {orders.length === 0 ? '还没有点菜记录，先导入或手动新增一条吧。' : '没有匹配的记录。'}
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {visible.map((o) => (
+              <OrderCard key={o.id} order={o} onDelete={() => void onDelete(o)} />
+            ))}
+          </div>
+        )}
+      </section>
+
+      {state !== 'not-connected' && (
+        <>
+          <ImportPanel onImported={reload} disabled={false} />
+          <ManualAddPanel onAdded={reload} disabled={false} />
         </>
       )}
+      <PromptPanel />
+
+      {/* 同步设置置底 */}
+      <DishOrderSyncPanel onReady={onSyncReady} />
     </div>
   )
 }
