@@ -231,7 +231,21 @@ async function readOnce(): Promise<RawManifest[]> {
       const text = await fs.readFile(p, 'utf8')
       try {
         const raw = JSON.parse(text) as Record<string, unknown>
-        if (raw && typeof raw === 'object') docs.push({ base: n.replace(/\.json$/, ''), raw })
+        if (raw && typeof raw === 'object') {
+          if (docs.length < 3) {
+            fbDiag('doc-sample', {
+              name: n,
+              keys: Object.keys(raw).slice(0, 14),
+              hasMounts: Array.isArray((raw as any).mounts),
+              hasChildren: Array.isArray((raw as any).children),
+              hasRoot: !!(raw as any).root,
+              volumeId: (raw as any).volumeId,
+              len: text.length,
+              head: text.slice(0, 120),
+            })
+          }
+          docs.push({ base: n.replace(/\.json$/, ''), raw })
+        }
       } catch {
         console.warn('[filebrowser] 清单解析失败，已跳过:', p)
       }
@@ -258,6 +272,13 @@ async function readOnce(): Promise<RawManifest[]> {
     }
     // 其余形态：跳过
   }
+  fbDiag('classify', {
+    docs: docs.length,
+    host: hostIndexes.length,
+    shard: shardByBase.size,
+    legacy: legacy.length,
+    skipped: docs.length - hostIndexes.length - shardByBase.size - legacy.length,
+  })
 
   const out: RawManifest[] = []
   // legacy v1：原样透传
