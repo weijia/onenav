@@ -161,7 +161,15 @@ export function golfDataToCourse(data: GolfData): any {
       if (!path) continue
       const navPath = toNavPath(path)
       allPoints.push(...navPath)
-      features.push({ type, polygon: navPath })
+      features.push({
+        type,
+        polygon: navPath,
+        // 透传球场地图标注的真实元信息，供避障页「标注列表」显示；sourceId 用原对象 id，
+        // 保证列表条目与地图几何一一对应（几何 id 仍由 buildCourseGeometry 按洞内序号生成）。
+        name: area.name,
+        note: area.note,
+        sourceId: area.id,
+      })
     }
 
     for (const f of holeFacilities) {
@@ -169,7 +177,13 @@ export function golfDataToCourse(data: GolfData): any {
       if (!type) continue
       const polygon = toNavPath(circleToPolygon([f.lng, f.lat], f.type === 'bunker' ? 6 : 5))
       allPoints.push(...polygon)
-      features.push({ type, polygon })
+      features.push({
+        type,
+        polygon,
+        name: f.name,
+        note: f.note,
+        sourceId: f.id,
+      })
     }
 
     // 球车道：按加入顺序串线，至少 2 点才有意义。
@@ -177,7 +191,12 @@ export function golfDataToCourse(data: GolfData): any {
     if (cartPoints.length >= 2) {
       const line = cartPoints.map((f) => toNavPoint([f.lng, f.lat]))
       allPoints.push(...line)
-      features.push({ type: 'cartPath', line })
+      features.push({
+        type: 'cartPath',
+        line,
+        name: cartPoints.find((f) => f.name)?.name,
+        sourceId: cartPoints.map((f) => f.id).join(','),
+      })
     }
 
     // 码数线属于测量辅助，不是障碍，不进入导航几何。

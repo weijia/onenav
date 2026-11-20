@@ -74,6 +74,24 @@ export default function GolfNavApp() {
     lines: courseGeom.lines.filter((l: any) => l.styleId === 'center' || visibleTypes[l.featureType] !== false),
   }), [courseGeom, visibleTypes])
 
+  // 按分类分组的标注列表（仅当前洞，排除中心线辅助线）。
+  // 名称来自球场地图真实标注（经 golfDataToCourse → buildCourseGeometry 透传），无名称时按类型+序号兜底。
+  const featureGroups = useMemo(() => {
+    const geoms: any[] = [
+      ...courseGeom.polygons.map((g: any) => ({ ...g, geomKind: 'polygon' })),
+      ...courseGeom.lines
+        .filter((l: any) => l.styleId !== 'center')
+        .map((l: any) => ({ ...l, geomKind: 'line' })),
+    ].filter((g: any) => g.hole === hole && visibleTypes[g.featureType || g.styleId] !== false)
+    const map = new Map<string, any[]>()
+    for (const g of geoms) {
+      const key = g.featureType || g.styleId || 'other'
+      if (!map.has(key)) map.set(key, [])
+      map.get(key)!.push(g)
+    }
+    return map
+  }, [courseGeom, hole, visibleTypes])
+
   const currentHole = useMemo(
     () => course.holes.find((h: any) => h.number === hole) || course.holes[0],
     [course, hole],
@@ -93,6 +111,29 @@ export default function GolfNavApp() {
       else if (provider === 'tencent') a.map.setCenter(display)
     } catch { /* ignore */ }
   }, [provider])
+
+  // 从「标注列表」点击一条：构造与地图点击一致的 hit，复用同一套高亮链路；并把地图定位到该标注。
+  const selectFromList = useCallback((g: any) => {
+    const hit = {
+      id: g.id,
+      featureType: g.featureType,
+      hole: g.hole,
+      featureIndex: g.featureIndex,
+      styleId: g.styleId,
+      name: g.name,
+      sourceId: g.sourceId,
+      kind: g.geomKind,
+    }
+    setSelected(hit)
+    selectedRef.current = g.id
+    if (adapterRef.current) adapterRef.current.setSelection(g.id)
+    // 取几何顶点的中心作为定位点，避免飞到某个角落
+    if (g.paths && g.paths.length) {
+      const lat = g.paths.reduce((s: number, p: any) => s + p.lat, 0) / g.paths.length
+      const lng = g.paths.reduce((s: number, p: any) => s + p.lng, 0) / g.paths.length
+      centerOn({ lat, lng })
+    }
+  }, [centerOn])
 
   const initMap = useCallback((p: Provider) => {
     if (!mapEl.current) return
@@ -267,8 +308,9 @@ export default function GolfNavApp() {
           {selected && (
             <div className="rounded-lg bg-sky-950/40 p-3 ring-1 ring-sky-500/40">
               <h3 className="font-medium mb-1">选中标注</h3>
-              <p className="text-sm">类型：{LABELS[selected.featureType] || selected.featureType}</p>
-              <p className="text-sm opacity-80">第 {selected.hole} 洞 · {selected.kind === 'polygon' ? '面状区域' : '线状要素'}</p>
+              <p className="text-sm">{selected.name || LABELS[selected.featureType] || selected.featureType}</p>
+              <p className="text-sm opacity-80">类型：{LABELS[selected.featureType] || selected.featureType}</p>
+              <p className="text-sm opacity-80">第 {selected.hole} 洞 · {(selected.kind || selected.geomKind) === 'polygon' ? '面状区域' : '线状要素'}</p>
               <button
                 onClick={() => {
                   setSelected(null)
@@ -313,6 +355,52 @@ export default function GolfNavApp() {
               })}
             </div>
             <p className="mt-2 text-xs opacity-60">点击标注可高亮并查看类型；点击空白处设置当前位置。</p>
+          </div>
+          <div className="rounded-lg bg-white/5 p-3">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="font-medium">标注列表</h3>
+              <span className="text-xs opacity-60">第 {hole} 洞</span>
+            </div>
+            {featureGroups.size === 0 ? (
+              <p className="text-xs opacity-60">当前洞暂无标注（或全部已隐藏）。</p>
+            ) : (
+              <div className="flex flex-col gap-2 max-h-72 overflow-y-auto pr-1">
+                {Array.from(featureGroups.keys())
+                  .sort((a, b) => {
+                    const ia = FEATURE_TYPES.indexOf(a)
+                    const ib = FEATURE_TYPES.indexOf(b)
+                    return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib)
+                  })
+                  .map((type) => {
+                  const items = featureGroups.get(type)!
+                  const color = COLORS[type] || 'rgba(148,163,184,0.8)'
+                  return (
+                    <div key={type}>
+                      <div className="flex items-center gap-1.5 text-xs opacity-80 mb-1">
+                        <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: color }} />
+                        {LABELS[type] || type}
+                        <span className="opacity-60">({items.length})</span>
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        {items.map((g: any, i: number) => {
+                          const active = selected && selected.id === g.id
+                          return (
+                            <button
+                              key={g.id}
+                              onClick={() => selectFromList(g)}
+                              className={`w-full text-left rounded px-2 py-1 text-xs transition truncate ${active ? 'bg-sky-500/30 ring-1 ring-sky-400' : 'bg-white/5 hover:bg-white/10'}`}
+                              title={g.name || `${LABELS[type] || type} ${i + 1}`}
+                            >
+                              {g.name || `${LABELS[type] || type} ${i + 1}`}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
           </div>
           {mode === 'route' && (
             <div className="rounded-lg bg-white/5 p-3">

@@ -81,6 +81,8 @@ export class AmapAdapter {
           hole: geom.hole,
           featureIndex: geom.featureIndex,
           styleId: geom.styleId,
+          name: geom.name,
+          sourceId: geom.sourceId,
           kind,
         });
       }

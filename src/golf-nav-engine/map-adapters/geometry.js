@@ -67,7 +67,7 @@ export function buildCourseGeometry(course) {
   course.holes.forEach((hole) => {
     (hole.features || []).forEach((f, i) => {
       const id = `h${hole.number}-f${i}`;
-      const meta = { featureType: f.type, hole: hole.number, featureIndex: i };
+      const meta = { featureType: f.type, hole: hole.number, featureIndex: i, name: f.name, note: f.note, sourceId: f.sourceId };
       if (f.polygon && STYLE_COLORS[f.type] && f.type !== 'tree') {
         polygons.push({ ...meta, id, styleId: f.type, paths: f.polygon.map(toBusinessPoint) });
       }
