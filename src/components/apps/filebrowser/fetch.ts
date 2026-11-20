@@ -28,6 +28,13 @@ import type { RawManifest } from './types'
 const RETRY_ROUNDS = 4
 const RETRY_INTERVAL_MS = 1200
 
+/** 模块加载标记（用于确认线上跑的是这份读侧代码） */
+try {
+  if (typeof window !== 'undefined') (window as any).__fbModule = 'fetch-diag-v2'
+} catch {
+  /* ignore */
+}
+
 /** 诊断日志：写入 window.__fbDiag，便于在页面里直接读（临时，定位完可删）。 */
 function fbDiag(step: string, data?: Record<string, unknown>): void {
   try {
