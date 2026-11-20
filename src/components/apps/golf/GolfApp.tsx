@@ -632,7 +632,19 @@ export default function GolfApp() {
     onSelect: (sel: SelectedRef) => {
       setSelected(sel)
       const f = data.facilities.find((x) => x.id === sel.id)
-      if (f) flyToTarget(f.lng, f.lat)
+      if (f) {
+        flyToTarget(f.lng, f.lat)
+      } else {
+        // 区域此前完全没有定位反馈：飞到圆心 / 多边形重心，与设施选中体验对齐。
+        const a = data.areas.find((x) => x.id === sel.id)
+        if (a?.kind === 'circle' && a.center) {
+          flyToTarget(a.center[0], a.center[1])
+        } else if (a?.kind === 'polygon' && a.path && a.path.length > 0) {
+          const lng = a.path.reduce((sum, p) => sum + p[0], 0) / a.path.length
+          const lat = a.path.reduce((sum, p) => sum + p[1], 0) / a.path.length
+          flyToTarget(lng, lat)
+        }
+      }
       setMobileOpen(false)
     },
     onImport: () => setImportOpen(true),

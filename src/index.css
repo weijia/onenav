@@ -244,3 +244,28 @@ input[type="color"]::-webkit-color-swatch {
   border: none;
   border-radius: 4px;
 }
+
+/* 高尔夫地图：选中设施光环的轻微脉冲，提升在复杂底图上的可辨识度 */
+@keyframes golf-selection-pulse {
+  0%,
+  100% {
+    stroke-opacity: 1;
+    fill-opacity: 0.18;
+  }
+  50% {
+    stroke-opacity: 0.45;
+    fill-opacity: 0.08;
+  }
+}
+
+.golf-selection-ring,
+.golf-selection-marker circle {
+  animation: golf-selection-pulse 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .golf-selection-ring,
+  .golf-selection-marker circle {
+    animation: none;
+  }
+}

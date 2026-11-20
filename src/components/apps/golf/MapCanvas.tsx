@@ -79,6 +79,17 @@ function markerSvg(color: string, glyph: string): string {
 </svg>`
 }
 
+/** 选中态设施图标：放大一圈 + 青色描边 + 外发光，覆盖在原 marker 之上 */
+function selectedMarkerSvg(color: string, glyph: string): string {
+  return `<svg width="36" height="46" viewBox="0 0 36 46" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="18" cy="18" r="17" fill="#22d3ee" fill-opacity="0.22" stroke="#22d3ee" stroke-width="2"/>
+  <path d="M18 2C10.3 2 4 8.3 4 16c0 11 14 26 14 26s14-15 14-26C32 8.3 25.7 2 18 2z"
+    fill="${color}" stroke="#22d3ee" stroke-width="3"/>
+  <text x="18" y="22" text-anchor="middle" font-size="15" font-weight="700"
+    fill="#ffffff" font-family="system-ui,-apple-system,sans-serif">${glyph}</text>
+</svg>`
+}
+
 /** 顶点/控制点小图标（绘制与编辑用） */
 function handleSvg(color: string): string {
   return `<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
@@ -94,6 +105,8 @@ export default function MapCanvas(props: MapCanvasProps) {
   const tempGroupRef = useRef<L.LayerGroup | null>(null)
   const vertexGroupRef = useRef<L.LayerGroup | null>(null)
   const userGroupRef = useRef<L.LayerGroup | null>(null)
+  // 选中高亮单独一层：不参与主图层的 clearLayers 重建，选中变化只重绘这一层。
+  const selectionGroupRef = useRef<L.LayerGroup | null>(null)
 
   // 把最新的回调放进 ref，避免 effect 因回调身份变化而反复重建图层
   const handlersRef = useRef(props)
@@ -135,6 +148,8 @@ export default function MapCanvas(props: MapCanvasProps) {
     tempGroupRef.current = L.layerGroup().addTo(map)
     vertexGroupRef.current = L.layerGroup().addTo(map)
     userGroupRef.current = L.layerGroup().addTo(map)
+    // 最后加入 → 同 pane 内位于主图层之上；选中高亮不会被原要素盖住。
+    selectionGroupRef.current = L.layerGroup().addTo(map)
 
     // 地图点击：统一转成存储坐标(GCJ-02)后交给业务层，由父组件按当前绘制模式解释
     map.on('click', (e: L.LeafletMouseEvent) => {
@@ -438,6 +453,75 @@ export default function MapCanvas(props: MapCanvasProps) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.selected?.id, props.selected?.kind, props.manageMode, props.data.areas, props.basemapId])
+
+  // ── 5.5 选中要素高亮（独立图层，不随主图层的 clearLayers 重建）────
+  useEffect(() => {
+    const group = selectionGroupRef.current
+    if (!group) return
+    group.clearLayers()
+
+    const { selected, data, visibleFacilityTypes, visibleHoles, visibleAreaTypes } = handlersRef.current
+    if (!selected) return
+
+    // 亮青色 + 更粗描边 + 半透明填充，与原要素自身配色形成明显区分。
+    const highlight: L.PathOptions = {
+      color: '#22d3ee',
+      weight: 4,
+      fillColor: '#22d3ee',
+      fillOpacity: 0.22,
+      dashArray: undefined,
+      interactive: false,
+    }
+
+    if (selected.kind === 'facility') {
+      const f = data.facilities.find((x) => x.id === selected.id)
+      if (!f) return
+      if (!visibleFacilityTypes[f.type]) return
+      if (f.hole !== undefined && visibleHoles[String(f.hole)] === false) return
+      // 选中态图标与原件同一锚点（尖端落在坐标上），同属 markerPane 且后添加 → 覆盖在原图标之上。
+      L.marker(ll(f.lng, f.lat), {
+        icon: L.divIcon({
+          className: 'golf-divicon golf-selection-marker',
+          html: selectedMarkerSvg(facilityColor(f), FACILITY_TYPES[f.type]?.glyph ?? '•'),
+          iconSize: [36, 46],
+          iconAnchor: [18, 46],
+        }),
+        interactive: false,
+      }).addTo(group)
+    } else if (selected.kind === 'area') {
+      const a = data.areas.find((x) => x.id === selected.id)
+      if (!a) return
+      if (!visibleAreaTypes[a.type]) return
+      if (a.hole !== undefined && visibleHoles[String(a.hole)] === false) return
+      if (a.kind === 'circle' && a.center && a.radius) {
+        L.circle(ll(a.center[0], a.center[1]), { ...highlight, radius: a.radius }).addTo(group)
+      } else if (a.kind === 'polygon' && a.path && a.path.length >= 2) {
+        L.polygon(
+          a.path.map(([lng2, lat2]) => ll(lng2, lat2)),
+          highlight,
+        ).addTo(group)
+      }
+    } else if (selected.kind === 'line') {
+      const line = data.lines.find((x) => x.id === selected.id)
+      if (!line) return
+      if (line.hole !== undefined && visibleHoles[String(line.hole)] === false) return
+      L.polyline([ll(line.from[0], line.from[1]), ll(line.to[0], line.to[1])], {
+        color: highlight.color,
+        weight: 7,
+        opacity: 0.9,
+        interactive: false,
+      }).addTo(group)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    props.selected?.id,
+    props.selected?.kind,
+    props.data.facilities,
+    props.data.areas,
+    props.data.lines,
+    visSig,
+    props.basemapId,
+  ])
 
   // ── 6. GPS 用户位置 ──────────────────────────────────
   useEffect(() => {
