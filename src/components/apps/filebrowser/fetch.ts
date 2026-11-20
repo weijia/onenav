@@ -129,6 +129,30 @@ function getFs(): GroupPromisesFs {
   return p
 }
 
+/**
+ * 以 UTF-8 读文本。
+ *
+ * 注意：数据组本地后端的 readFile 只认 `'utf-8'` 这个编码串（见 zen-fs-config
+ * backend-registry：`args[0] === 'utf-8'` 才解码）；传 `'utf8'` 会原样返回
+ * Uint8Array，随后 JSON.parse 必然抛错，整个 /struct 会被当成"没有清单"。
+ * 这里统一走 'utf-8'，并再兜一层 Uint8Array 解码。
+ */
+async function readText(fs: GroupPromisesFs, path: string): Promise<string> {
+  const data = await fs.readFile(path, 'utf-8')
+  if (typeof data === 'string') return data
+  try {
+    const u8 =
+      data instanceof Uint8Array
+        ? data
+        : data instanceof ArrayBuffer
+          ? new Uint8Array(data)
+          : new Uint8Array(data as any)
+    return new TextDecoder('utf-8').decode(u8)
+  } catch {
+    return String(data)
+  }
+}
+
 /** 列出目录条目，兼容条目为字符串或 { name } 对象；统一去掉 ./ 前缀。 */
 async function listNames(fs: GroupPromisesFs, dir: string): Promise<string[]> {
   let entries: string[] = []
@@ -228,7 +252,7 @@ async function readOnce(): Promise<RawManifest[]> {
   for (const n of jsonNames) {
     const p = `${STRUCT_DIR}/${n}`
     try {
-      const text = await fs.readFile(p, 'utf8')
+      const text = await readText(fs, p)
       if (docs.length < 3 && jsonNames.length > 0) {
         fbDiag('readFile-ok', {
           path: p,
@@ -384,7 +408,7 @@ export async function getFolderDeepenMarks(key: string): Promise<string[]> {
   try {
     const fs = getFs()
     const p = `${DEEPEN_DIR}/${sanitizeKey(key)}.json`
-    const text = await fs.readFile(p, 'utf8')
+    const text = await readText(fs, p)
     try {
       const obj = JSON.parse(text)
       if (obj && Array.isArray(obj.marks)) {
@@ -429,7 +453,7 @@ export async function getFileTags(key: string): Promise<FileTagsMap> {
   try {
     const fs = getFs()
     const p = `${FILE_TAGS_DIR}/${sanitizeKey(key)}.json`
-    const text = await fs.readFile(p, 'utf8')
+    const text = await readText(fs, p)
     try {
       const obj = JSON.parse(text)
       const rawTags = obj && typeof obj === 'object' ? (obj.tags as unknown) : null
