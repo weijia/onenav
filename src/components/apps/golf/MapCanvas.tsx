@@ -144,11 +144,21 @@ export default function MapCanvas(props: MapCanvasProps) {
     })
     mapRef.current = map
 
+    // 选中高亮专用 pane：z-index 620 高于 overlayPane(400) 与 markerPane(600)，
+    // 低于 tooltipPane(650)/popupPane(700)。主图层因管理模式、筛选、切洞等重建时，
+    // 新要素 path 会追加到默认 pane 末尾；若高亮也在默认 pane，就会被这些新 path 盖住——
+    // 这正是此前「只有管理模式能看到高亮边界」的根因（管理模式内选中时高亮刚重绘在最上，
+    // 切出模式后主图层重画把它盖住，而高亮 effect 依赖不含 manageMode 不会重跑）。
+    // 用独立且更高层级的 pane 后，高亮恒定置顶，与添加顺序无关，所有模式都能看到。
+    map.createPane('golfSelection')
+    const selPane = map.getPane('golfSelection')
+    if (selPane) selPane.style.zIndex = '620'
+
     featureGroupRef.current = L.layerGroup().addTo(map)
     tempGroupRef.current = L.layerGroup().addTo(map)
     vertexGroupRef.current = L.layerGroup().addTo(map)
     userGroupRef.current = L.layerGroup().addTo(map)
-    // 最后加入 → 同 pane 内位于主图层之上；选中高亮不会被原要素盖住。
+    // 选中高亮单独一层：不参与主图层的 clearLayers 重建，选中变化只重绘这一层。
     selectionGroupRef.current = L.layerGroup().addTo(map)
 
     // 地图点击：统一转成存储坐标(GCJ-02)后交给业务层，由父组件按当前绘制模式解释
@@ -464,7 +474,9 @@ export default function MapCanvas(props: MapCanvasProps) {
     if (!selected) return
 
     // 亮青色 + 更粗描边 + 半透明填充，与原要素自身配色形成明显区分。
+    // 统一放到专用高 pane，保证设施/区域/码数线三类高亮都置顶，不随主图层重建被盖住。
     const highlight: L.PathOptions = {
+      pane: 'golfSelection',
       color: '#22d3ee',
       weight: 4,
       fillColor: '#22d3ee',
@@ -480,6 +492,7 @@ export default function MapCanvas(props: MapCanvasProps) {
       if (f.hole !== undefined && visibleHoles[String(f.hole)] === false) return
       // 选中态图标与原件同一锚点（尖端落在坐标上），同属 markerPane 且后添加 → 覆盖在原图标之上。
       L.marker(ll(f.lng, f.lat), {
+        pane: 'golfSelection',
         icon: L.divIcon({
           className: 'golf-divicon golf-selection-marker',
           html: selectedMarkerSvg(facilityColor(f), FACILITY_TYPES[f.type]?.glyph ?? '•'),
@@ -506,6 +519,7 @@ export default function MapCanvas(props: MapCanvasProps) {
       if (!line) return
       if (line.hole !== undefined && visibleHoles[String(line.hole)] === false) return
       L.polyline([ll(line.from[0], line.from[1]), ll(line.to[0], line.to[1])], {
+        pane: 'golfSelection',
         color: highlight.color,
         weight: 7,
         opacity: 0.9,
@@ -516,6 +530,7 @@ export default function MapCanvas(props: MapCanvasProps) {
   }, [
     props.selected?.id,
     props.selected?.kind,
+    props.manageMode,
     props.data.facilities,
     props.data.areas,
     props.data.lines,
