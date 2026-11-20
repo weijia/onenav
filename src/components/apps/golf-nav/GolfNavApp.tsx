@@ -48,6 +48,7 @@ export default function GolfNavApp() {
 
   const [provider, setProvider] = useState<Provider>('amap')
   const [mode, setMode] = useState<Mode>('route')
+  const [syncOpen, setSyncOpen] = useState(false)
   const [hole, setHole] = useState(1)
   const [target, setTarget] = useState<'tee' | 'green'>('green')
   const [position, setPosition] = useState<Point | null>(null)
@@ -417,10 +418,24 @@ export default function GolfNavApp() {
             </div>
           )}
         </div>
-        <div ref={mapEl} className="flex-1 min-h-[420px] rounded-lg overflow-hidden bg-slate-200" />
+        {/* 地图区：外层 relative 提供定位上下文；地图本身 overflow-hidden，浮层挂外层避免被裁切 */}
+        <div className="relative flex-1 min-w-0 min-h-[420px]">
+          {/* 数据同步组入口（appId: golf）——与球场地图页保持一致的右上角范式 */}
+          <button
+            onClick={() => setSyncOpen((v) => !v)}
+            className="absolute top-3 right-3 z-[650] px-3 py-1.5 rounded-lg bg-slate-900/90 border border-white/15 text-white/80 text-xs shadow"
+            title="数据同步组设置"
+          >
+            同步组
+          </button>
+          {syncOpen && (
+            <div className="absolute top-14 right-3 z-[650] w-96 max-w-[calc(100%-1.5rem)] rounded-lg bg-slate-900/95 border border-white/15 text-white shadow-lg">
+              <GolfSyncPanel />
+            </div>
+          )}
+          <div ref={mapEl} className="absolute inset-0 rounded-lg overflow-hidden bg-slate-200" />
+        </div>
       </div>
-
-      <GolfSyncPanel />
     </div>
   )
 }
