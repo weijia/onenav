@@ -30,7 +30,11 @@ const RETRY_INTERVAL_MS = 1200
 
 /** 模块加载标记（用于确认线上跑的是这份读侧代码） */
 try {
-  if (typeof window !== 'undefined') (window as any).__fbModule = 'fetch-diag-v2'
+  if (typeof window !== 'undefined') {
+    ;(window as any).__fbModule = 'fetch-diag-v3'
+    // 同时写入 localStorage：页面 JS 与调试探针可能不在同一执行世界，localStorage 是共享的
+    localStorage.setItem('fbModule', 'fetch-diag-v3')
+  }
 } catch {
   /* ignore */
 }
@@ -43,6 +47,8 @@ function fbDiag(step: string, data?: Record<string, unknown>): void {
     w.__fbDiag = w.__fbDiag || []
     w.__fbDiag.push({ t: Date.now(), step, ...(data || {}) })
     if (w.__fbDiag.length > 300) w.__fbDiag.shift()
+    // 落一份到 localStorage：读侧日志要在页面世界之外也能取到
+    localStorage.setItem('fbDiag', JSON.stringify(w.__fbDiag.slice(-120)))
   } catch {
     /* ignore */
   }
