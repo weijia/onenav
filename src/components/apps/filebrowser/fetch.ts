@@ -28,6 +28,32 @@ import type { RawManifest } from './types'
 const RETRY_ROUNDS = 4
 const RETRY_INTERVAL_MS = 1200
 
+/** 诊断日志：写入 window.__fbDiag，便于在页面里直接读（临时，定位完可删）。 */
+function fbDiag(step: string, data?: Record<string, unknown>): void {
+  try {
+    if (typeof window === 'undefined') return
+    const w = window as any
+    w.__fbDiag = w.__fbDiag || []
+    w.__fbDiag.push({ t: Date.now(), step, ...(data || {}) })
+    if (w.__fbDiag.length > 300) w.__fbDiag.shift()
+  } catch {
+    /* ignore */
+  }
+}
+
+/** 把错误压成可读字符串（含 zen-fs 的 code / errno） */
+function errBrief(e: unknown): Record<string, unknown> {
+  const anyE = e as any
+  return {
+    msg: anyE instanceof Error ? `${anyE.name}: ${anyE.message}` : String(e),
+    code: anyE?.code,
+    errno: anyE?.errno,
+    path: anyE?.path,
+    name: anyE?.name,
+    syscall: anyE?.syscall,
+  }
+}
+
 /** 数据组未连接（无活动组 / 无 fs 视图） */
 export class RsNotConnectedError extends Error {
   code = 'NOT_CONNECTED'
@@ -76,6 +102,16 @@ interface GroupPromisesFs {
 function getFs(): GroupPromisesFs {
   const group = getDirStructGroup()
   const p = (group as any)?.fs?.promises as GroupPromisesFs | undefined
+  fbDiag('getFs', {
+    hasGroup: !!group,
+    groupId: (group as any)?.groupId,
+    appId: (group as any)?.appId,
+    instanceId: (group as any)?.instanceId,
+    hasFs: !!(group as any)?.fs,
+    fsCtor: (group as any)?.fs?.constructor?.name,
+    hasPromises: !!p,
+    keys: group ? Object.keys(group as any).slice(0, 25) : undefined,
+  })
   if (!p) throw new RsNotConnectedError()
   return p
 }
@@ -86,12 +122,15 @@ async function listNames(fs: GroupPromisesFs, dir: string): Promise<string[]> {
   for (const d of [dir, `${dir}/`]) {
     try {
       const list = await fs.readdir(d)
+      fbDiag('readdir-ok', { dir: d, count: list.length, sample: list.slice(0, 5) })
       if (list.length > 0) {
         entries = list
         break
       }
-    } catch {
+    } catch (e) {
       // 目录不存在 / 后端差异：换带斜杠的写法再试；最终空列表 → 空态
+      fbDiag('readdir-fail', { dir: d, ...errBrief(e) })
+      console.warn('[filebrowser] readdir 失败:', d, e)
     }
   }
   return entries.map((e) => (typeof e === 'string' ? e : String((e as any)?.name ?? e)))
@@ -125,17 +164,27 @@ function mountShardBases(mount: Record<string, unknown>): string[] {
  */
 export async function fetchDirStructManifests(): Promise<RawManifest[]> {
   const group = getDirStructGroup()
+  try {
+    ;(window as any).__fbGroup = group
+  } catch {
+    /* ignore */
+  }
 
   // 数据组 fs 是本地缓存层：远端文件要等初始同步（syncAll）拉到本地后才能读到。
   // 挂载组后立即读可能命中空缓存，这里先 flush() 触发一次双向同步；清单仍为空时
   // 按间隔重试几轮，等待后台轮询把远端分片补齐。
+  const t0 = Date.now()
+  fbDiag('flush-begin', { hasGroup: !!group })
   await flushGroup(group)
+  fbDiag('flush-end', { ms: Date.now() - t0 })
 
   let out = await readOnce()
+  fbDiag('read-round', { attempt: 0, docs: out.length })
   for (let attempt = 1; out.length === 0 && attempt < RETRY_ROUNDS; attempt++) {
     await sleep(RETRY_INTERVAL_MS)
     await flushGroup(group)
     out = await readOnce()
+    fbDiag('read-round', { attempt, docs: out.length })
   }
   return out
 }
@@ -159,6 +208,7 @@ async function readOnce(): Promise<RawManifest[]> {
 
   const names = (await listNames(fs, STRUCT_DIR)).map((n) => n.replace(/^\.\//, ''))
   const jsonNames = names.filter((n) => n.endsWith('.json'))
+  fbDiag('readOnce', { names: names.length, jsonNames: jsonNames.length, sample: names.slice(0, 6) })
 
   // 读取全部 json 文件（保留去掉 .json 的基名，供 mounts 按基名引用分片）
   const docs: { base: string; raw: Record<string, unknown> }[] = []
@@ -174,6 +224,7 @@ async function readOnce(): Promise<RawManifest[]> {
       }
     } catch (e) {
       if (isRemoteStorageAuthError(e)) throw new RsAuthError(FOLDERS_AUTH_MSG)
+      fbDiag('readFile-fail', { path: p, ...errBrief(e) })
       console.warn('[filebrowser] 清单读取失败，已跳过:', p, e)
     }
   }
