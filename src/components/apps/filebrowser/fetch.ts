@@ -229,6 +229,15 @@ async function readOnce(): Promise<RawManifest[]> {
     const p = `${STRUCT_DIR}/${n}`
     try {
       const text = await fs.readFile(p, 'utf8')
+      if (docs.length < 3 && jsonNames.length > 0) {
+        fbDiag('readFile-ok', {
+          path: p,
+          kind: typeof text,
+          ctor: (text as any)?.constructor?.name,
+          isArr: Array.isArray(text),
+          head: typeof text === 'string' ? text.slice(0, 60) : String(text).slice(0, 60),
+        })
+      }
       try {
         const raw = JSON.parse(text) as Record<string, unknown>
         if (raw && typeof raw === 'object') {
@@ -246,7 +255,13 @@ async function readOnce(): Promise<RawManifest[]> {
           }
           docs.push({ base: n.replace(/\.json$/, ''), raw })
         }
-      } catch {
+      } catch (pe) {
+        fbDiag('parse-fail', {
+          path: p,
+          kind: typeof text,
+          head: typeof text === 'string' ? text.slice(0, 60) : String(text).slice(0, 60),
+          err: errBrief(pe),
+        })
         console.warn('[filebrowser] 清单解析失败，已跳过:', p)
       }
     } catch (e) {
