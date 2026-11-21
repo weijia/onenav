@@ -18,7 +18,8 @@
 // 本读取侧把上述结构「拼装」回 { root, source, ... } 形态（与 normalize 输入一致），
 // 因此对 FileBrowserApp / normalize 其余逻辑透明。
 
-import { getDirStructGroup } from '@/lib/dir-struct-group'
+import { getDirStructGroup, isDirStructGroupReady, attachDirStructGroup } from '@/lib/dir-struct-group'
+import { groupHasPath } from '@/lib/fs-config-backends'
 import type { AppDataGroup } from 'zen-fs-config'
 import { isRemoteStorageAuthError } from '@/lib/remotestorage-connection'
 import { mergeShards } from './merge'
@@ -27,6 +28,10 @@ import type { RawManifest } from './types'
 /** 空清单重试轮数与间隔：等待后台同步把远端分片拉进本地缓存。 */
 const RETRY_ROUNDS = 4
 const RETRY_INTERVAL_MS = 1200
+
+/** 冷启动等待同步组连接的窗口：首次连接要拉配置仓，实测常需 10–30s。 */
+const READY_WAIT_MS = 35_000
+const READY_POLL_MS = 500
 
 /** 模块加载标记（用于确认线上跑的是这份读侧代码） */
 try {
@@ -200,6 +205,11 @@ function mountShardBases(mount: Record<string, unknown>): string[] {
  * 单文件解析/读取失败会被跳过，不导致整页崩溃。
  */
 export async function fetchDirStructManifests(): Promise<RawManifest[]> {
+  // 冷启动：配置仓连接 + 数据组实例化是异步的，先等它就绪再读，避免把
+  // 「还在连」误报成「未连接」。
+  await waitForGroupReady()
+  await ensureStructSource()
+
   const group = getDirStructGroup()
   try {
     ;(window as any).__fbGroup = group
@@ -226,9 +236,57 @@ export async function fetchDirStructManifests(): Promise<RawManifest[]> {
   return out
 }
 
-/** 触发数据组一次双向同步（pull 远端到本地缓存）；未就绪/无 flush 方法时忽略。 */
-async function flushGroup(group: AppDataGroup | null): Promise<void> {
+/** 轮询等待数据组挂载；超时后按未连接处理（由 UI 提示重试）。 */
+async function waitForGroupReady(): Promise<void> {
+  const t0 = Date.now()
+  if (isDirStructGroupReady()) {
+    fbDiag('ready-now', { ms: 0 })
+    return
+  }
+  fbDiag('wait-ready-begin', {})
+  while (Date.now() - t0 < READY_WAIT_MS) {
+    await sleep(READY_POLL_MS)
+    if (isDirStructGroupReady()) {
+      fbDiag('wait-ready-end', { ms: Date.now() - t0 })
+      return
+    }
+  }
+  fbDiag('wait-ready-timeout', { ms: Date.now() - t0 })
+}
+
+/**
+ * 自愈：挂着的组若 /struct 为空（典型是「已删的残留组」仍被持有，或挂错了组），
+ * 到配置仓里找一个 /struct 确有内容的组改挂。
+ */
+async function ensureStructSource(): Promise<void> {
+  const current = getDirStructGroup()
+  if (!current) return
+  if (await groupHasPath(current, STRUCT_DIR)) return
+
+  const repo = (current as any).parent
+  if (!repo?.listAppDataGroups || !repo?.getAppDataGroup) return
   try {
+    const descriptors = await repo.listAppDataGroups()
+    fbDiag('self-heal-scan', {
+      current: (current as any).groupId,
+      groups: descriptors.map((d: any) => d.id),
+    })
+    for (const d of descriptors) {
+      if (d.id === (current as any).groupId) continue
+      const cand = await repo.getAppDataGroup(d.id)
+      if (cand?.fs?.promises && (await groupHasPath(cand, STRUCT_DIR))) {
+        attachDirStructGroup(cand)
+        fbDiag('self-heal-rebind', { from: (current as any).groupId, to: d.id })
+        return
+      }
+    }
+  } catch (e) {
+    fbDiag('self-heal-fail', errBrief(e))
+  }
+}
+
+/** 触发数据组一次双向同步（pull 远端到本地缓存）；未就绪/无 flush 方法时忽略。 */
+async function flushGroup(group: AppDataGroup | null): Promise<void> {  try {
     if (group && typeof group.flush === 'function') await group.flush()
   } catch (e) {
     console.warn('[filebrowser] 同步组刷新失败:', e)

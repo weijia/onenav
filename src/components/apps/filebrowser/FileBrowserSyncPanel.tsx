@@ -18,6 +18,9 @@ import {
   DIR_STRUCT_APP_ID,
 } from '@/lib/dir-struct-group'
 
+/** 清单目录：只把「/struct 下确有内容」的组当作可读源。 */
+const STRUCT_DIR = '/struct'
+
 export default function FileBrowserSyncPanel({ onReady }: { onReady?: () => void }) {
   const [ready, setReady] = useState(false)
   const [message, setMessage] = useState('')
@@ -34,7 +37,10 @@ export default function FileBrowserSyncPanel({ onReady }: { onReady?: () => void
   const resolveFrom = useCallback(
     async (detail: any) => {
       const conn = detail ?? coreRef.current?.getConnection?.()
-      const group = await resolveDataGroup(conn, DIR_STRUCT_APP_ID)
+      const group = await resolveDataGroup(conn, DIR_STRUCT_APP_ID, {
+        preferGroupId: 'default',
+        preferPath: STRUCT_DIR,
+      })
       if (!group) {
         attachDirStructGroup(null)
         setReady(false)

@@ -68,6 +68,7 @@ function hasRemoteBackend(group: any): boolean {
 export async function resolveDataGroup(
   connected: any,
   appId: string,
+  opts?: { preferGroupId?: string; preferPath?: string },
 ): Promise<AppDataGroup | null> {
   const direct = connected?.dataGroup as AppDataGroup | undefined
   if (direct?.fs?.promises) return direct
@@ -96,8 +97,34 @@ export async function resolveDataGroup(
     }
   }
   if (candidates.length === 0) return null
-  // 优先带远端后端的组；其次任意带 fs 的组。
+
+  // 首选指定 id，但必须「确实有内容」才采纳：残留组（描述符已删/远端未绑定）
+  // 也会被实例化出来，选中它读侧就会永远空态。
+  const preferPath = opts?.preferPath
+  if (opts?.preferGroupId) {
+    const named = candidates.find((g) => (g as any).groupId === opts.preferGroupId)
+    if (named && (!preferPath || (await groupHasPath(named, preferPath)))) return named
+  }
+  // 其次按内容选：哪个组的 preferPath 下有文件就用哪个（顺序不影响结果）。
+  if (preferPath) {
+    for (const g of candidates) {
+      if (await groupHasPath(g, preferPath)) return g
+    }
+  }
+  // 兜底：优先带远端后端的组；其次任意带 fs 的组。
   return candidates.find((g) => hasRemoteBackend(g)) ?? candidates[0]
+}
+
+/** 组在 preferPath 下是否至少有一个条目（读失败/未连接都算空）。 */
+export async function groupHasPath(group: any, path: string): Promise<boolean> {
+  try {
+    const p = group?.fs?.promises
+    if (!p?.readdir) return false
+    const names = await p.readdir(path)
+    return Array.isArray(names) ? names.length > 0 : false
+  } catch {
+    return false
+  }
 }
 
 /** 注册 RemoteStorage 后端类型（幂等）。 */
