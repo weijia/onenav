@@ -55,6 +55,29 @@ const patches = [
             if (!stillExists)
                 return;`,
   },
+  {
+    name: 'zen-fs-config-ui: 描述符在但会话内无实例时补载一次（修「已连接却显示未连接」）',
+    files: distFiles('zen-fs-config-ui'),
+    from: `    this.groupUnavailable = /* @__PURE__ */ new Map();
+    for (const d of this.dataGroups) {
+      if (!this.groupInstances.has(d.id)) {
+        this.groupUnavailable.set(`,
+    to: `    this.groupUnavailable = /* @__PURE__ */ new Map();
+    for (const d of this.dataGroups) {
+      if (!this.groupInstances.has(d.id)) {
+        // 描述符已登记、但本次会话没有实例：多半是连接时配置组还没同步完（时序）。
+        // 只对已有描述符补载一次，仍然失败才降级成「未连接」。
+        try {
+          const healed = await this.repo.getAppDataGroup(d.id);
+          if (healed) {
+            this.groupInstances.set(healed.groupId, healed);
+            continue;
+          }
+        } catch (e) {
+          /* 保持未连接 */
+        }
+        this.groupUnavailable.set(`,
+  },
 ]
 
 let failed = 0
