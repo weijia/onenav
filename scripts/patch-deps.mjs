@@ -8,8 +8,9 @@
  * 而 vite 打包走的是 ESM。所以每条补丁按「目录下所有候选文件」逐一下手，
  * 命中哪个改哪个；一个都没命中就报错退出，避免补丁静默失效。
  *
- * 当前只剩一条：zen-fs-gitee 的内联 global bundle 还是旧代码（delete 400 复检按 200+[] 判不存在）。
- * 历史上另外三条已随发版落地，必须删掉，否则会对着已修好的代码重复注入：
+ * 当前没有任何补丁：最后一条（zen-fs-gitee delete 400 复检按 200+[] 判不存在）
+ * 已随 zen-fs-gitee 1.2.43 发布，必须删掉，否则会对着已修好的代码重复注入。
+ * 历史上其它三条也已随发版落地：
  *  - zen-fs-config readFile 兼容 'utf8' / { encoding }  → 0.8.0 起随包发布
  *  - zen-fs-sync   lastError 带路径 + 干净轮次清除历史错误 → 0.4.18 起随包发布
  *  - zen-fs-config-ui 描述符已登记但会话无实例时补载一次  → 0.4.0 起随包发布
@@ -29,18 +30,7 @@ function distFiles(pkg) {
     .map((f) => join(dir, f))
 }
 
-const patches = [
-  {
-    name: 'zen-fs-gitee: delete 400 复检按 200+[] 判不存在',
-    files: distFiles('zen-fs-gitee'),
-    from: `            const stillExists = await this.request(\`/repos/\${this.owner}/\${this.repo}/contents/\${apiPath(path)}?ref=\${this.currentBranch}\`, undefined, { quiet404: true }).then(() => true).catch(() => false);\n            if (!stillExists)\n                return;`,
-    to: `            const probe = await this.request(\`/repos/\${this.owner}/\${this.repo}/contents/\${apiPath(path)}?ref=\${this.currentBranch}\`, undefined, { quiet404: true }).catch(() => null);
-            // Gitee 用 200 + [] 表示路径不存在；数组响应只能说明"是个目录"，都不算文件仍在。
-            const stillExists = !!probe && !Array.isArray(probe);
-            if (!stillExists)
-                return;`,
-  },
-]
+const patches = []
 
 let failed = 0
 for (const p of patches) {
