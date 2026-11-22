@@ -692,11 +692,12 @@ export default function GolfApp() {
         >
           同步组
         </button>
-        {syncOpen && (
-          <div className="absolute top-14 right-3 z-[650] w-96 max-w-[calc(100%-1.5rem)] rounded-lg bg-slate-900/95 border border-white/15 text-white shadow-lg">
-            <GolfSyncPanel />
-          </div>
-        )}
+        {/* 面板常驻挂载、只切显隐：连接由 config-ui 在挂载时发起，条件渲染会导致「不点开就永不连接」 */}
+        <div
+          className={`absolute top-14 right-3 z-[650] w-96 max-w-[calc(100%-1.5rem)] rounded-lg bg-slate-900/95 border border-white/15 text-white shadow-lg ${syncOpen ? '' : 'hidden'}`}
+        >
+          <GolfSyncPanel />
+        </div>
         <MapCanvas
           data={data}
           basemapId={layerPrefs.basemap}
