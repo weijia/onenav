@@ -1,17 +1,18 @@
 /**
  * 构建期依赖补丁（幂等）。
  *
- * 这些修复尚未发版，但线上构建走 `npm ci` 只能拿到 registry 版本，
- * 所以在 build 前对 node_modules 做定点替换，保证构建产物与本地源码一致。
+ * 只为「源码已修好、但 registry 版本还没修」的点打补丁：线上构建走 `npm ci`
+ * 只能拿到 registry 版本，所以 build 前对 node_modules 做定点替换，保证构建产物与本地源码一致。
  *
  * 关键：同一个包同时存在 CJS(`dist/*.js`) 与 ESM(`dist/*.mjs`，可能被拆进 chunk)，
  * 而 vite 打包走的是 ESM。所以每条补丁按「目录下所有候选文件」逐一下手，
  * 命中哪个改哪个；一个都没命中就报错退出，避免补丁静默失效。
  *
- * 对应源码修复：
- *  - zen-fs-config  src/backend-registry.ts   readFile 兼容 'utf8' / { encoding }
- *  - zen-fs-sync    src/sync-pair.ts          lastError 带文件路径 + 干净轮次清除历史错误
- *  - zen-fs-gitee   src/gitee-api.ts          delete 400 复检按 200+[] 判不存在
+ * 当前只剩一条：zen-fs-gitee 的内联 global bundle 还是旧代码（delete 400 复检按 200+[] 判不存在）。
+ * 历史上另外三条已随发版落地，必须删掉，否则会对着已修好的代码重复注入：
+ *  - zen-fs-config readFile 兼容 'utf8' / { encoding }  → 0.8.0 起随包发布
+ *  - zen-fs-sync   lastError 带路径 + 干净轮次清除历史错误 → 0.4.18 起随包发布
+ *  - zen-fs-config-ui 描述符已登记但会话无实例时补载一次  → 0.4.0 起随包发布
  */
 import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
@@ -30,22 +31,6 @@ function distFiles(pkg) {
 
 const patches = [
   {
-    name: 'zen-fs-config: readFile 兼容 utf8 编码串 / encoding 选项',
-    files: distFiles('zen-fs-config'),
-    from: `      if (args[0] === "utf-8") return new TextDecoder().decode(buf);`,
-    to: `      const enc = typeof args[0] === "string" ? args[0] : args[0] && args[0].encoding;
-      if (enc === "utf-8" || enc === "utf8" || enc === "UTF-8") return new TextDecoder().decode(buf);`,
-  },
-  {
-    name: 'zen-fs-sync: lastError 带路径 + 干净轮次清除历史错误',
-    files: distFiles('zen-fs-sync'),
-    from: `        this.lastError = { message: result.errors[0].message, timestamp: result.timestamp };`,
-    to: `        const e0 = result.errors[0];
-        this.lastError = { message: (e0.path ? e0.path + ': ' : '') + e0.message, timestamp: result.timestamp };
-      } else if (this.lastError) {
-        this.lastError = void 0;`,
-  },
-  {
     name: 'zen-fs-gitee: delete 400 复检按 200+[] 判不存在',
     files: distFiles('zen-fs-gitee'),
     from: `            const stillExists = await this.request(\`/repos/\${this.owner}/\${this.repo}/contents/\${apiPath(path)}?ref=\${this.currentBranch}\`, undefined, { quiet404: true }).then(() => true).catch(() => false);\n            if (!stillExists)\n                return;`,
@@ -54,29 +39,6 @@ const patches = [
             const stillExists = !!probe && !Array.isArray(probe);
             if (!stillExists)
                 return;`,
-  },
-  {
-    name: 'zen-fs-config-ui: 描述符在但会话内无实例时补载一次（修「已连接却显示未连接」）',
-    files: distFiles('zen-fs-config-ui'),
-    from: `    this.groupUnavailable = /* @__PURE__ */ new Map();
-    for (const d of this.dataGroups) {
-      if (!this.groupInstances.has(d.id)) {
-        this.groupUnavailable.set(`,
-    to: `    this.groupUnavailable = /* @__PURE__ */ new Map();
-    for (const d of this.dataGroups) {
-      if (!this.groupInstances.has(d.id)) {
-        // 描述符已登记、但本次会话没有实例：多半是连接时配置组还没同步完（时序）。
-        // 只对已有描述符补载一次，仍然失败才降级成「未连接」。
-        try {
-          const healed = await this.repo.getAppDataGroup(d.id);
-          if (healed) {
-            this.groupInstances.set(healed.groupId, healed);
-            continue;
-          }
-        } catch (e) {
-          /* 保持未连接 */
-        }
-        this.groupUnavailable.set(`,
   },
 ]
 
