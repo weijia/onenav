@@ -40,6 +40,7 @@ import {
 } from './filebrowser/fetch'
 import FileBrowserSyncPanel from './filebrowser/FileBrowserSyncPanel'
 import { filterTree, normalizeManifests, countTaggedNodes } from './filebrowser/normalize'
+import { volumeSerialInfo } from './filebrowser/volumeSerial'
 import type { FileNodeView, FolderNodeView, FsNodeView, ManifestView } from './filebrowser/types'
 
 type LoadState = 'loading' | 'error' | 'empty' | 'data'
@@ -1109,6 +1110,17 @@ function DriveTooltip({
     '卷标识',
     node.volumeId ?? '未写入 .dir-struct-id（按 主机::盘符 去重）',
   ])
+  // 磁盘 SN：清单本身不记录物理盘序列号，卷 ID 是 openlist 按盘序号拼出来的
+  // （openlist-<SN>-<单个数字>）时按同一规则现算，规则与 zip-browser 侧一致。
+  const serialInfo = volumeSerialInfo(node.volumeId)
+  if (serialInfo.serial) {
+    rows.push([
+      '磁盘 SN',
+      serialInfo.source === 'derived'
+        ? `${serialInfo.serial}（按卷 ID 推断）`
+        : serialInfo.serial,
+    ])
+  }
   rows.push(['子目录', `${formatCount(countDescendantFolders(node))} 个（递归）`])
   if (node.fileCount !== undefined) rows.push(['文件数', `${formatCount(node.fileCount)} 个`])
   if (node.totalSize !== undefined) rows.push(['逻辑大小', formatSize(node.totalSize)])
