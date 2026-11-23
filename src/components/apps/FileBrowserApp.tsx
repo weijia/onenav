@@ -1676,12 +1676,12 @@ function VolumeLevelRow({
             </DiskChip>
           )}
           {node.matchLabel && <DiskChip>{node.matchLabel}</DiskChip>}
-          {node.fileCount !== undefined && (
+          {node.fileCount !== undefined && node.fileCount > 0 && (
             <span className="text-white/35 text-[11px] font-mono tabular-nums">
               {formatCount(node.fileCount)} 文件
             </span>
           )}
-          {node.totalSize !== undefined && (
+          {node.totalSize !== undefined && node.totalSize > 0 && (
             <span className="text-white/35 text-[11px] font-mono tabular-nums">{formatSize(node.totalSize)}</span>
           )}
         </>
