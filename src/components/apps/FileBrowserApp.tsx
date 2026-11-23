@@ -39,9 +39,10 @@ import {
   RsAuthError,
 } from './filebrowser/fetch'
 import FileBrowserSyncPanel from './filebrowser/FileBrowserSyncPanel'
+import { readManifestCache, writeManifestCache } from './filebrowser/cache'
 import { filterTree, normalizeManifests, countTaggedNodes } from './filebrowser/normalize'
 import { volumeSerialInfo } from './filebrowser/volumeSerial'
-import type { FileNodeView, FolderNodeView, FsNodeView, ManifestView } from './filebrowser/types'
+import type { FileNodeView, FolderNodeView, FsNodeView, ManifestView, RawManifest } from './filebrowser/types'
 
 type LoadState = 'loading' | 'error' | 'empty' | 'data'
 
@@ -91,6 +92,8 @@ export default function FileBrowserApp() {
     shardGroups?: string[][]
   } | null>(null)
   const [deleting, setDeleting] = useState(false)
+  // 本机缓存时间戳：非 null 表示当前画的是缓存（同步组还没连上/还在读），连接后自动换成实时数据。
+  const [cacheAt, setCacheAt] = useState<number | null>(null)
 
   useEffect(() => {
     const isTextInput = (t: EventTarget | null): boolean => {
@@ -135,13 +138,32 @@ export default function FileBrowserApp() {
   }, [])
 
   const load = useCallback(async () => {
-    setState('loading')
     setErrorMsg('')
     setErrorCode('')
+    // 先画本机缓存，别空等同步组连接（冷启动连组 + 首轮同步实测常要 10–30s）。
+    let showedCache = false
+    try {
+      const cached = await readManifestCache()
+      if (cached) {
+        const ms = normalizeManifests(cached.raws as RawManifest[])
+        if (ms.length) {
+          setManifests(ms)
+          setCacheAt(cached.at)
+          setState('data')
+          showedCache = true
+        }
+      }
+    } catch {
+      /* 缓存不可用就当没有 */
+    }
+    if (!showedCache) setState('loading')
     try {
       const raws = await fetchDirStructManifests()
       const ms = normalizeManifests(raws)
       setManifests(ms)
+      setCacheAt(null)
+      // 读成功才刷新缓存；写失败不影响浏览
+      void writeManifestCache(raws)
       // 并发加载每台主机每个驱动的深挖标记与用户标签（按卷身份命名空间）。
       const marks: Record<string, Set<string>> = {}
       const tags: Record<string, Record<string, string[]>> = {}
@@ -185,7 +207,8 @@ export default function FileBrowserApp() {
         setErrorCode('UNKNOWN')
         setErrorMsg(e instanceof Error ? e.message : String(e))
       }
-      setState('error')
+      // 有缓存时继续显示缓存内容，只在顶部提示「未连上/读取失败」，不整页报错。
+      if (!showedCache) setState('error')
     }
   }, [])
 
@@ -338,7 +361,22 @@ export default function FileBrowserApp() {
         </div>
       </div>
 
-      <FileBrowserSyncPanel onReady={() => void load()} />
+      {/* 缓存态提示：同步组还没连上时先看内容，连上后自动换成实时数据。 */}
+      {cacheAt !== null && (
+        <div className="rounded-lg border px-3 py-2 text-xs leading-relaxed bg-amber-500/10 border-amber-400/25 text-amber-100/85 flex items-center gap-2 flex-wrap">
+          <span>
+            {`当前显示本机缓存（${formatClock(cacheAt)}），正在连同步组…`}
+            {errorMsg ? `同步组未连上：${errorMsg}` : ''}
+          </span>
+          <button
+            type="button"
+            onClick={() => void load()}
+            className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 text-amber-50/90"
+          >
+            立即重试
+          </button>
+        </div>
+      )}
 
       {state === 'data' && (
         <div className="flex items-center gap-3 flex-wrap">
@@ -533,6 +571,9 @@ export default function FileBrowserApp() {
           </div>
         ))}
 
+      {/* 同步组设置放在页面底部：日常浏览不需要它，连接异常时再下来改。 */}
+      <FileBrowserSyncPanel onReady={() => void load()} />
+
       <TagEditorModal
         editor={tagEditor}
         allTags={allUserTags}
@@ -554,6 +595,19 @@ export default function FileBrowserApp() {
 }
 
 // ── 状态小组件 ──
+
+/** 缓存时间显示为 HH:MM（跨天显示月-日 HH:MM）。 */
+function formatClock(ts: number): string {
+  const d = new Date(ts)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const today = new Date()
+  const sameDay =
+    d.getFullYear() === today.getFullYear() &&
+    d.getMonth() === today.getMonth() &&
+    d.getDate() === today.getDate()
+  const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`
+  return sameDay ? hm : `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${hm}`
+}
 
 function LoadingState() {
   return (
