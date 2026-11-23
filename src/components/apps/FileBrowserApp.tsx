@@ -602,11 +602,12 @@ export default function FileBrowserApp() {
               tree={diskTree}
               marksByKey={marksByKey}
               tagsByKey={tagsByKey}
-              tagFilter={tagFilter}
+              // 标签筛选只在目录视图生效；磁盘视图里标签仅作展示，避免点了却没反应
+              tagFilter={null}
               collapseSignal={collapseSignal}
               onToggle={toggleMark}
               onSetTags={setNodeTags}
-              onTagClick={(t) => setTagFilter((prev) => (prev === t ? null : t))}
+              onTagClick={() => {}}
               onEditTags={(key, path, current) => setTagEditor({ key, path, current })}
             />
           </>
