@@ -302,16 +302,19 @@ export function partitionBuckets(
   return { partitions, loose }
 }
 
-/** 清单侧索引：volumeId → 盘符节点（含目录树），并留一份「主机::盘符」的兜底索引。 */
+/** 清单侧索引：volumeId → 盘符节点（含目录树），并留「主机::盘符」「盘符名」两份兜底索引。 */
 interface ManifestIndex {
   byVolumeId: Map<string, FolderNodeView>
   byHostDrive: Map<string, FolderNodeView>
+  /** 盘符名 → 节点（仅用于 /WD-xxx/1 这类可唯一定位的路径式盘符） */
+  byDriveName: Map<string, FolderNodeView>
   hostOfVolume: Map<string, string>
 }
 
 export function indexManifests(manifests: ManifestView[]): ManifestIndex {
   const byVolumeId = new Map<string, FolderNodeView>()
   const byHostDrive = new Map<string, FolderNodeView>()
+  const byDriveName = new Map<string, FolderNodeView>()
   const hostOfVolume = new Map<string, string>()
   for (const m of manifests) {
     for (const child of m.root.children) {
@@ -323,9 +326,11 @@ export function indexManifests(manifests: ManifestView[]): ManifestIndex {
       }
       const key = `${lower(m.source)}::${lower(child.name)}`
       if (!byHostDrive.has(key)) byHostDrive.set(key, child)
+      const nameKey = lower(child.name)
+      if (!byDriveName.has(nameKey)) byDriveName.set(nameKey, child)
     }
   }
-  return { byVolumeId, byHostDrive, hostOfVolume }
+  return { byVolumeId, byHostDrive, byDriveName, hostOfVolume }
 }
 
 /**
@@ -359,9 +364,21 @@ export function buildDiskTree(doc: HostDisksDoc | null, manifests: ManifestView[
     if (!id) return null
     const rec = findVolume(withDerived, id)
     const key = lower(id)
-    const tree = index.byVolumeId.get(key)
-      || (fallbackHost ? index.byHostDrive.get(`${lower(fallbackHost)}::${lower(driveHint || rec?.drive)}`) : undefined)
-    if (tree) consumed.add(key)
+    const drive = text(rec?.drive) || text(driveHint)
+    // 关联目录树：先按 volumeId（最准）；老清单里盘符节点的 .dir-struct-id 可能和
+    // 文档里的卷 ID 不一致（如 openlist-WD-xxx-1 对 /WD-xxx/1），再用「主机::盘符」和
+    // 路径式盘符名兜底，避免明明扫过却显示「没有目录结构」。
+    const hostHint = text(rec?.sourceHost) || text(rec?.telemetry?.hostname) || fallbackHost
+    const pathLikeDrive = /[/\\]/.test(drive) || !/^\s*[A-Za-z]:?\s*$/.test(drive)
+    const tree =
+      index.byVolumeId.get(key) ||
+      (hostHint ? index.byHostDrive.get(`${lower(hostHint)}::${lower(drive)}`) : undefined) ||
+      (pathLikeDrive ? index.byDriveName.get(lower(drive)) : undefined)
+    if (tree) {
+      consumed.add(key)
+      const treeVid = text(tree.volumeId)
+      if (treeVid) consumed.add(lower(treeVid))
+    }
     const telSerial = text(rec?.telemetry?.serial)
     const manual = text(rec?.manualSerial)
     const derived = text(rec?.derivedSerial) || deriveSerialFromVolumeId(id)
@@ -369,15 +386,20 @@ export function buildDiskTree(doc: HostDisksDoc | null, manifests: ManifestView[
     const serial = telSerial || manual || derived
     const serialSource: SerialSource = telSerial ? 'telemetry' : manual ? 'manual' : derived ? 'derived' : 'none'
     const matchBy = text(rec?.matchBy)
+    // 统计数字以文档为准；文档是 0/缺失但清单里有统计时退回清单（否则会出现「0 文件」却挂着大目录树）
+    const docFileCount = typeof rec?.fileCount === 'number' ? rec.fileCount : undefined
+    const docTotalSize = typeof rec?.totalSize === 'number' ? rec.totalSize : undefined
+    const fileCount = docFileCount && docFileCount > 0 ? docFileCount : (tree?.fileCount ?? docFileCount)
+    const totalSize = docTotalSize && docTotalSize > 0 ? docTotalSize : (tree?.totalSize ?? docTotalSize)
     return {
       volumeId: id,
-      drive: text(rec?.drive) || text(driveHint),
+      drive,
       alias: text(volumeAliases[id]) || text(volumeAliases[key]) || '',
       matchLabel: matchBy ? matchLabel(matchBy) : '',
       serial,
       serialSource,
-      fileCount: typeof rec?.fileCount === 'number' ? rec.fileCount : undefined,
-      totalSize: typeof rec?.totalSize === 'number' ? rec.totalSize : undefined,
+      fileCount,
+      totalSize,
       tree,
       shardBases: tree?.shardBases,
     }

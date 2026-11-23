@@ -178,6 +178,32 @@ describe('buildDiskTree：主机 → 磁盘 → 分区 → 卷', () => {
     expect(out.hosts.map((h) => h.name)).toEqual(['RICHARD'])
     expect(out.emptyHosts.map((h) => h.name)).toEqual(['mi10'])
   })
+
+  it('文档是 0 而清单有统计时，退回清单数字', () => {
+    const zeroDoc: HostDisksDoc = {
+      hosts: [{ hostId: 'h1', hostname: 'HOST1', disks: [{ serial: 'S1', logicalDisks: [{ deviceId: 'C:' }], volumes: ['v-zero'] }] }],
+      volumes: [{ volumeId: 'v-zero', drive: 'C:', fileCount: 0, totalSize: 0 }],
+    }
+    const tree = buildDiskTree(zeroDoc, [manifest('HOST1', 'v-zero', 'C:')])
+    const vol = tree.hosts[0].disks[0].partitions[0].volumes[0]
+    expect(vol.volumeId).toBe('v-zero')
+    // 清单里这台主机 C: 节点没有统计字段，因此仍是 undefined；有统计时才会覆盖 0
+    expect(vol.tree?.name).toBe('C:')
+  })
+
+  it('卷 ID 与清单 .dir-struct-id 不一致时，用路径式盘符名兜底挂上目录树', () => {
+    const mismatchDoc: HostDisksDoc = {
+      hosts: [],
+      volumes: [{ volumeId: 'openlist-WD-WCAZAK926835-1', drive: '/WD-WCAZAK926835/1', fileCount: 21117 }],
+      orphans: ['openlist-WD-WCAZAK926835-1'],
+    }
+    const out = buildDiskTree(mismatchDoc, [manifest('openlist', 'WD-WCAZAK926835', '/WD-WCAZAK926835/1')])
+    const vol = out.orphanVolumes[0]
+    expect(vol.tree?.name).toBe('/WD-WCAZAK926835/1')
+    expect(vol.fileCount).toBe(21117)
+    // 已挂到卷上的清单不该再出现在「清单里有、文档里没有」组
+    expect(out.unregistered).toHaveLength(0)
+  })
 })
 
 describe('applyDerivedSerials：没有磁盘信息的 openlist 卷按卷 ID 推断', () => {
