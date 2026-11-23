@@ -137,6 +137,8 @@ export interface UnlistedGroup {
 
 export interface DiskTreeResult {
   hosts: HostNode[]
+  /** 文档里有、但既没有磁盘也没有卷记录的主机（只在末尾汇总一行展示，避免刷屏） */
+  emptyHosts: HostNode[]
   /** 没有主机归属的卷（文档 orphans） */
   orphanVolumes: VolumeNode[]
   /** 清单里有、磁盘文档里没有的卷（按主机分组） */
@@ -332,6 +334,7 @@ export function indexManifests(manifests: ManifestView[]): ManifestIndex {
 export function buildDiskTree(doc: HostDisksDoc | null, manifests: ManifestView[]): DiskTreeResult {
   const empty: DiskTreeResult = {
     hosts: [],
+    emptyHosts: [],
     orphanVolumes: [],
     unregistered: [],
     generatedAt: null,
@@ -380,7 +383,7 @@ export function buildDiskTree(doc: HostDisksDoc | null, manifests: ManifestView[
     }
   }
 
-  const hosts: HostNode[] = (withDerived.hosts || []).map((host) => {
+  const allHosts: HostNode[] = (withDerived.hosts || []).map((host) => {
     const hostKey = hostKeyOf(host)
     const name = text(host.hostname) || text(host.deviceName) || hostKey || '（未命名主机）'
     const disks: DiskNode[] = (host.disks || []).map((disk) => {
@@ -411,7 +414,11 @@ export function buildDiskTree(doc: HostDisksDoc | null, manifests: ManifestView[
       .sort((a, b) => a.volumeId.localeCompare(b.volumeId, undefined, { numeric: true }))
     return { hostId: hostKey, name, deviceName: text(host.deviceName), local: host.local === true, disks, unassigned }
   })
-  hosts.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
+  allHosts.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
+  // 文档里那些只登记了主机名、没有任何磁盘/卷信息的（多为手机/旁路由），
+  // 单独汇总，避免整页十来张空卡片。
+  const hosts = allHosts.filter((h) => h.disks.length > 0 || h.unassigned.length > 0)
+  const emptyHosts = allHosts.filter((h) => h.disks.length === 0 && h.unassigned.length === 0)
 
   const orphanVolumes = (withDerived.orphans || [])
     .map((id) => makeVolume(id))
@@ -465,6 +472,7 @@ export function buildDiskTree(doc: HostDisksDoc | null, manifests: ManifestView[
 
   return {
     hosts,
+    emptyHosts,
     orphanVolumes,
     unregistered,
     generatedAt: text(withDerived.generatedAt) || null,

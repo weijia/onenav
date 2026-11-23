@@ -1876,7 +1876,7 @@ function DiskView({
 }) {
   const volumeProps = { marksByKey, tagsByKey, tagFilter, collapseSignal, onToggle, onSetTags, onTagClick, onEditTags }
   const nothing = !tree.hosts.length && !tree.orphanVolumes.length && !tree.unregistered.length
-  if (nothing) {
+  if (nothing && !tree.emptyHosts.length) {
     return <div className="text-white/30 text-sm text-center py-8">磁盘文档里还没有主机 / 磁盘记录</div>
   }
   return (
@@ -1912,6 +1912,20 @@ function DiskView({
           </div>
         </div>
       ))}
+      {tree.emptyHosts.length > 0 && (
+        <div className="rounded-xl bg-white/5 border border-white/10 p-4 space-y-1">
+          <div className="flex items-center gap-2">
+            <Server className="w-4 h-4 text-white/40 shrink-0" />
+            <span className="text-white/70 text-sm font-medium">无磁盘信息的主机</span>
+            <span className="text-white/35 text-xs">
+              {tree.emptyHosts.length} 台（文档里只有主机名，没有磁盘扫描记录）
+            </span>
+          </div>
+          <div className="text-white/40 text-xs leading-relaxed break-words">
+            {tree.emptyHosts.map((h) => h.name).join('、')}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

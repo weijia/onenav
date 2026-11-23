@@ -168,6 +168,16 @@ describe('buildDiskTree：主机 → 磁盘 → 分区 → 卷', () => {
     expect(buildDiskTree(null, []).hosts).toEqual([])
     expect(buildDiskTree({}, []).stats.hosts).toBe(0)
   })
+
+  it('只有主机名、没有磁盘和卷的主机单独汇总，不刷空卡片', () => {
+    const withEmpty: HostDisksDoc = {
+      ...doc,
+      hosts: [...(doc.hosts || []), { hostId: 'h-phone', hostname: 'mi10' }],
+    }
+    const out = buildDiskTree(withEmpty, manifests)
+    expect(out.hosts.map((h) => h.name)).toEqual(['RICHARD'])
+    expect(out.emptyHosts.map((h) => h.name)).toEqual(['mi10'])
+  })
 })
 
 describe('applyDerivedSerials：没有磁盘信息的 openlist 卷按卷 ID 推断', () => {
