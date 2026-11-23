@@ -8,6 +8,7 @@
 // 磁盘行（盘符，depth=0）悬浮显示卷信息卡片：卷标识、挂载主机、统计、分片来源、标签等。
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import {
   Server,
   RefreshCw,
@@ -39,7 +40,9 @@ import {
   RsAuthError,
 } from './filebrowser/fetch'
 import FileBrowserSyncPanel from './filebrowser/FileBrowserSyncPanel'
-import { readManifestCache, writeManifestCache } from './filebrowser/cache'
+import { readHostDisksCache, readManifestCache, writeHostDisksCache, writeManifestCache } from './filebrowser/cache'
+import { fetchHostDisksDoc } from './filebrowser/hostDisks'
+import { buildDiskTree, type DiskTreeResult, type HostNode, type PartitionNode, type VolumeNode } from './filebrowser/diskTree'
 import { filterTree, normalizeManifests, countTaggedNodes } from './filebrowser/normalize'
 import { volumeSerialInfo } from './filebrowser/volumeSerial'
 import type { FileNodeView, FolderNodeView, FsNodeView, ManifestView, RawManifest } from './filebrowser/types'
@@ -94,6 +97,12 @@ export default function FileBrowserApp() {
   const [deleting, setDeleting] = useState(false)
   // 本机缓存时间戳：非 null 表示当前画的是缓存（同步组还没连上/还在读），连接后自动换成实时数据。
   const [cacheAt, setCacheAt] = useState<number | null>(null)
+  // 视图：'struct' = 现有「按主机看目录结构」，'disk' = 「主机 → 磁盘 → 逻辑分区 → 卷」逐层下钻。
+  const [view, setView] = useState<'struct' | 'disk'>('struct')
+  // 主机磁盘文档（数据组里的 host-disks.v2.json）：磁盘视图的数据来源。
+  const [hostDisksDoc, setHostDisksDoc] = useState<Record<string, unknown> | null>(null)
+  const [hostDisksAt, setHostDisksAt] = useState<number | null>(null)
+  const [hostDisksError, setHostDisksError] = useState('')
 
   useEffect(() => {
     const isTextInput = (t: EventTarget | null): boolean => {
@@ -137,13 +146,34 @@ export default function FileBrowserApp() {
     setTagFilter((prev) => (prev?.toLowerCase() === PRIVATE_TAG ? null : prev))
   }, [])
 
+  // 读主机磁盘文档：连接就绪后单独拉一次，不阻塞目录树渲染；失败保留缓存并记录原因。
+  const loadHostDisks = useCallback(async () => {
+    try {
+      const res = await fetchHostDisksDoc()
+      if (res.doc) {
+        setHostDisksDoc(res.doc)
+        setHostDisksAt(Date.now())
+        setHostDisksError('')
+        void writeHostDisksCache(res.doc)
+      } else {
+        setHostDisksError(res.error)
+      }
+    } catch (e) {
+      setHostDisksError(e instanceof Error ? e.message : String(e))
+    }
+  }, [])
+
   const load = useCallback(async () => {
     setErrorMsg('')
     setErrorCode('')
     // 先画本机缓存，别空等同步组连接（冷启动连组 + 首轮同步实测常要 10–30s）。
     let showedCache = false
     try {
-      const cached = await readManifestCache()
+      const [cached, cachedDisks] = await Promise.all([readManifestCache(), readHostDisksCache()])
+      if (cachedDisks) {
+        setHostDisksDoc(cachedDisks.doc)
+        setHostDisksAt(cachedDisks.at)
+      }
       if (cached) {
         const ms = normalizeManifests(cached.raws as RawManifest[])
         if (ms.length) {
@@ -164,6 +194,8 @@ export default function FileBrowserApp() {
       setCacheAt(null)
       // 读成功才刷新缓存；写失败不影响浏览
       void writeManifestCache(raws)
+      // 数据组此时已就绪，顺手把主机磁盘文档拉一遍（不 await，避免拖慢目录树）
+      void loadHostDisks()
       // 并发加载每台主机每个驱动的深挖标记与用户标签（按卷身份命名空间）。
       const marks: Record<string, Set<string>> = {}
       const tags: Record<string, Record<string, string[]>> = {}
@@ -324,6 +356,12 @@ export default function FileBrowserApp() {
     [manifests],
   )
 
+  // 磁盘视图模型：主机磁盘文档 × 目录清单（按 volumeId 把清单里该卷的目录树挂到卷节点下）。
+  const diskTree = useMemo(
+    () => buildDiskTree(hostDisksDoc as Parameters<typeof buildDiskTree>[0], manifests),
+    [hostDisksDoc, manifests],
+  )
+
   // 全部已用过的用户标签（用于编辑弹窗的「建议已有标签」）。
   const allUserTags = useMemo(() => {
     const s = new Set<string>()
@@ -343,6 +381,29 @@ export default function FileBrowserApp() {
           文件浏览器
         </h1>
         <div className="flex items-center gap-2">
+          <div className="flex items-center rounded-lg bg-white/5 p-0.5 text-xs">
+            {([
+              ['struct', '目录视图', FolderTreeIcon],
+              ['disk', '磁盘视图', HardDrive],
+            ] as const).map(([key, label, Icon]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setView(key)}
+                title={
+                  key === 'disk'
+                    ? '按「主机 → 磁盘 → 逻辑分区 → 卷」逐层下钻，卷里继续看目录树'
+                    : '按主机看目录结构清单（原有视图）'
+                }
+                className={`px-2.5 py-1 rounded-md flex items-center gap-1.5 transition-colors ${
+                  view === key ? 'bg-white/15 text-white' : 'text-white/55 hover:text-white/80'
+                }`}
+              >
+                <Icon className="w-3.5 h-3.5" />
+                {label}
+              </button>
+            ))}
+          </div>
           <button
             onClick={() => setCollapseSignal((v) => v + 1)}
             title="收起全部目录（筛选命中时仍保持展开）"
@@ -378,7 +439,7 @@ export default function FileBrowserApp() {
         </div>
       )}
 
-      {state === 'data' && (
+      {view === 'struct' && state === 'data' && (
         <div className="flex items-center gap-3 flex-wrap">
           <span className="text-white/45 text-xs">{manifests.length} 台主机</span>
           <span className="text-white/45 text-xs">{totalFolders} 个文件夹</span>
@@ -408,7 +469,7 @@ export default function FileBrowserApp() {
         </div>
       )}
 
-      {state === 'data' && (
+      {view === 'struct' && state === 'data' && (
         <div className="flex items-center gap-2 flex-wrap text-xs">
           <span className="text-white/45">目录大小</span>
           <select
@@ -512,10 +573,65 @@ export default function FileBrowserApp() {
         </div>
       )}
 
-      {state === 'loading' && <LoadingState />}
-      {state === 'error' && <ErrorState code={errorCode} message={errorMsg} onRetry={load} />}
-      {state === 'empty' && <EmptyState onRetry={load} />}
-      {state === 'data' &&
+      {view === 'disk' &&
+        (hostDisksDoc ? (
+          <>
+            <div className="flex items-center gap-3 flex-wrap text-xs">
+              <span className="text-white/45">{diskTree.stats.hosts} 台主机</span>
+              <span className="text-white/45">{diskTree.stats.disks} 块磁盘</span>
+              <span className="text-white/45">{diskTree.stats.volumes} 个卷</span>
+              {diskTree.inferredVolumes > 0 && (
+                <span className="text-sky-200/60" title="没有遥测/手工 SN、按卷 ID 形如 openlist-<SN>-<数字> 现算出来的">
+                  {diskTree.inferredVolumes} 个卷按卷 ID 推断 SN
+                </span>
+              )}
+              {formatGeneratedAt(diskTree.generatedAt) && (
+                <span className="text-white/35">文档生成于 {formatGeneratedAt(diskTree.generatedAt)}</span>
+              )}
+              {hostDisksAt !== null && (
+                <span className="text-white/30">读取于 {formatClock(hostDisksAt)}</span>
+              )}
+              {hostDisksError && (
+                <span className="text-amber-300/80 flex items-center gap-1">
+                  <FileWarning className="w-3 h-3" />
+                  {hostDisksError}
+                </span>
+              )}
+            </div>
+            <DiskView
+              tree={diskTree}
+              marksByKey={marksByKey}
+              tagsByKey={tagsByKey}
+              tagFilter={tagFilter}
+              collapseSignal={collapseSignal}
+              onToggle={toggleMark}
+              onSetTags={setNodeTags}
+              onTagClick={(t) => setTagFilter((prev) => (prev === t ? null : t))}
+              onEditTags={(key, path, current) => setTagEditor({ key, path, current })}
+            />
+          </>
+        ) : (
+          <div className="rounded-xl bg-white/5 border border-white/10 p-6 text-center space-y-3">
+            <HardDrive className="w-8 h-8 text-white/40 mx-auto" />
+            <div className="text-white/70">数据组里还没有主机磁盘文档</div>
+            <div className="text-white/40 text-xs leading-relaxed">
+              `host-disks/host-disks.v2.json` 由 zip-browser 的「主机磁盘」视图扫描本机后写回；
+              在那边点一次读取/写回，这里刷新即可按「主机 → 磁盘 → 分区 → 卷」浏览。
+              {hostDisksError && <div className="text-amber-300/70 mt-2">{hostDisksError}</div>}
+            </div>
+            <button
+              onClick={() => void loadHostDisks()}
+              className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-white/80 text-sm"
+            >
+              重新读取
+            </button>
+          </div>
+        ))}
+
+      {view === 'struct' && state === 'loading' && <LoadingState />}
+      {view === 'struct' && state === 'error' && <ErrorState code={errorCode} message={errorMsg} onRetry={load} />}
+      {view === 'struct' && state === 'empty' && <EmptyState onRetry={load} />}
+      {view === 'struct' && state === 'data' &&
         (filtered.length === 0 ? (
           <div className="text-white/30 text-sm text-center py-8">
             {q || tagFilter || sizeFilter ? '无匹配的文件或文件夹' : '/struct 下暂无目录结构清单'}
@@ -1420,8 +1536,387 @@ function FolderTree({
   )
 }
 
-/** 删除确认弹窗：列出将删除的清单文件，确认后走数据组 deleteFile（墓碑 + 自动同步）。 */
-function DeleteConfirmModal({
+// ── 磁盘视图：主机 → 磁盘 → 逻辑分区 → 卷 →（卷内目录树）──
+//
+// 数据来自数据组里的 host-disks.v2.json（zip-browser 的主机磁盘视图写回的那份），
+// 卷里的目录树复用 /struct 清单（按 volumeId 挂上），所以这是一条从「监控主机」角度
+// 一路看到文件/文件夹的入口，和目录视图共用同一份数据、同一套标签与深挖标记。
+
+/** 一层可展开的行：缩进 + 箭头 + 图标 + 标题 + 元信息。 */
+function DiskLevelRow({
+  depth,
+  icon,
+  title,
+  subtitle,
+  meta,
+  expandable,
+  defaultOpen = false,
+  collapseSignal,
+  children,
+}: {
+  depth: number
+  icon: ReactNode
+  title: ReactNode
+  subtitle?: ReactNode
+  meta?: ReactNode
+  expandable: boolean
+  defaultOpen?: boolean
+  collapseSignal: number
+  children?: ReactNode
+}) {
+  const [open, setOpen] = useState(defaultOpen)
+  // 「全部收起」信号：非默认展开的行全部收回
+  useEffect(() => {
+    if (!defaultOpen) setOpen(false)
+  }, [collapseSignal, defaultOpen])
+  const expanded = open && !!children
+  return (
+    <div>
+      <div
+        className={`group flex items-center gap-1.5 py-1 pr-2 rounded hover:bg-white/5 ${
+          expandable ? 'cursor-pointer' : ''
+        }`}
+        style={{ paddingLeft: `${depth * 14 + 8}px` }}
+        onClick={expandable ? () => setOpen((v) => !v) : undefined}
+      >
+        {expandable ? (
+          expanded ? (
+            <ChevronDown className="w-3.5 h-3.5 shrink-0 text-white/45" />
+          ) : (
+            <ChevronRight className="w-3.5 h-3.5 shrink-0 text-white/45" />
+          )
+        ) : (
+          <span className="w-3.5 shrink-0" />
+        )}
+        <span className="shrink-0">{icon}</span>
+        <span className="text-white/80 text-sm truncate">{title}</span>
+        {subtitle}
+        <span className="ml-auto shrink-0 flex items-center gap-1.5">{meta}</span>
+      </div>
+      {expanded && children}
+    </div>
+  )
+}
+
+/** 小标签（SN 来源 / 匹配方式 / 别名等）。 */
+function DiskChip({
+  children,
+  tone = 'slate',
+  title,
+}: {
+  children: ReactNode
+  tone?: 'slate' | 'sky' | 'amber' | 'emerald'
+  title?: string
+}) {
+  const tones = {
+    slate: 'bg-white/5 text-white/45',
+    sky: 'bg-sky-500/15 text-sky-200/85',
+    amber: 'bg-amber-500/15 text-amber-200/85',
+    emerald: 'bg-emerald-500/15 text-emerald-200/85',
+  } as const
+  return (
+    <span
+      title={title}
+      className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-mono leading-none whitespace-nowrap ${tones[tone]}`}
+    >
+      {children}
+    </span>
+  )
+}
+
+/** 卷行：展开后就是该卷的目录树（/struct 清单里按 volumeId 挂上的那棵）。 */
+function VolumeLevelRow({
+  node,
+  depth,
+  marksByKey,
+  tagsByKey,
+  tagFilter,
+  collapseSignal,
+  onToggle,
+  onSetTags,
+  onTagClick,
+  onEditTags,
+}: {
+  node: VolumeNode
+  depth: number
+  marksByKey: Record<string, Set<string>>
+  tagsByKey: Record<string, Record<string, string[]>>
+  tagFilter: string | null
+  collapseSignal: number
+  onToggle: (key: string, path: string) => void
+  onSetTags: (key: string, path: string, tags: string[]) => void
+  onTagClick: (tag: string) => void
+  onEditTags: (key: string, path: string, current: string[]) => void
+}) {
+  const tree = node.tree
+  const childCount = tree ? tree.children.length : 0
+  const markKey = tree?.volumeId || node.volumeId
+  return (
+    <DiskLevelRow
+      depth={depth}
+      icon={<Folder className="w-4 h-4 text-sky-300/70" />}
+      expandable={childCount > 0}
+      collapseSignal={collapseSignal}
+      title={<span className="font-mono text-[13px]">{node.alias || node.volumeId}</span>}
+      subtitle={
+        <span className="flex items-center gap-1.5 min-w-0 text-white/40 text-xs">
+          {node.alias && <DiskChip tone="amber">别名 {node.alias}</DiskChip>}
+          {node.drive && <span className="shrink-0">{node.drive}</span>}
+          {!childCount && <span className="shrink-0">（清单里没有这个卷的目录结构）</span>}
+        </span>
+      }
+      meta={
+        <>
+          {node.serial && (
+            <DiskChip
+              tone={node.serialSource === 'telemetry' ? 'slate' : 'sky'}
+              title={node.serialSource === 'derived' ? '卷 ID 形如 openlist-<SN>-<数字>，按规则现算' : undefined}
+            >
+              {node.serialSource === 'derived' ? `${node.serial}（推断）` : node.serial}
+            </DiskChip>
+          )}
+          {node.matchLabel && <DiskChip>{node.matchLabel}</DiskChip>}
+          {node.fileCount !== undefined && (
+            <span className="text-white/35 text-[11px] font-mono tabular-nums">
+              {formatCount(node.fileCount)} 文件
+            </span>
+          )}
+          {node.totalSize !== undefined && (
+            <span className="text-white/35 text-[11px] font-mono tabular-nums">{formatSize(node.totalSize)}</span>
+          )}
+        </>
+      }
+    >
+      {tree &&
+        tree.children.map((c, i) => (
+          <FolderTree
+            key={`${c.name}-${i}`}
+            node={c}
+            depth={depth + 1}
+            forceExpand={false}
+            collapseSignal={collapseSignal}
+            basePath={[tree.name, c.name]}
+            markKey={markKey}
+            marked={marksByKey[markKey] || EMPTY_SET}
+            userTags={tagsByKey[markKey] || EMPTY_TAGS_MAP}
+            tagFilter={tagFilter}
+            onToggle={onToggle}
+            onSetTags={onSetTags}
+            onTagClick={onTagClick}
+            onEditTags={onEditTags}
+          />
+        ))}
+    </DiskLevelRow>
+  )
+}
+
+/** 逻辑分区行：分区（遥测事实）→ 关联卷。 */
+function PartitionLevelRow({
+  partition,
+  depth,
+  volumeProps,
+}: {
+  partition: PartitionNode
+  depth: number
+  volumeProps: Omit<Parameters<typeof VolumeLevelRow>[0], 'node' | 'depth'>
+}) {
+  const logical = partition.logical
+  const subtitleBits = [
+    logical?.volumeName,
+    logical?.fileSystem,
+    typeof logical?.sizeGB === 'number' ? `${logical.sizeGB} GB` : '',
+    typeof logical?.freeSpaceGB === 'number' ? `剩余 ${logical.freeSpaceGB} GB` : '',
+    typeof logical?.usagePercent === 'number' ? `占用 ${logical.usagePercent}%` : '',
+  ].filter(Boolean)
+  return (
+    <DiskLevelRow
+      depth={depth}
+      icon={<Folder className="w-4 h-4 text-white/60" />}
+      expandable={partition.volumes.length > 0}
+      collapseSignal={0}
+      title={<span className="font-mono text-[13px]">{partition.deviceId}</span>}
+      subtitle={
+        <span className="flex items-center gap-1.5 min-w-0 text-white/40 text-xs">
+          {partition.alias && <DiskChip tone="amber">别名 {partition.alias}</DiskChip>}
+          {subtitleBits.length > 0 && <span className="truncate">{subtitleBits.join(' · ')}</span>}
+          {!logical && <span className="shrink-0">（遥测没有该分区，按清单里的卷推断）</span>}
+        </span>
+      }
+      meta={
+        <span className="text-white/35 text-[11px]">{partition.volumes.length} 个卷</span>
+      }
+    >
+      {partition.volumes.map((v) => (
+        <VolumeLevelRow key={v.volumeId} node={v} depth={depth + 1} {...volumeProps} />
+      ))}
+    </DiskLevelRow>
+  )
+}
+
+/** 主机卡片：头部 + 磁盘列表 + 未归属到磁盘的卷。 */
+function HostDiskCard({
+  host,
+  volumeProps,
+}: {
+  host: HostNode
+  volumeProps: Omit<Parameters<typeof VolumeLevelRow>[0], 'node' | 'depth'>
+}) {
+  const volumeCount = host.disks.reduce(
+    (n, d) => n + d.partitions.reduce((p, part) => p + part.volumes.length, 0) + d.looseVolumes.length,
+    host.unassigned.length,
+  )
+  return (
+    <div className="rounded-xl bg-white/5 border border-white/10 p-4 space-y-2">
+      <div className="flex items-center gap-2 min-w-0">
+        <Server className="w-4 h-4 text-white/50 shrink-0" />
+        <span className="text-white/90 font-medium truncate">{host.name}</span>
+        {host.deviceName && host.deviceName !== host.name && (
+          <span className="text-white/35 text-xs shrink-0">· {host.deviceName}</span>
+        )}
+        {host.local && <DiskChip tone="emerald">本机</DiskChip>}
+        <span className="ml-auto shrink-0 text-white/35 text-xs">
+          {host.disks.length} 块磁盘 · {volumeCount} 个卷
+        </span>
+      </div>
+      <div className="pt-1 -mx-1">
+        {host.disks.length === 0 && host.unassigned.length === 0 && (
+          <div className="text-white/30 text-xs px-1">（这台主机没有磁盘信息，也没有卷记录）</div>
+        )}
+        {host.disks.map((disk) => (
+          <DiskLevelRow
+            key={disk.serial}
+            depth={0}
+            icon={<HardDrive className="w-4 h-4 text-white/60" />}
+            expandable={disk.partitions.length > 0 || disk.looseVolumes.length > 0}
+            collapseSignal={0}
+            title={<span className="font-mono text-[13px]">{disk.serial}</span>}
+            subtitle={
+              <span className="text-white/40 text-xs truncate">
+                {[disk.model, disk.capacity, disk.mediaType].filter(Boolean).join(' · ')}
+                {disk.hasSmart ? '' : ' · 无 SMART 数据'}
+              </span>
+            }
+            meta={
+              <>
+                {disk.temperature !== null && (
+                  <span className="text-white/40 text-[11px] font-mono">{disk.temperature}℃</span>
+                )}
+                {disk.health && (
+                  <DiskChip tone={/good|ok|healthy|pass|正常/i.test(disk.health) ? 'emerald' : 'amber'}>
+                    {disk.health}
+                  </DiskChip>
+                )}
+                <span className="text-white/35 text-[11px]">
+                  {disk.partitions.length} 个分区
+                </span>
+              </>
+            }
+          >
+            {disk.partitions.map((p) => (
+              <PartitionLevelRow key={`${p.deviceId}-${p.alias}`} partition={p} depth={1} volumeProps={volumeProps} />
+            ))}
+            {disk.looseVolumes.length > 0 && (
+              <DiskLevelRow
+                depth={1}
+                icon={<Folder className="w-4 h-4 text-amber-300/60" />}
+                expandable
+                collapseSignal={0}
+                title={<span className="text-white/70">未归属分区的卷</span>}
+                subtitle={<span className="text-white/35 text-xs">盘符对不上该磁盘的任何逻辑分区</span>}
+                meta={<span className="text-white/35 text-[11px]">{disk.looseVolumes.length} 个</span>}
+              >
+                {disk.looseVolumes.map((v) => (
+                  <VolumeLevelRow key={v.volumeId} node={v} depth={2} {...volumeProps} />
+                ))}
+              </DiskLevelRow>
+            )}
+          </DiskLevelRow>
+        ))}
+        {host.unassigned.length > 0 && (
+          <DiskLevelRow
+            depth={0}
+            icon={<Folder className="w-4 h-4 text-amber-300/70" />}
+            expandable
+            collapseSignal={0}
+            title={<span className="text-white/75">未归属的卷</span>}
+            subtitle={<span className="text-white/35 text-xs">挂在这台主机、但没匹配到任何磁盘</span>}
+            meta={<span className="text-white/35 text-[11px]">{host.unassigned.length} 个</span>}
+          >
+            {host.unassigned.map((v) => (
+              <VolumeLevelRow key={v.volumeId} node={v} depth={1} {...volumeProps} />
+            ))}
+          </DiskLevelRow>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** 磁盘视图根组件：主机列表 + 未归属主机的卷 + 清单里有、文档里没有的卷。 */
+function DiskView({
+  tree,
+  marksByKey,
+  tagsByKey,
+  tagFilter,
+  collapseSignal,
+  onToggle,
+  onSetTags,
+  onTagClick,
+  onEditTags,
+}: {
+  tree: DiskTreeResult
+  marksByKey: Record<string, Set<string>>
+  tagsByKey: Record<string, Record<string, string[]>>
+  tagFilter: string | null
+  collapseSignal: number
+  onToggle: (key: string, path: string) => void
+  onSetTags: (key: string, path: string, tags: string[]) => void
+  onTagClick: (tag: string) => void
+  onEditTags: (key: string, path: string, current: string[]) => void
+}) {
+  const volumeProps = { marksByKey, tagsByKey, tagFilter, collapseSignal, onToggle, onSetTags, onTagClick, onEditTags }
+  const nothing = !tree.hosts.length && !tree.orphanVolumes.length && !tree.unregistered.length
+  if (nothing) {
+    return <div className="text-white/30 text-sm text-center py-8">磁盘文档里还没有主机 / 磁盘记录</div>
+  }
+  return (
+    <div className="space-y-3">
+      {tree.hosts.map((h) => (
+        <HostDiskCard key={h.hostId || h.name} host={h} volumeProps={volumeProps} />
+      ))}
+      {tree.orphanVolumes.length > 0 && (
+        <div className="rounded-xl bg-white/5 border border-white/10 p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <HardDrive className="w-4 h-4 text-amber-300/70 shrink-0" />
+            <span className="text-white/85 font-medium">未归属主机的卷</span>
+            <span className="text-white/35 text-xs">{tree.orphanVolumes.length} 个卷没有主机 / 磁盘信息</span>
+          </div>
+          <div className="pt-1 -mx-1">
+            {tree.orphanVolumes.map((v) => (
+              <VolumeLevelRow key={v.volumeId} node={v} depth={0} {...volumeProps} />
+            ))}
+          </div>
+        </div>
+      )}
+      {tree.unregistered.map((g) => (
+        <div key={g.host} className="rounded-xl bg-white/5 border border-white/10 p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <FileWarning className="w-4 h-4 text-amber-300/70 shrink-0" />
+            <span className="text-white/85 font-medium truncate">{g.host}</span>
+            <span className="text-white/35 text-xs shrink-0">清单里有、磁盘文档里没有的卷</span>
+          </div>
+          <div className="pt-1 -mx-1">
+            {g.volumes.map((v) => (
+              <VolumeLevelRow key={v.volumeId} node={v} depth={0} {...volumeProps} />
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/** 删除确认弹窗：列出将删除的清单文件，确认后走数据组 deleteFile（墓碑 + 自动同步）。 */function DeleteConfirmModal({
   confirm,
   deleting,
   onCancel,
