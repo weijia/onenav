@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
@@ -19,6 +19,28 @@ function silenceUniversalSyncDebug() {
   }
 }
 
+/**
+ * 把构建时的版本清单原样输出到 dist/version.json。
+ *
+ * 页面里的「强制检查更新」按钮会在运行时 `fetch('<站点根>/version.json', {cache:'no-store'})`，
+ * 与编译进本包的版本（sha/buildTime）比对，因此该文件必须：
+ *  1. 位于站点根目录（主页 /apps/<id>/ 页面都能取到）；
+ *  2. **不进入 SW 预缓存**（见下方 globIgnores），否则 no-store 也会被 Workbox 拦截成旧内容。
+ *
+ * 内容来自 scripts/generate-version.js 在 build 前生成的 src/version.json。
+ */
+function emitVersionManifest(): Plugin {
+  return {
+    name: 'emit-version-manifest',
+    apply: 'build',
+    generateBundle() {
+      const src = path.resolve(__dirname, 'src/version.json')
+      if (!fs.existsSync(src)) return
+      this.emitFile({ type: 'asset', fileName: 'version.json', source: fs.readFileSync(src, 'utf8') })
+    },
+  }
+}
+
 // 自动发现 apps/<id>/index.html 作为多页面入口（MPA）。
 // 每个内置小应用都是独立的 HTML 文件，主页面打开时不会加载这些应用的代码，
 // 只有访问对应页面（apps/<id>/index.html）时才下载其自身的 chunk。
@@ -35,6 +57,7 @@ export default defineConfig({
   base: './',
   plugins: [
     silenceUniversalSyncDebug(),
+    emitVersionManifest(),
     react(),
     tailwindcss(),
     VitePWA({
@@ -46,6 +69,8 @@ export default defineConfig({
       injectManifest: {
         injectionPoint: 'self.__WB_MANIFEST',
         globPatterns: ['**/*.{js,css,html,ico,png,svg,json}'],
+        // version.json 是「检查更新」的探针文件，必须每次走网络，不能被预缓存覆盖
+        globIgnores: ['version.json'],
       },
       manifest: {
         name: 'OneNav',

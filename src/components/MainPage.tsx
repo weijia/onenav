@@ -18,6 +18,7 @@ import SettingsDialog from '@/components/SettingsDialog'
 import SetupWizard from '@/components/SetupWizard'
 import AppCard from '@/components/apps/AppCard'
 import ExternalLinkCard from '@/components/apps/ExternalLinkCard'
+import UpdateCheckButton from '@/components/UpdateCheckButton'
 import { APP_MANIFEST, isAppVisible } from '@/components/apps/manifest'
 import { RefreshCw, Loader2, LayoutGrid, Search, Menu, X, CloudOff, AlertTriangle, Plus } from 'lucide-react'
 import { versionDisplay, buildTimeDisplay } from '@/lib/version'
@@ -673,6 +674,8 @@ export default function MainPage() {
             <span className="text-white/60 text-sm">OneNav</span>
           </div>
           <div className="flex items-center gap-2">
+            {/* 强制检查页面更新：不依赖后台 sw.js 的定时检查，点击即比对远端 version.json */}
+            <UpdateCheckButton />
             <button onClick={handleRefresh} disabled={refreshing} className="w-8 h-8 rounded-lg flex items-center justify-center text-white/40 hover:text-white/70 hover:bg-white/10 transition-all" title="Refresh">
               <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
             </button>

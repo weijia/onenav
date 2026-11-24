@@ -6,6 +6,7 @@ import { versionDisplay, buildTimeDisplay } from '@/lib/version'
 import { registerServiceWorker } from '@/lib/sw-register'
 import { bootstrapAppRemoteStorage } from '@/lib/app-host-sync'
 import UpdateToast from '@/components/UpdateToast'
+import UpdateCheckButton from '@/components/UpdateCheckButton'
 
 interface AppHostProps {
   /** 应用名称 */
@@ -85,6 +86,9 @@ export default function AppHost({ name, description, accent, icon: Icon, compone
           <h2 className="text-white/90 font-medium leading-tight">{name}</h2>
           <p className="text-white/40 text-xs">{description}</p>
         </div>
+        {/* 每个独立应用页都有「强制检查更新」：点一下即比对远端 version.json / 探测 waiting Worker，
+            发现新版本后可一键应用并重载，不必等后台 sw.js 的定时检查。 */}
+        <UpdateCheckButton className="ml-auto" />
       </div>
       <div className="flex-1 overflow-y-auto">
         {rsReady ? (
