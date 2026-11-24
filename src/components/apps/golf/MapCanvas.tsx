@@ -236,7 +236,8 @@ export default function MapCanvas(props: MapCanvasProps) {
 
     // 3.1 设施点
     for (const f of data.facilities) {
-      if (!visibleFacilityTypes[f.type]) continue
+      // 与侧边栏一致：只有显式取消勾选（=== false）才隐藏，未设置视为可见。
+      if (visibleFacilityTypes[f.type] === false) continue
       if (f.hole !== undefined && visibleHoles[String(f.hole)] === false) continue
       const color = facilityColor(f)
       const glyph = FACILITY_TYPES[f.type]?.glyph ?? '•'
@@ -266,7 +267,9 @@ export default function MapCanvas(props: MapCanvasProps) {
 
     // 3.2 区域（多边形 / 圆形）
     for (const a of data.areas) {
-      if (!visibleAreaTypes[a.type]) continue
+      // 同上：checkbox 用 `!== false` 判勾选，这里必须用同一套语义，
+      // 否则默认空对象 {} 会把所有区域当成「未勾选」而整片不渲染。
+      if (visibleAreaTypes[a.type] === false) continue
       if (a.hole !== undefined && visibleHoles[String(a.hole)] === false) continue
       const meta = AREA_TYPES[a.type]
       if (!meta) continue
@@ -470,7 +473,7 @@ export default function MapCanvas(props: MapCanvasProps) {
     if (!group) return
     group.clearLayers()
 
-    const { selected, data, visibleFacilityTypes, visibleHoles, visibleAreaTypes } = handlersRef.current
+    const { selected, data } = handlersRef.current
     if (!selected) return
 
     // 亮青色 + 更粗描边 + 半透明填充，与原要素自身配色形成明显区分。
@@ -488,8 +491,7 @@ export default function MapCanvas(props: MapCanvasProps) {
     if (selected.kind === 'facility') {
       const f = data.facilities.find((x) => x.id === selected.id)
       if (!f) return
-      if (!visibleFacilityTypes[f.type]) return
-      if (f.hole !== undefined && visibleHoles[String(f.hole)] === false) return
+      // 选中态不看图层筛选：点/选中了就必须看得见，否则用户点了列表却什么都没有。
       // 选中态图标与原件同一锚点（尖端落在坐标上），同属 markerPane 且后添加 → 覆盖在原图标之上。
       L.marker(ll(f.lng, f.lat), {
         pane: 'golfSelection',
@@ -504,8 +506,7 @@ export default function MapCanvas(props: MapCanvasProps) {
     } else if (selected.kind === 'area') {
       const a = data.areas.find((x) => x.id === selected.id)
       if (!a) return
-      if (!visibleAreaTypes[a.type]) return
-      if (a.hole !== undefined && visibleHoles[String(a.hole)] === false) return
+      // 同上：选中高亮独立于「区域类型 / 洞号」筛选，保证任何时候选中都有青色描边可见。
       if (a.kind === 'circle' && a.center && a.radius) {
         L.circle(ll(a.center[0], a.center[1]), { ...highlight, radius: a.radius }).addTo(group)
       } else if (a.kind === 'polygon' && a.path && a.path.length >= 2) {
@@ -517,7 +518,7 @@ export default function MapCanvas(props: MapCanvasProps) {
     } else if (selected.kind === 'line') {
       const line = data.lines.find((x) => x.id === selected.id)
       if (!line) return
-      if (line.hole !== undefined && visibleHoles[String(line.hole)] === false) return
+      // 同样不按洞号筛：选中即高亮。
       L.polyline([ll(line.from[0], line.from[1]), ll(line.to[0], line.to[1])], {
         pane: 'golfSelection',
         color: highlight.color,
