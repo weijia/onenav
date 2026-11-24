@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { AlertTriangle, Check, RefreshCw, X } from 'lucide-react'
+import { AlertTriangle, Check, CloudDownload, RefreshCw, X } from 'lucide-react'
 import { applyUpdate, checkForUpdate, type UpdateCheckResult } from '@/lib/update-check'
 
 type Phase = 'idle' | 'checking' | 'available' | 'latest' | 'unknown' | 'applying'
@@ -87,10 +87,12 @@ export default function UpdateCheckButton({ className = '' }: { className?: stri
         onClick={handleClick}
         disabled={spin}
         className="relative w-9 h-9 rounded-lg flex items-center justify-center text-white/40 hover:text-white/70 hover:bg-white/10 transition-all disabled:opacity-60"
-        title="强制检查页面更新（不依赖后台 sw.js）"
-        aria-label="强制检查页面更新"
+        title="检查页面版本并更新（主动比对远端 version.json，不等 SW 定时检查）"
+        aria-label="检查页面版本并更新"
       >
-        <RefreshCw className={`w-4 h-4 ${spin ? 'animate-spin' : ''}`} />
+        {/* 用「云下载」而不是刷新图标：它旁边通常还有一个「刷新书签」的刷新按钮，
+            两个同样的刷新图标用户分不出哪个是检查版本。 */}
+        <CloudDownload className={`w-4 h-4 ${spin ? 'animate-pulse' : ''}`} />
         {phase === 'available' && (
           <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.9)]" />
         )}
