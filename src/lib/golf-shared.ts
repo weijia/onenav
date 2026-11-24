@@ -8,7 +8,7 @@
  * 存储格式以「球场地图」的 GolfData 为权威（GCJ-02、[lng,lat]）；
  * 导航引擎需要 course-schema（WGS-84、[lat,lng]），由 golfDataToCourse() 转换。
  */
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { loadGolfData, migrateLegacyGolfData, saveGolfData } from '@/lib/golf-db'
 import { scheduleGolfSync } from '@/lib/golf-sync'
 import type { GolfData } from '@/components/apps/golf/types'
@@ -34,14 +34,27 @@ export function useSharedGolfData(fallback?: GolfData): SharedGolfDataApi {
   const [data, setData] = useState<GolfData>(defaultData)
   const [loading, setLoading] = useState(true)
   const [reloadTick, setReloadTick] = useState(0)
+  /**
+   * 只有「首次读库」才把 loading 置 true。
+   *
+   * 之前每次 reloadTick 变化（保存后的 golf:data-changed、同步成功后的 golf:synced）都会
+   * setLoading(true)，而 GolfApp 在 loading 时直接 return 一个「正在加载球场数据…」的占位，
+   * 把整棵子树（MapCanvas + GolfSyncPanel）卸载掉。于是形成死循环：
+   *   同步成功 → golf:synced → loading=true → 卸载面板 → MapCanvas 重建（回到 data.center）
+   *   → 面板重新挂载 → 重新 connect + attach → 再同步成功 → golf:synced → …
+   * 表现出来就是地图每隔几秒「跳」一次（新建地图取默认中心，随后自动定位又 flyTo 到我的位置）。
+   * 后续重读改为静默刷新：只更新 data，不卸载地图与同步面板。
+   */
+  const firstLoadDoneRef = useRef(false)
 
   useEffect(() => {
     let cancelled = false
-    setLoading(true)
+    if (!firstLoadDoneRef.current) setLoading(true)
     ;(async () => {
       await migrateLegacyGolfData()
       const d = await loadGolfData()
       if (!cancelled) setData((d as GolfData) ?? defaultData)
+      firstLoadDoneRef.current = true
       if (!cancelled) setLoading(false)
     })().catch(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
