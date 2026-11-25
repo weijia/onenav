@@ -290,11 +290,30 @@ export default function GolfNavApp() {
       currentHole.tee, currentHole.green, ...currentHole.centerLine,
       ...(currentHole.features || []).flatMap((f: any) => [f.polygon, f.line, f.point].filter(Boolean)),
     ]
-    const lats = parts.flatMap((p: any) => Array.isArray(p) ? [p[0]] : [])
-    const lngs = parts.flatMap((p: any) => Array.isArray(p) ? [p[1]] : [])
-    const bounds = lats.length
+    // 递归收集全部坐标：点可为 [lat,lng] / {lat,lng} / 类数组，polygon/line 是「点数组」。
+    // 之前只取 p[0]，把 polygon 的点数组塞进 Math.min → bounds 变 NaN → 漫游坐标全变 NaN。
+    const collect = (v: any, out: number[], wantLat: boolean) => {
+      if (v == null) return
+      if (Array.isArray(v)) {
+        if (v.length >= 2 && Number.isFinite(Number(v[0])) && Number.isFinite(Number(v[1]))) {
+          out.push(wantLat ? Number(v[0]) : Number(v[1]))
+        } else {
+          v.forEach((q: any) => collect(q, out, wantLat))
+        }
+      } else if (typeof v === 'object') {
+        const a = typeof v.lat === 'number' ? v.lat : Number(v[0])
+        const b = typeof v.lng === 'number' ? v.lng : Number(v[1])
+        if (Number.isFinite(a) && Number.isFinite(b)) out.push(wantLat ? a : b)
+      }
+    }
+    const lats: number[] = []
+    const lngs: number[] = []
+    parts.forEach((p: any) => { collect(p, lats, true); collect(p, lngs, false) })
+    const derived = lats.length && lngs.length
       ? { south: Math.min(...lats), north: Math.max(...lats), west: Math.min(...lngs), east: Math.max(...lngs) }
       : course.bounds
+    const bounds = [derived.south, derived.north, derived.west, derived.east].every(Number.isFinite)
+      ? derived : course.bounds
     return buildGrid(course, { resolutionMeters: 2, holeNumbers: [hole], bounds })
   }
 
@@ -353,6 +372,10 @@ export default function GolfNavApp() {
     if (!p) { setResult('请先定位或点击地图设置位置，再开始键盘漫游。'); return }
     const cell = roamCell(p)
     const g = getRoamGrid()
+    if (!Number.isFinite(cell.col) || !Number.isFinite(cell.row)) {
+      setResult('当前位置坐标无效，请重新定位或点击地图设置位置。')
+      return
+    }
     let nc = cell.col
     let nr = cell.row
     for (let step = 0; step < roamStepCells; step++) {
@@ -371,6 +394,10 @@ export default function GolfNavApp() {
       return
     }
     const next = cellToLatLng(g, nc, nr)
+    if (!Number.isFinite(next.lat) || !Number.isFinite(next.lng)) {
+      setResult('移动计算出现异常坐标，已保留原位置；请重新定位。')
+      return
+    }
     setPosition(next)
     syncMyPosition(next)
     followIfNeeded(next)
@@ -503,7 +530,7 @@ export default function GolfNavApp() {
                 <span className="opacity-70 ml-1">（{heading}°）</span>
               </p>
               <p className="text-sm mb-1 font-mono">
-                坐标：<span className="text-sky-200">{position ? `${position.lat.toFixed(6)}, ${position.lng.toFixed(6)}` : '未设置'}</span>
+                坐标：<span className="text-sky-200">{position && Number.isFinite(position.lat) && Number.isFinite(position.lng) ? `${position.lat.toFixed(6)}, ${position.lng.toFixed(6)}` : '未设置或无效'}</span>
               </p>
               <p className="text-sm whitespace-pre-line leading-relaxed">{roamHint || '正在计算可走方向…'}</p>
               <div className="mt-2 flex items-center gap-2">
