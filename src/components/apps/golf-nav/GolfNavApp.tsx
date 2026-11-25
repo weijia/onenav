@@ -119,6 +119,16 @@ export default function GolfNavApp() {
   const highlightIdsRef = useRef<string[]>([])
   highlightIdsRef.current = highlightIds
 
+  // 分类筛选只排除「已知类型且未被选中」的要素；未知类型一律保留。
+  // 否则全选 9 个已知类型时，数据里若有不在 FEATURE_TYPES 里的自定义标注会被滤掉，
+  // 看上去就像「点了全部显示反而什么都没了」。
+  const passType = useCallback((ft?: string) => {
+    if (!activeTypes.length) return true
+    const known = FEATURE_TYPES as string[]
+    if (!ft || !known.includes(ft)) return true
+    return activeTypes.includes(ft)
+  }, [activeTypes])
+
   // 统一绘制「我的位置」：me 标记始终在最前，extras 用于叠加击球建议的候选点
   // 漫游开启时标记带朝向箭头，关闭时退回普通圆点。
   const syncMyPosition = useCallback((p: Point | null, extras: any[] = []) => {
@@ -130,9 +140,9 @@ export default function GolfNavApp() {
   // 按分类过滤后的几何；未选中分类时显示全部，选中时只显示该分类（跨所有洞）。
   // 中心线属于辅助线，始终显示。
   const displayGeom = useMemo(() => ({
-    polygons: courseGeom.polygons.filter((p: any) => !activeTypes.length || activeTypes.includes(p.featureType)),
-    lines: courseGeom.lines.filter((l: any) => l.styleId === 'center' || !activeTypes.length || activeTypes.includes(l.featureType)),
-  }), [courseGeom, activeTypes])
+    polygons: courseGeom.polygons.filter((p: any) => passType(p.featureType)),
+    lines: courseGeom.lines.filter((l: any) => l.styleId === 'center' || passType(l.featureType)),
+  }), [courseGeom, passType])
 
   // 按分类分组的标注列表：选中某分类时列出该分类跨所有洞的全部区域；
   // 未选中时仅列当前洞。排除中心线辅助线。
@@ -143,9 +153,7 @@ export default function GolfNavApp() {
       ...courseGeom.lines
         .filter((l: any) => l.styleId !== 'center')
         .map((l: any) => ({ ...l, geomKind: 'line' })),
-    ].filter((g: any) => activeTypes.length
-      ? activeTypes.includes(g.featureType)
-      : g.hole === hole)
+    ].filter((g: any) => activeTypes.length ? passType(g.featureType) : g.hole === hole)
     const map = new Map<string, any[]>()
     for (const g of geoms) {
       const key = g.featureType || g.styleId || 'other'
@@ -153,7 +161,7 @@ export default function GolfNavApp() {
       map.get(key)!.push(g)
     }
     return map
-  }, [courseGeom, hole, activeTypes])
+  }, [courseGeom, hole, activeTypes, passType])
 
   const currentHole = useMemo(
     () => course.holes.find((h: any) => h.number === hole) || course.holes[0],
@@ -700,20 +708,11 @@ export default function GolfNavApp() {
           <div className="rounded-lg border border-slate-200 bg-white/90 p-3 shadow-sm">
             <div className="flex items-center justify-between mb-2">
               <h3 className="font-medium">标注分类</h3>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => { setActiveTypes([...FEATURE_TYPES]); setSelected(null) }}
-                  className="text-xs text-slate-500 hover:text-slate-800"
-                  title="选中全部标注分类（等同于显示全部）"
-                >全部显示</button>
-                {activeTypes.length > 0 && (
-                  <button
-                    onClick={() => { setActiveTypes([]); setSelected(null) }}
-                    className="text-xs text-slate-500 hover:text-slate-800"
-                    title="清空分类选择，回到只看当前洞"
-                  >清空</button>
-                )}
-              </div>
+              <button
+                onClick={() => { setActiveTypes([...FEATURE_TYPES]); setSelected(null) }}
+                className="text-xs rounded border border-slate-300 bg-white px-2 py-0.5 text-slate-700 shadow-sm hover:bg-slate-100"
+                title="选中全部标注分类（跨所有洞显示全部标注）"
+              >全部显示</button>
             </div>
             <div className="flex flex-wrap gap-1.5">
               {FEATURE_TYPES.map((type: string) => {
@@ -736,7 +735,14 @@ export default function GolfNavApp() {
                 )
               })}
             </div>
-            <p className="mt-2 text-xs opacity-60">分类可多选：地图只显示所选分类（跨所有洞）。「全部显示」= 选中全部，「清空」= 回到只看当前洞。</p>
+            <p className="mt-2 text-xs opacity-60">分类可多选：地图只显示所选分类（跨所有洞）。「全部显示」= 选中全部。</p>
+            {activeTypes.length > 0 && (
+              <button
+                onClick={() => { setActiveTypes([]); setSelected(null) }}
+                className="mt-2 rounded border border-slate-300 bg-white px-2 py-0.5 text-xs text-slate-700 shadow-sm hover:bg-slate-100"
+                title="清空分类选择，回到只看当前洞"
+              >只看本洞</button>
+            )}
           </div>
           <div className="rounded-lg border border-slate-200 bg-white/90 p-3 shadow-sm">
             <div className="flex items-center justify-between mb-2">
