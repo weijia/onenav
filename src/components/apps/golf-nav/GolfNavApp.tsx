@@ -38,6 +38,14 @@ const ROAM_DIRS: Record<string, { dCol: number; dRow: number; heading: number; l
   ArrowDown: { dCol: 0, dRow: -1, heading: 180, label: '南', arrow: '↓' },
   ArrowLeft: { dCol: -1, dRow: 0, heading: 270, label: '西', arrow: '←' },
 }
+// 键盘映射：W/A/S/D 对应 上/左/下/右；同时兼容 ↑↓←→。
+// 用 e.code 优先（不受输入法/大小写影响），e.key 兜底。
+const ROAM_KEY_MAP: Record<string, string> = {
+  KeyW: 'ArrowUp', KeyA: 'ArrowLeft', KeyS: 'ArrowDown', KeyD: 'ArrowRight',
+  w: 'ArrowUp', a: 'ArrowLeft', s: 'ArrowDown', d: 'ArrowRight',
+  W: 'ArrowUp', A: 'ArrowLeft', S: 'ArrowDown', D: 'ArrowRight',
+  ArrowUp: 'ArrowUp', ArrowRight: 'ArrowRight', ArrowDown: 'ArrowDown', ArrowLeft: 'ArrowLeft',
+}
 const HEADING_ARROW = (h: number) => {
   const idx = ((Math.round(h / 90) % 4) + 4) % 4
   return ['↑', '→', '↓', '←'][idx]
@@ -347,19 +355,22 @@ export default function GolfNavApp() {
     setResult(`已朝${dir.label}移动一格（约 2 米）。`)
   }, [roamCell, getRoamGrid, syncMyPosition, centerOn, buildRoamHint])
 
-  // 键盘监听：仅漫游开启时接管方向键，阻止页面滚动。
+  // 键盘监听：仅漫游开启时接管 WASD / 方向键。
+  // 用 capture 阶段抢在地图（Leaflet/高德）之前处理，避免地图把方向键当平移。
   useEffect(() => {
     if (!roaming) return
     const onKeyDown = (e: KeyboardEvent) => {
-      if (!ROAM_DIRS[e.key]) return
+      const dirKey = ROAM_KEY_MAP[e.code] || ROAM_KEY_MAP[e.key]
+      if (!dirKey) return
       // 输入框（如同步面板表单）聚焦时不劫持按键
       const tag = (e.target as HTMLElement)?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
       e.preventDefault()
-      roamStep(e.key)
+      e.stopPropagation()
+      roamStep(dirKey)
     }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => window.removeEventListener('keydown', onKeyDown, true)
   }, [roaming, roamStep])
 
   // 位置/洞号/开关变化后自动刷新可走提示（覆盖点击设点、定位、切洞等所有路径）
@@ -378,11 +389,11 @@ export default function GolfNavApp() {
         setPosition(tee)
         syncMyPosition(tee)
         setRoamHint(buildRoamHint(roamCell(tee)))
-        setResult('键盘漫游已开启：用 ↑↓←→ 移动，点击地图可重设起点。')
+        setResult('键盘漫游已开启：用 W A S D / ↑↓←→ / 屏幕方向键移动，点击地图可重设起点。')
       } else {
         syncMyPosition(positionRef.current) // 立即重绘为带箭头标记
         setRoamHint(buildRoamHint(roamCell(positionRef.current)))
-        setResult(`键盘漫游已开启（朝向${HEADING_ARROW(headingRef.current)}）：用 ↑↓←→ 移动。`)
+        setResult(`键盘漫游已开启（朝向${HEADING_ARROW(headingRef.current)}）：用 W A S D / ↑↓←→ / 屏幕方向键移动。`)
       }
     } else {
       syncMyPosition(positionRef.current) // 立即重绘回普通圆点
@@ -469,7 +480,18 @@ export default function GolfNavApp() {
                 <span className="opacity-70 ml-1">（{heading}°）</span>
               </p>
               <p className="text-sm whitespace-pre-line leading-relaxed">{roamHint || '正在计算可走方向…'}</p>
-              <p className="mt-2 text-xs opacity-60">用键盘 ↑ ↓ ← → 移动；箭头指向行进方向，遇障碍自动停在边缘外。</p>
+              <div className="mt-2 grid grid-cols-3 gap-1 w-max mx-auto select-none" aria-label="屏幕方向键">
+                <span />
+                <button type="button" onClick={() => roamStep('ArrowUp')} title="向上（W）" className="h-11 w-11 rounded bg-white/10 active:bg-sky-600 text-xl touch-manipulation">↑</button>
+                <span />
+                <button type="button" onClick={() => roamStep('ArrowLeft')} title="向左（A）" className="h-11 w-11 rounded bg-white/10 active:bg-sky-600 text-xl touch-manipulation">←</button>
+                <span className="flex items-center justify-center text-sky-300 text-xl">{HEADING_ARROW(heading)}</span>
+                <button type="button" onClick={() => roamStep('ArrowRight')} title="向右（D）" className="h-11 w-11 rounded bg-white/10 active:bg-sky-600 text-xl touch-manipulation">→</button>
+                <span />
+                <button type="button" onClick={() => roamStep('ArrowDown')} title="向下（S）" className="h-11 w-11 rounded bg-white/10 active:bg-sky-600 text-xl touch-manipulation">↓</button>
+                <span />
+              </div>
+              <p className="mt-2 text-xs opacity-60">键盘 W↑ A← S↓ D→（也支持 ↑↓←→）或点屏幕方向键；箭头指向行进方向，遇障碍停在边缘外。</p>
             </div>
           )}
           {selected && (
