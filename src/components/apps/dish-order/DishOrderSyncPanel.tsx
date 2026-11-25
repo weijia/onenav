@@ -8,7 +8,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { SyncGroupConfigurator } from 'zen-fs-config-ui/react'
-import { registerFsConfigBackends, resolveDataGroup } from '@/lib/fs-config-backends'
+import { registerFsConfigBackends, ensureDataGroup } from '@/lib/fs-config-backends'
 import { attachDishGroup, detachDishGroup } from './store'
 
 export const DISH_ORDER_APP_ID = 'dish-order'
@@ -21,6 +21,8 @@ export default function DishOrderSyncPanel({ onReady }: Props) {
   const [ready, setReady] = useState(false)
   const [message, setMessage] = useState('')
   const [open, setOpen] = useState(true)
+  // 自动创建本机默认组后重挂配置面板，让它重新列出数据组
+  const [uiNonce, setUiNonce] = useState(0)
   const coreRef = useRef<{ getConnection?: () => any } | null>(null)
 
   useEffect(() => {
@@ -31,16 +33,30 @@ export default function DishOrderSyncPanel({ onReady }: Props) {
   const resolveFrom = useCallback(
     async (detail: any) => {
       const conn = detail ?? coreRef.current?.getConnection?.()
-      const group = await resolveDataGroup(conn, DISH_ORDER_APP_ID)
+      // 每个 appId 必须有一个可用数据组实例；没有描述符时补建本机默认组（仅隐式 local-idb）
+      const { group, created, descriptorsUnavailable, candidates } = await ensureDataGroup(
+        conn,
+        DISH_ORDER_APP_ID,
+        { preferPath: '/orders' },
+      )
       if (!group) {
         attachDishGroup(null)
         setReady(false)
-        setMessage('已连接配置仓，请创建/选择含远端后端的 dish-order 数据同步组后重试')
+        setMessage(
+          descriptorsUnavailable
+            ? '有 dish-order 数据组描述符但本机加载失败（后端不可用？），暂不创建默认组以免覆盖远端组'
+            : `有 ${candidates.length} 个候选组但无法判定，请在数据同步组面板里点选正确的组`,
+        )
         return
       }
       attachDishGroup(group)
       setReady(true)
-      setMessage('数据同步组已连接')
+      if (created) setUiNonce((n) => n + 1)
+      setMessage(
+        created
+          ? '已创建本机默认数据组 default（仅本地 IndexedDB，不参与远端同步）· 点菜记录已保存到该组；添加远端后端即可跨设备同步'
+          : '数据同步组已连接',
+      )
       onReady?.()
     },
     [onReady],
@@ -76,6 +92,7 @@ export default function DishOrderSyncPanel({ onReady }: Props) {
         </p>
         <div className="max-h-96 overflow-auto rounded bg-white/5 p-2">
           <SyncGroupConfigurator
+            key={uiNonce}
             appId={DISH_ORDER_APP_ID}
             onCoreReady={(core) => {
               coreRef.current = core

@@ -113,11 +113,14 @@ type BookkeepingRecord = TxRecord | PriceRecord | OrderRecord
   allDocs({ startkey, endkey, limit: 50 })
   ```
   如需按 `date` 倒序或跨类型统一时间线，建一个 MapReduce view（`map`: `emit([type, date], null)`）。
-- **同步**：
-  - RemoteStorage 整库同步自动覆盖这些 `bk:` 文档（细粒度，单条变更只同步该文档）。
-  - WebDAV 兜底：改为聚合 `app_data/onenav/apps/bookkeeping-records.json`（首次加载若无 `bk:` 文档则回退读此文件并写回 `bk:`），或按 `bk:` 前缀分文件（实现时定）。
-- **不再使用 `useAppData('bookkeeping', …)` 的单文档模式**；改为专用存储模块（建议 `src/lib/bookkeeping-store.ts`），
-  直接 `getPouchDB()` 操作 `bk:` 前缀，对外暴露 `listByType / putRecord / bulkPut / removeRecord / queryByDate`。
+- **存储位置**：独立 PouchDB 库 `onenav-bookkeeping`（`src/lib/bookkeeping-db.ts`）。记账数据**不再写入主库 `onenav`**，
+  即不落在书签/配置的同步链路里。主库中历史 `bk:*` 文档（以及更早的 `app:bookkeeping`）在加载时按 id 增量迁移到独立库，
+  旧文档保留（多设备场景下每台设备都要能完成自己的迁移）。
+- **同步**：经 zen-fs-config「数据同步组」（appId=`bookkeeping`）双向同步到远端后端（RemoteStorage / Gitee / WebDAV 等），
+  由记账页底部「数据同步组」面板配置；单条变更只同步该文档（`src/lib/bookkeeping-sync.ts`，basePath `/bookkeeping`）。
+- **WebDAV 旧聚合文件**：`app_data/onenav/apps/bookkeeping-records.json` 仅保留为空库时的一次性兜底导入，**不再写出**。
+- **不再使用 `useAppData('bookkeeping', …)` 的单文档模式**；改为专用存储模块 `src/lib/bookkeeping-store.ts`，
+  操作独立库的 `bk:` 前缀，对外暴露 `loadAllRecords / putRecords / updateRecord / removeRecord`。
 
 ## 5. 迁移（旧 → 新）
 

@@ -44,7 +44,7 @@
 
 ```ts
 export interface AppMeta {
-  id: string          // 唯一 id，同时作为数据文档前缀 app:<id>
+  id: string          // 唯一 id，同时作为该应用「数据同步组」的 appId（zen-fs-config）
   name: string        // 显示名称
   icon: LucideIcon    // 图标（lucide 组件）
   accent: string      // 卡片渐变背景（tailwind from-/to- 类）
@@ -107,21 +107,32 @@ export function isAppVisible(meta: AppMeta, apps?: Record<string, { hidden: bool
   }
   ```
 
-## 7. 应用自身数据同步（useAppData）
+## 7. 应用自身数据同步（数据同步组）
 
-`src/lib/app-data.ts` 提供应用数据的存取与同步，让有状态的应用（如记账）也能多端同步：
+> 2026-11 修订：应用数据一律走 zen-fs-config 的**数据同步组**（data-sync，appId=`<应用 id>`），
+> **不写入主库 `onenav`**（主库是书签/配置的「配置同步」链路）。早期 `useAppData`（PouchDB `app:<id>`
+> 单文档 + WebDAV `app_data/onenav/apps/<id>.json`）已废弃：`src/lib/app-data.ts` 仅保留为历史兼容，
+> 现有应用不再调用。
 
-- 存储：PouchDB 文档 `app:<appId>`（RemoteStorage 整库同步自动覆盖）；WebDAV 额外落盘 `app_data/onenav/apps/<appId>.json`，加载时本地 PouchDB 优先、缺失回退 WebDAV 并写回本地缓存。
-- 保存：`saveAppData` 写 PouchDB → 写 WebDAV → 触发 RemoteStorage 同步。
-- Hook：`useAppData<T>(appId, fallback)` 返回 `{ data, loading, save }`，组件内直接读写即可。
+各应用的数据落点：
 
-无状态应用（如计算器、时间戳转换）不需要调用 `useAppData`。
+| 应用 | 本地存储 | 同步通道 |
+| --- | --- | --- |
+| 记账 bookkeeping | PouchDB `onenav-bookkeeping`（`bk:*` 文档） | 数据同步组 appId=`bookkeeping`（basePath `/bookkeeping`） |
+| 点菜助手 dish-order | 数据组文件（按月 `orders/…`） | 数据同步组 appId=`dish-order` |
+| 文件浏览器 filebrowser | 数据组文件（`struct/…`、`host-disks/…`） | 数据同步组 appId=`dir-struct-gen`（与 zip-browser 写侧共用） |
+| 高尔夫 golf / golf-nav | PouchDB `onenav-golf` | 数据同步组 appId=`golf`（basePath `/golf`） |
+| 设备监控 hostmonitor | 无本机权威数据（IndexedDB 只读快照） | 直接读 RemoteStorage `ufs-nodes/`（由 home_cloud 写入，只读展示） |
+
+页面底部（或右上角）的「数据同步组」面板 = `SyncGroupConfigurator`（zen-fs-config-ui），
+负责配置该 appId 的后端（RemoteStorage / Gitee / WebDAV 等）。主库只保留 `cfg:app`、书签、点击统计等配置类文档。
 
 ## 8. 已落地示例：记账
 
 `src/components/apps/BookkeepingApp.tsx` 演示完整链路：收支记录的增删与汇总。其独立入口位于 `apps/bookkeeping/`（`index.html` + `entry.tsx`），清单首项 `id:'bookkeeping'`，`accent: from-emerald-500 to-teal-600`，图标 `Wallet`。
 
-> 记账的**数据与存储层**已修订为「统一 `type` 模型 + 每条记录独立 `bk:` 文档」，**不再使用** `useAppData('bookkeeping', { transactions: [] })` 单文档形态。详见 [`bookkeeping-data-model.md`](./bookkeeping-data-model.md)。
+> 记账的**数据与存储层**已修订为「统一 `type` 模型 + 每条记录独立 `bk:` 文档」，**不再使用** `useAppData('bookkeeping', { transactions: [] })` 单文档形态；
+> 2026-11 起这些 `bk:` 文档存独立库 `onenav-bookkeeping`，经数据同步组 appId=`bookkeeping` 跨设备同步（不写主库）。详见 [`bookkeeping-data-model.md`](./bookkeeping-data-model.md)。
 
 ## 9. 如何新增一个小应用（扩展指南）
 

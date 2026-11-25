@@ -6,12 +6,14 @@
  *  - 每条记录一个独立 PouchDB 文档，ID 前缀 `bk:<type>:<id>`，避免单文档体积问题（导入 2290 条订单也不膨胀）。
  *  - 对齐 pouchdb-design.md 的"每条数据独立文档"原则（新增 `bk:` 前缀）。
  *  - 旧的单文档 `app:bookkeeping`（{ transactions, prices }）在首次加载时自动迁移为 `bk:` 多文档。
- *  - 同步：RemoteStorage 整库同步自动覆盖 bk: 文档；WebDAV 兜底聚合为 app_data/onenav/apps/bookkeeping-records.json。
+ *  - 存储位置：**独立库 `onenav-bookkeeping`**（见 bookkeeping-db.ts），同步走 zen-fs-config
+ *    「数据同步组」（appId=bookkeeping，见 bookkeeping-sync.ts）。记账数据不再写入主库
+ *    `onenav`，即不落在书签/配置的同步链路里。
  */
-import { getPouchDB } from '@/lib/pouchdb'
+import { getBookkeepingDb, migrateBookkeepingDocsFromMain, BK_PREFIX, BK_END } from '@/lib/bookkeeping-db'
+import { scheduleBookkeepingSync } from '@/lib/bookkeeping-sync'
 import { loadWebDAVConfig } from '@/lib/config'
-import { createDirectory, putFileContents, getFileContents } from '@/lib/webdav'
-import { isRemoteStorageConfigured, scheduleAutoSync } from '@/lib/remotestorage-sync'
+import { getFileContents } from '@/lib/webdav'
 
 // ───────────────────────────────────────────────────────────
 // 类型定义
@@ -111,8 +113,6 @@ export function directionOf(r: TxRecord | OrderRecord): 'income' | 'expense' {
 // ───────────────────────────────────────────────────────────
 // 存储实现
 // ───────────────────────────────────────────────────────────
-const BK_PREFIX = 'bk:'
-const BK_END = BK_PREFIX + '￿' // U+FFFF 范围上界
 const APPS_DIR = 'app_data/onenav/apps'
 const WEBDAV_FILE = `${APPS_DIR}/bookkeeping-records.json`
 
@@ -201,91 +201,104 @@ async function migrateLegacy(db: any): Promise<void> {
   await db.remove(legacy).catch(() => null)
 }
 
-/** 写后同步：WebDAV 聚合兜底 + RemoteStorage 整库同步（均为最佳努力） */
-async function afterWrite(db: any): Promise<void> {
-  const wdav = loadWebDAVConfig()
-  if (wdav) {
-    try {
-      const records = await readAllRecords(db)
-      await createDirectory(wdav, 'app_data')
-      await createDirectory(wdav, 'app_data/onenav')
-      await createDirectory(wdav, APPS_DIR)
-      await putFileContents(
-        wdav,
-        WEBDAV_FILE,
-        JSON.stringify({ updatedAt: Date.now(), records }),
-      )
-    } catch (e) {
-      console.error('[bookkeeping-store] WebDAV 写失败（已忽略）:', e)
-    }
-  }
-  if (isRemoteStorageConfigured()) {
-    try {
-      await scheduleAutoSync(db)
-    } catch (e) {
-      console.error('[bookkeeping-store] RemoteStorage 同步失败（已忽略）:', e)
-    }
+/**
+ * 写后同步：交给「记账数据同步组」debounce 触发。
+ * 数据组未连接时同步层静默跳过（数据仍在本机独立库，连上后会自动补同步）。
+ * 不再写 WebDAV 聚合文件，也不再触发主库（配置同步）的 RemoteStorage 同步。
+ */
+function afterWrite(): void {
+  scheduleBookkeepingSync()
+}
+
+/** WebDAV 旧聚合文件的一次性兜底：导入过（或确认已有数据）后不再触发，避免删空后又被复活 */
+const WEBDAV_IMPORTED_KEY = 'onenav:bookkeeping-webdav-imported'
+
+function isWebdavImported(): boolean {
+  try {
+    return !!localStorage.getItem(WEBDAV_IMPORTED_KEY)
+  } catch {
+    return false
   }
 }
 
-/** 加载全部记账记录（含旧文档迁移 + WebDAV 兜底） */
+function markWebdavImported(): void {
+  try {
+    localStorage.setItem(WEBDAV_IMPORTED_KEY, '1')
+  } catch {
+    // 忽略
+  }
+}
+
+/** 加载全部记账记录（含旧主库迁移、旧单文档迁移 + WebDAV 一次性兜底导入） */
 export async function loadAllRecords(): Promise<BookkeepingRecord[]> {
-  const db = await getPouchDB()
+  const db = await getBookkeepingDb()
+  // 先把主库里历史 bk: / app:bookkeeping 文档增量搬到独立库（幂等）
+  await migrateBookkeepingDocsFromMain()
   await migrateLegacy(db)
-  let records = await readAllRecords(db)
-  if (records.length === 0) {
-    const wdav = loadWebDAVConfig()
-    if (wdav) {
-      try {
-        const raw = await getFileContents(wdav, WEBDAV_FILE)
-        const parsed = JSON.parse(raw)
-        if (Array.isArray(parsed.records) && parsed.records.length) {
-          records = parsed.records as BookkeepingRecord[]
-          await db.bulkDocs(records.map((r) => ({ _id: bkId(r.type, r.id), ...r })))
-        }
-      } catch {
-        // WebDAV 无数据或读取失败，忽略
+  const records = await readAllRecords(db)
+  if (records.length > 0) {
+    // 独立库已有数据：WebDAV 兜底永久不再需要
+    markWebdavImported()
+    return records
+  }
+  // 已经做过兜底导入就不再读（否则用户删空台账后旧文件会把记录复活）
+  if (isWebdavImported()) return []
+
+  // 独立库仍为空：尝试 WebDAV 旧聚合文件做一次性兜底（历史数据，不常写）
+  const wdav = loadWebDAVConfig()
+  if (wdav) {
+    try {
+      const raw = await getFileContents(wdav, WEBDAV_FILE)
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed.records) && parsed.records.length) {
+        const imported = parsed.records as BookkeepingRecord[]
+        await db.bulkDocs(imported.map((r) => ({ _id: bkId(r.type, r.id), ...r })))
+        markWebdavImported()
+        return imported
       }
+    } catch {
+      // WebDAV 无数据或读取失败，忽略
     }
   }
-  return records
+  markWebdavImported()
+  return []
 }
 
 /** 批量写入记录（仅用于新增文档：调用方需保证这些是尚未入库的新记录） */
 export async function putRecords(records: BookkeepingRecord[]): Promise<void> {
   if (!records.length) return
-  const db = await getPouchDB()
+  const db = await getBookkeepingDb()
   await db.bulkDocs(records.map((r) => ({ _id: bkId(r.type, r.id), ...r })))
-  await afterWrite(db)
+  afterWrite()
 }
 
 /** 删除单条记录（按 id + type 精确定位，软删除） */
 export async function removeRecord(record: BookkeepingRecord): Promise<void> {
-  const db = await getPouchDB()
+  const db = await getBookkeepingDb()
   const doc = await db.get(bkId(record.type, record.id)).catch(() => null)
   if (doc) await db.remove(doc)
-  await afterWrite(db)
+  afterWrite()
 }
 
 /** 批量删除记录 */
 export async function removeRecords(records: BookkeepingRecord[]): Promise<void> {
   if (!records.length) return
-  const db = await getPouchDB()
+  const db = await getBookkeepingDb()
   const docs = await Promise.all(records.map((r) => db.get(bkId(r.type, r.id)).catch(() => null)))
   const existing = docs.filter(Boolean)
   if (existing.length) {
     await db.bulkDocs(existing.map((d: any) => ({ _id: d._id, _rev: d._rev, _deleted: true })))
   }
-  await afterWrite(db)
+  afterWrite()
 }
 
 /** 更新已有记录（按 id + type 精确 upsert，保留 _rev 避免版本冲突） */
 export async function updateRecord(record: BookkeepingRecord): Promise<void> {
-  const db = await getPouchDB()
+  const db = await getBookkeepingDb()
   const existing = await db.get(bkId(record.type, record.id)).catch(() => null)
   const doc = existing
     ? { _id: existing._id, _rev: existing._rev, ...record }
     : { _id: bkId(record.type, record.id), ...record }
   await db.put(doc as any)
-  await afterWrite(db)
+  afterWrite()
 }

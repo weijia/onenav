@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import type { ComponentType } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import { ArrowLeft } from 'lucide-react'
@@ -7,6 +7,7 @@ import { registerServiceWorker } from '@/lib/sw-register'
 import { bootstrapAppRemoteStorage } from '@/lib/app-host-sync'
 import UpdateToast from '@/components/UpdateToast'
 import UpdateCheckButton from '@/components/UpdateCheckButton'
+import SyncStatusChip from '@/components/apps/SyncStatusChip'
 
 interface AppHostProps {
   /** 应用名称 */
@@ -29,13 +30,16 @@ interface AppHostProps {
  * 从而保持主 bundle 不含任何应用代码。
  *
  * 所有独立应用页（apps/<id>/index.html，位于仓库两级深度）共用本容器，
- * 因此在这里统一做两件「主页已有」的事：
+ * 因此在这里统一做三件「主页已有」的事：
  *  1. 注册根目录 Service Worker（路径 ../../sw.js，作用域覆盖全站）——离线可用 + 可检测新版本；
- *  2. 渲染 UpdateToast——与主页一致的「新版本可用 / 点击刷新」提示与重载。
- * 新增应用页只要套 AppHost 即自动获得这两项能力，无需各入口重复接线。
+ *  2. 渲染 UpdateToast——与主页一致的「新版本可用 / 点击刷新」提示与重载；
+ *  3. 后台引导 RemoteStorage 连接与初始同步，并渲染统一的同步进度胶囊（SyncStatusChip）。
+ *
+ * 关键设计：**不再用 rsReady 门控应用主体**。应用一律立即挂载、先用本地缓存数据打开；
+ * 连接后端与初始同步在后台进行，进度写在全局同步状态 store，由 SyncStatusChip 展示；
+ * 同步结束后 bootstrapAppRemoteStorage 会派发 RS_SYNCED_EVENT，应用重读本地库后显示更新内容。
+ * 这样冷启动连组 + 首轮同步再慢也不会把页面卡在「正在连接 RemoteStorage…」上。
  */
-const RS_BOOTSTRAP_TIMEOUT = 5000 // 应用主体不被 RemoteStorage 同步阻塞超过该毫秒数
-
 export default function AppHost({ name, description, accent, icon: Icon, component: AppComp, onBack }: AppHostProps) {
   // 注册根 SW：../../sw.js 相对 apps/<id>/index.html 解析到根目录，作用域覆盖全站。
   // 幂等——若主页或其他应用页已注册同一 SW，浏览器返回同一 registration。
@@ -43,30 +47,12 @@ export default function AppHost({ name, description, accent, icon: Icon, compone
     registerServiceWorker('../../sw.js')
   }, [])
 
-  // 独立应用页的 RemoteStorage 同步引导：挂载时建立连接 + 一次初始双向同步。
-  // 没有本容器，各应用页的 isRemoteStorageConfigured() 恒为 false，写后数据不会 push 到后端。
-  // 用 rsReady 做渲染门控：等初始同步落定（或超时）后再渲染应用主体，
-  // 保证「首次打开即可见远端/跨设备数据」。无凭据时立即就绪，不阻塞本地模式。
-  const [rsReady, setRsReady] = useState(false)
+  // 独立应用页的 RemoteStorage 同步引导：建立连接 + 一次初始双向同步。
+  // 不阻塞渲染：应用主体已在下方立即挂载；同步进度由 SyncStatusChip 订阅全局状态展示，
+  // 同步结束后 app-host-sync 派发 RS_SYNCED_EVENT，需要刷新的应用自行监听。
+  // 无凭据时立即返回，不阻塞本地模式。
   useEffect(() => {
-    let cancelled = false
-    const timer = setTimeout(() => {
-      if (!cancelled) setRsReady(true) // 安全上限：RS 慢/挂起也不长期阻塞
-    }, RS_BOOTSTRAP_TIMEOUT)
-    bootstrapAppRemoteStorage().then(() => {
-      if (!cancelled) {
-        setRsReady(true) // 成功或失败都放行；仅在有凭据时才真正发起同步
-        // 初始同步落定后通知应用主体重新读取远端数据。
-        // 关键：bootstrap 的同步（拉取 RemoteStorage 大量数据文件 / 等待 .sync.lock 锁）常常远超
-        // 上面的 RS_BOOTSTRAP_TIMEOUT 门控，应用此时已挂载并读到空库。若不在此重新通知，
-        // 同步完成后应用永远不会刷新，表现为「能存不能读」。应用挂载时监听本事件并重新 loadAllRecords。
-        window.dispatchEvent(new CustomEvent('onenav:rs-synced'))
-      }
-    })
-    return () => {
-      cancelled = true
-      clearTimeout(timer)
-    }
+    void bootstrapAppRemoteStorage()
   }, [])
 
   return (
@@ -86,22 +72,19 @@ export default function AppHost({ name, description, accent, icon: Icon, compone
           <h2 className="text-white/90 font-medium leading-tight">{name}</h2>
           <p className="text-white/40 text-xs">{description}</p>
         </div>
-        {/* 每个独立应用页都有「强制检查更新」：点一下即比对远端 version.json / 探测 waiting Worker，
-            发现新版本后可一键应用并重载，不必等后台 sw.js 的定时检查。 */}
+        {/* 每个独立应用页都有「强制检查更新」：站点根 version.json + SW 双通道，不依赖 sw.js 定时检查 */}
         <UpdateCheckButton className="ml-auto" />
       </div>
       <div className="flex-1 overflow-y-auto">
-        {rsReady ? (
-          <AppComp />
-        ) : (
-          <div className="flex items-center justify-center h-full text-white/40 text-sm">正在连接 RemoteStorage…</div>
-        )}
+        <AppComp />
       </div>
       <div className="text-center py-2 text-white/20 text-xs shrink-0 flex items-center justify-center gap-2">
         <span>{versionDisplay}</span>
         <span>·</span>
         <span>{buildTimeDisplay}</span>
       </div>
+      {/* 统一的同步进度胶囊：所有独立应用页共享，避免各应用各写一份 */}
+      <SyncStatusChip />
       {/* 与主页一致的版本更新提示（新版本可用 → 点击刷新 → SKIP_WAITING + 重载） */}
       <UpdateToast />
     </div>

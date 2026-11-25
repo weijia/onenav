@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>zen-fs-config V2 页面冒烟测试</title>
+  <style>
+    :root { color-scheme: light; font-family: ui-sans-serif, system-ui, sans-serif; }
+    body { margin: 0; padding: 24px; background: #f6f7f9; color: #111827; }
+    h1 { margin: 0 0 6px; font-size: 20px; }
+    .sub { color: #6b7280; font-size: 13px; margin-bottom: 18px; }
+    #result { padding: 12px 14px; border-radius: 10px; font-weight: 700; margin-bottom: 16px; }
+    #result.running { background: #e0e7ff; color: #3730a3; }
+    #result.pass { background: #dcfce7; color: #166534; }
+    #result.fail { background: #fee2e2; color: #991b1b; }
+    #checks { display: grid; gap: 6px; margin-bottom: 18px; font-size: 13px; }
+    .check { padding: 7px 10px; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; }
+    .check.ok { border-color: #86efac; }
+    .check.bad { border-color: #fca5a5; }
+    section { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 14px; }
+    section h2 { font-size: 14px; margin: 0 0 10px; }
+    #events { font-family: ui-monospace, monospace; font-size: 12px; white-space: pre-wrap; color: #374151; }
+    pre { margin: 0; font-size: 12px; white-space: pre-wrap; word-break: break-all; }
+  </style>
+</head>
+<body>
+  <h1>zen-fs-config V2 页面冒烟测试</h1>
+  <div class="sub">真实浏览器 · IndexedDB · &lt;sync-group-configurator-v2&gt; 共用同一个 AppRepo</div>
+  <div id="result" class="running">运行中…</div>
+  <div id="checks"></div>
+
+  <section style="margin-bottom:16px">
+    <h2>V2 UI 组件</h2>
+    <sync-group-configurator-v2 id="panel" app-id="v2-page-smoke"></sync-group-configurator-v2>
+  </section>
+
+  <section>
+    <h2>同步事件 / 运行日志</h2>
+    <div id="events">（等待同步事件）</div>
+    <pre id="log"></pre>
+  </section>
+
+  <script src="./v2/zen-fs-config-ui.js"></script>
+  <script>
+    window.__V2_RESULT__ = { status: 'running', checks: [] };
+    const checksEl = document.getElementById('checks');
+    const resultEl = document.getElementById('result');
+    const eventsEl = document.getElementById('events');
+    const logEl = document.getElementById('log');
+    const panel = document.getElementById('panel');
+    const APP_ID = 'v2-page-smoke';
+
+    // Register the listener before run(): the element may connect as soon as it
+    // is upgraded, which can happen before the async test reaches the panel.
+    const panelRepoPromise = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('repo-ready timeout')), 15000);
+      panel.addEventListener('repo-ready', (event) => {
+        clearTimeout(timer);
+        resolve(event.detail);
+      }, { once: true });
+    });
+    panelRepoPromise.catch(() => {});
+
+    function log(msg) {
+      logEl.textContent += `${new Date().toLocaleTimeString()}  ${msg}\n`;
+    }
+
+    function record(name, ok, detail) {
+      window.__V2_RESULT__.checks.push({ name, ok, detail: detail ?? '' });
+      const el = document.createElement('div');
+      el.className = `check ${ok ? 'ok' : 'bad'}`;
+      el.textContent = `${ok ? 'PASS' : 'FAIL'} — ${name}${detail ? `：${detail}` : ''}`;
+      checksEl.appendChild(el);
+      log(`${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ` — ${detail}` : ''}`);
+    }
+
+    function assert(name, fn) {
+      try {
+        const value = fn();
+        record(name, value !== false, value === true || value === undefined ? '' : String(value));
+        return value;
+      } catch (err) {
+        record(name, false, err && err.message ? err.message : String(err));
+        throw err;
+      }
+    }
+
+    async function assertAsync(name, fn) {
+      try {
+        const value = await fn();
+        record(name, value !== false, value === true || value === undefined ? '' : String(value));
+        return value;
+      } catch (err) {
+        record(name, false, err && err.message ? err.message : String(err));
+        throw err;
+      }
+    }
+
+    function waitEvent(target, name, timeoutMs = 15000) {
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(`${name} timeout`)), timeoutMs);
+        target.addEventListener(name, (event) => {
+          clearTimeout(timer);
+          resolve(event.detail);
+        }, { once: true });
+      });
+    }
+
+    async function run() {
+      try {
+        log(`library: ${typeof ZenFSConfigUI}`);
+        assert('浏览器 bundle 暴露 connectV2', () => typeof ZenFSConfigUI.connectV2 === 'function');
+        assert('浏览器 bundle 暴露 getUiConnection', () => typeof ZenFSConfigUI.getUiConnection === 'function');
+        assert('V2 自定义元素已注册', () => !!customElements.get('sync-group-configurator-v2'));
+
+        const repo = await ZenFSConfigUI.connectV2(APP_ID);
+        assert('connectV2 返回 AppRepo', () => repo && repo.appId === APP_ID, repo && repo.appId);
+        const repoAgain = await ZenFSConfigUI.connectV2(APP_ID);
+        assert('相同 appId/options 复用同一 AppRepo', () => repoAgain === repo);
+
+        const group = await repo.getDefaultDataGroup();
+        assert('getDefaultDataGroup 返回数据组', () => !!group.id, group.id);
+        assert('DataGroup 暴露 fs.promises', () => !!group.fs && !!group.fs.promises && typeof group.fs.promises.writeFile === 'function');
+        log(`default data group: ${group.id}`);
+
+        const infos = await repo.listDataGroups();
+        assert('listDataGroups 列出已有组', () => infos.some((info) => info.id === group.id), `groups=${infos.map((info) => info.id).join(',')}`);
+        const sameGroup = await repo.getDataGroup(group.id);
+        assert('getDataGroup 按 id 取组', () => sameGroup.id === group.id);
+        await assertAsync('getDataGroup 拒绝不存在的组', async () => {
+          try {
+            await repo.getDataGroup('missing-group');
+            return false;
+          } catch (err) {
+            return err && err.code === 'DATA_GROUP_NOT_FOUND';
+          }
+        });
+
+        const events = [];
+        const unsubscribe = group.onSyncEvent((event) => {
+          events.push(event);
+          eventsEl.textContent += `${event.type} ${event.backendId} ${JSON.stringify(event.result || event.error || '')}\n`;
+        });
+        assert('onSyncEvent 返回取消函数', () => typeof unsubscribe === 'function');
+
+        const first = await group.addBackend({
+          id: 'smoke-memory',
+          type: 'InMemory',
+          options: { label: 'v2-page-smoke-memory' },
+        });
+        assert('addBackend 添加 InMemory 后端', () => !!first.backendId, `${first.backendId} added=${first.addedBackend}`);
+        const second = await group.addBackend({
+          id: 'smoke-memory',
+          type: 'InMemory',
+          options: { label: 'v2-page-smoke-memory' },
+        });
+        assert('同 id 重复 addBackend 幂等', () => second.addedBackend === false);
+        const sameEndpoint = await group.addBackend({
+          id: 'smoke-memory-2',
+          type: 'InMemory',
+          options: { label: 'v2-page-smoke-memory' },
+        });
+        assert('同 endpoint 不同 id 只添加一次', () => sameEndpoint.backendId === first.backendId);
+
+        await group.fs.promises.writeFile('/probe.txt', 'v2 page smoke ok');
+        const text = await group.fs.promises.readFile('/probe.txt', 'utf-8');
+        assert('DataGroup.fs 可读写', () => text === 'v2 page smoke ok', text);
+
+        const flushed = await group.flush();
+        assert('group.flush 立即同步并返回结果', () => Array.isArray(flushed) && flushed.length > 0 && !!flushed[0].pairId, `pairs=${flushed.length}`);
+        await new Promise((resolve) => setTimeout(resolve, 800));
+
+        assert('收到 sync:start', () => events.some((event) => event.type === 'sync:start'), `events=${events.length}`);
+        assert('收到 sync:end', () => events.some((event) => event.type === 'sync:end'), `events=${events.length}`);
+        const end = events.find((event) => event.type === 'sync:end');
+        assert('sync:end 带结果字段', () => !!end && !!end.result, end ? JSON.stringify(end.result) : 'no end');
+
+        const before = events.length;
+        unsubscribe();
+        await group.flush();
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        assert('取消订阅后不再收到事件', () => events.length === before, `${before} -> ${events.length}`);
+
+        await group.deleteFile('/probe.txt');
+        await assertAsync('deleteFile 走墓碑路径并删除本地文件', async () => {
+          try {
+            await group.fs.promises.stat('/probe.txt');
+            return false;
+          } catch {
+            return true;
+          }
+        });
+
+        const connection = ZenFSConfigUI.getUiConnection(repo);
+        assert('getUiConnection 拒绝未知 AppRepo', () => {
+          try {
+            ZenFSConfigUI.getUiConnection({ appId: 'fake' });
+            return false;
+          } catch (err) {
+            return err && err.code === 'UNKNOWN_APP_REPO';
+          }
+        });
+
+        // The panel may have mounted before the app created its default group;
+        // host calls refresh() after group setup so the UI re-reads descriptors.
+        await panel.refresh();
+        await new Promise((resolve) => setTimeout(resolve, 500));
+
+        const panelRepo = panel.getAppRepo() ?? await panelRepoPromise;
+        assert('UI 组件通过 repo-ready 返回 AppRepo', () => !!panelRepo && panelRepo.appId === APP_ID, panelRepo && panelRepo.appId);
+        assert('UI 组件与页面共用同一 AppRepo', () => panelRepo === repo);
+        assert('UI 组件 getAppRepo 可读取', () => panel.getAppRepo() === repo);
+
+        const failed = window.__V2_RESULT__.checks.filter((item) => !item.ok);
+        window.__V2_RESULT__.status = failed.length === 0 ? 'pass' : 'fail';
+        resultEl.className = window.__V2_RESULT__.status;
+        resultEl.textContent = failed.length === 0
+          ? `PASS — ${window.__V2_RESULT__.checks.length} 项检查全部通过`
+          : `FAIL — ${failed.length}/${window.__V2_RESULT__.checks.length} 项失败`;
+      } catch (err) {
+        window.__V2_RESULT__.status = 'fail';
+        window.__V2_RESULT__.error = err && err.stack ? err.stack : String(err);
+        resultEl.className = 'fail';
+        resultEl.textContent = `FAIL — ${err && err.message ? err.message : String(err)}`;
+        log(`FATAL ${window.__V2_RESULT__.error}`);
+      }
+    }
+
+    run();
+  </script>
+</body>
+</html>

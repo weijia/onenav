@@ -2,8 +2,8 @@
  * 高尔夫球场地图 —— 主组件
  *
  * 负责：状态编排、绘制工具、搜索定位、GPS/导航、导入导出、管理模式门禁。
- * 数据层走共享层 useSharedGolfData（内部仍是 useAppData('golf')）：
- * PouchDB 本地存储 + WebDAV + RemoteStorage 多端同步，且与球场避障导航页共享同一份数据。
+ * 数据层走共享层 useSharedGolfData：读写 golf 独立库（onenav-golf），经 appId=golf 的
+ * zen-fs-config 数据同步组跨设备同步；与球场避障导航页共享同一份数据。
  * 任一页面标注的更新，另一页面刷新后即可见。
  *
  * 【坐标约定】所有业务坐标都是 GCJ-02 [lng, lat]。

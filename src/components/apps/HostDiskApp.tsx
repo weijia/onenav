@@ -17,8 +17,10 @@ import {
   ShieldAlert,
 } from 'lucide-react'
 import { fetchUfsNodesRaw, RsNotConnectedError, RsAuthError } from './hostmonitor/fetch'
-import { reauthorizeForUfsNodes } from '@/lib/remotestorage-connection'
+import { getSavedStorageCredentials, getStorageCredentials, reauthorizeForUfsNodes } from '@/lib/remotestorage-connection'
 import { normalizeUfsNodes, filterHostsByDiskInfo, formatLastAccess } from './hostmonitor/normalize'
+import { readHostSnapshot, writeHostSnapshot } from './hostmonitor/cache'
+import { RS_SYNCED_EVENT } from '@/lib/app-host-sync'
 import type { DiskInfoFilter } from './hostmonitor/normalize'
 import type { ControlNodeView, DiskView, HostView, LogicalDiskView, SensitiveField } from './hostmonitor/types'
 
@@ -31,17 +33,39 @@ export default function HostDiskApp() {
   const [errorMsg, setErrorMsg] = useState('')
   const [errorCode, setErrorCode] = useState('')
   const [diskFilter, setDiskFilter] = useState<DiskInfoFilter>('all')
+  // 本机快照时间戳：非 null 表示当前画的是缓存（后端还没读到），读到后端后自动换成实时数据。
+  const [cacheAt, setCacheAt] = useState<number | null>(null)
 
   const load = useCallback(async () => {
-    setState('loading')
     setErrorMsg('')
     setErrorCode('')
+
+    // 1) 先画本机快照，别空等 RemoteStorage 连接/同步（应用页要求「本地缓存先打开」）。
+    let showedCache = false
+    try {
+      const snap = await readHostSnapshot()
+      if (snap) {
+        setHosts(snap.hosts)
+        setControlNodes(snap.controlNodes)
+        setCacheAt(snap.at)
+        setState(snap.hosts.length > 0 || snap.controlNodes.length > 0 ? 'data' : 'loading')
+        showedCache = snap.hosts.length > 0 || snap.controlNodes.length > 0
+      }
+    } catch {
+      /* 缓存不可用就当没有 */
+    }
+    if (!showedCache) setState('loading')
+
+    // 2) 再从后端拉最新数据
     try {
       const raws = await fetchUfsNodesRaw()
       const { hosts: hs, controlNodes: cns } = normalizeUfsNodes(raws)
       setHosts(hs)
       setControlNodes(cns)
+      setCacheAt(null)
       setState(hs.length > 0 || cns.length > 0 ? 'data' : 'empty')
+      // 读到新数据才刷新快照；写失败不影响浏览
+      void writeHostSnapshot(hs, cns)
     } catch (e) {
       if (e instanceof RsAuthError) {
         // 一次性自动重授权：仅对「已连接但缺 ufs-nodes 作用域」的 401 触发，防止死循环。
@@ -63,12 +87,33 @@ export default function HostDiskApp() {
         setErrorCode('UNKNOWN')
         setErrorMsg(e instanceof Error ? e.message : String(e))
       }
-      setState('error')
+      // 有缓存时继续显示缓存内容，只在顶部提示「未连上/读取失败」，不整页报错。
+      if (!showedCache) {
+        // 未连接不是最终结论：应用页挂载时后台 bootstrap 可能仍在连接中（页面不再等它）。
+        // 先保持加载态，等 RS_SYNCED_EVENT 明确「有凭据 → 重新拉」/「无凭据 → 才落成未连接面板」。
+        setState(e instanceof RsNotConnectedError ? 'loading' : 'error')
+      }
     }
   }, [])
 
   useEffect(() => {
     void load()
+  }, [load])
+
+  // 后台「连接 + 初始同步」结束后重新拉一次：此时凭据/连接才真正就绪，
+  // 页面据此把缓存内容换成同步后的最新数据。
+  useEffect(() => {
+    const onSynced = () => {
+      const creds = getStorageCredentials() || getSavedStorageCredentials()
+      if (creds) {
+        void load()
+        return
+      }
+      // 连接尝试结束仍无凭据：把等待态落成明确的「未连接」面板（已有缓存/数据则保持）
+      setState((prev) => (prev === 'data' ? prev : 'error'))
+    }
+    window.addEventListener(RS_SYNCED_EVENT, onSynced)
+    return () => window.removeEventListener(RS_SYNCED_EVENT, onSynced)
   }, [load])
 
   const withDiskCount = hosts.filter((h) => h.disks.length > 0).length
@@ -78,10 +123,17 @@ export default function HostDiskApp() {
   return (
     <div className="max-w-3xl mx-auto px-4 py-5 space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-white/90 font-medium flex items-center gap-2">
-          <Cpu className="w-4 h-4 text-white/50" />
-          设备监控
-        </h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-white/90 font-medium flex items-center gap-2">
+            <Cpu className="w-4 h-4 text-white/50" />
+            设备监控
+          </h1>
+          {cacheAt != null && (
+            <span className="rounded-full bg-white/10 px-2 py-0.5 text-[11px] text-white/45">
+              缓存 · {formatCacheAt(cacheAt)}
+            </span>
+          )}
+        </div>
         <button
           onClick={load}
           className="px-3 py-1.5 rounded-lg text-xs bg-white/5 text-white/70 hover:bg-white/15 hover:text-white flex items-center gap-1.5 transition-colors"
@@ -90,6 +142,22 @@ export default function HostDiskApp() {
           刷新
         </button>
       </div>
+
+      {/* 已显示缓存、但后端读取失败/未连接：只做顶部提示，不挡内容 */}
+      {state === 'data' && errorCode && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-400/25 bg-amber-400/10 px-3 py-2 text-xs text-amber-100">
+          <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+          <span className="flex-1 leading-relaxed">
+            当前显示的是本机缓存，未能读取后端最新数据：{errorMsg || errorCode}
+          </span>
+          <button
+            onClick={load}
+            className="shrink-0 rounded border border-amber-200/30 px-2 py-0.5 hover:bg-white/10"
+          >
+            重试
+          </button>
+        </div>
+      )}
 
       {state === 'loading' && <LoadingState />}
       {state === 'error' && <ErrorState code={errorCode} message={errorMsg} onRetry={load} />}
@@ -134,6 +202,14 @@ export default function HostDiskApp() {
 }
 
 // ── 状态小组件 ──
+
+/** 缓存时间文案：当天只显示 HH:MM，跨天显示 MM-DD HH:MM */
+function formatCacheAt(at: number): string {
+  const d = new Date(at)
+  const sameDay = d.toDateString() === new Date().toDateString()
+  const hhmm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  return sameDay ? hhmm : `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${hhmm}`
+}
 
 function FilterChip({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
   return (

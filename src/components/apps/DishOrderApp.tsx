@@ -35,6 +35,7 @@ import {
 } from './dish-order/format'
 import type { DishOrder, NormalizeResult } from './dish-order/format'
 import DishOrderSyncPanel from './dish-order/DishOrderSyncPanel'
+import { readOrdersSnapshot, writeOrdersSnapshot } from './dish-order/cache'
 import {
   deleteOrder,
   isDishGroupReady,
@@ -51,6 +52,14 @@ import {
 function localToday(): string {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+/** 缓存时间文案：当天只显示 HH:MM，跨天显示 MM-DD HH:MM */
+function formatCacheAt(at: number): string {
+  const d = new Date(at)
+  const sameDay = d.toDateString() === new Date().toDateString()
+  const hhmm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  return sameDay ? hhmm : `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${hhmm}`
 }
 
 function money(n: number | null): string {
@@ -757,24 +766,52 @@ export default function DishOrderApp() {
   const [query, setQuery] = useState('')
   const [refreshTick, setRefreshTick] = useState(0)
   const [error, setError] = useState('')
+  // 本机快照时间戳：非 null 表示当前画的是缓存（数据同步组还没连上/还没 flush 完）。
+  const [cacheAt, setCacheAt] = useState<number | null>(null)
 
   const load = useCallback(async () => {
-    if (!isDishGroupReady()) {
-      setState('not-connected')
-      setOrders([])
-      setMonths([])
+    setError('')
+    const ready = isDishGroupReady()
+    let showedCache = false
+
+    // 1) 先画本机快照，别空等数据同步组连接（冷启动连组 + 首轮 flush 实测常要十几秒）。
+    try {
+      const snap = await readOrdersSnapshot(month)
+      if (snap && snap.orders.length > 0) {
+        setOrders(snap.orders)
+        setMonths(snap.months)
+        setCacheAt(snap.at)
+        setState('data')
+        showedCache = true
+      }
+    } catch {
+      /* 缓存不可用就当没有 */
+    }
+
+    // 2) 数据同步组未连接：有缓存就只读展示，没有才提示去配置
+    if (!ready) {
+      if (!showedCache) {
+        setState('not-connected')
+        setOrders([])
+        setMonths([])
+        setCacheAt(null)
+      }
       return
     }
-    setState('loading')
-    setError('')
+
+    if (!showedCache) setState('loading')
     try {
       const [list, ms] = await Promise.all([readOrders(month === 'all' ? undefined : month), listMonths()])
       setOrders(list)
       setMonths(ms)
+      setCacheAt(null)
       setState('data')
+      // 读到实时数据才刷新快照；写失败不影响浏览
+      void writeOrdersSnapshot(month, list, ms)
     } catch (e) {
       setError(errText(e))
-      setState('not-connected')
+      // 有缓存时继续显示缓存内容，只在顶部提示，不整页清空
+      if (!showedCache) setState('not-connected')
     }
   }, [month])
 
@@ -826,6 +863,9 @@ export default function DishOrderApp() {
     })
   }, [orders, query])
 
+  // 数据同步组是否就绪：未连接时只读展示缓存，写操作面板禁用
+  const groupReady = isDishGroupReady()
+
   return (
     <div className="w-full max-w-5xl mx-auto px-4 py-6 space-y-4 text-white">
       <div>
@@ -839,11 +879,24 @@ export default function DishOrderApp() {
         </p>
       )}
 
+      {/* 已显示缓存但数据组未连接：只读提示，不挡内容 */}
+      {!groupReady && state === 'data' && (
+        <p className="flex items-start gap-2 rounded-lg bg-amber-400/10 border border-amber-400/25 px-4 py-2 text-sm text-amber-100">
+          <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+          数据同步组未连接，当前显示本机缓存（只读）；连接并同步后自动换成最新记录。
+        </p>
+      )}
+
       {/* 点菜记录置顶 */}
       <section className="space-y-2">
         <div className="flex items-center gap-3 flex-wrap pt-2">
           <h2 className="font-medium">点菜记录</h2>
           <span className="text-xs text-white/40">{visible.length} 条</span>
+          {cacheAt != null && (
+            <span className="rounded-full bg-white/10 px-2 py-0.5 text-[11px] text-white/45">
+              缓存 · {formatCacheAt(cacheAt)}
+            </span>
+          )}
           <div className="flex-1" />
           <select
             value={month}
@@ -891,8 +944,8 @@ export default function DishOrderApp() {
 
       {state !== 'not-connected' && (
         <>
-          <ImportPanel onImported={reload} disabled={false} />
-          <ManualAddPanel onAdded={reload} disabled={false} />
+          <ImportPanel onImported={reload} disabled={!groupReady} />
+          <ManualAddPanel onAdded={reload} disabled={!groupReady} />
         </>
       )}
       <PromptPanel />

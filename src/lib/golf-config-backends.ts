@@ -8,36 +8,21 @@
  * 导致 golf 数据组选「🦊 Gitee」时报
  * "Backend package \"zen-fs-gitee\" is not available"。
  */
-import { connect } from 'zen-fs-config'
 import type { AppDataGroup } from 'zen-fs-config'
-import { registerFsConfigBackends } from './fs-config-backends'
+import { registerFsConfigBackends, resolveDataGroup } from './fs-config-backends'
+
+/** golf 数据组的逻辑数据目录（组内 basePath） */
+const GOLF_DATA_PATH = '/golf'
 
 /**
  * 从 config-ui 的 onConnected 数据里解析出可用的数据组实例。
- * config-sync 模式只给 repo（数据组在内部 groupInstances，未 emit）；
- * data-sync 模式给 dataGroup。兜底用 connect('golf') 重新加载。
+ *
+ * 注意：不要再用「取列表第一个组」的老写法——一个 appId 下存在历史 `default`
+ * 空组时会挂错，数据写进空组。统一交给 resolveDataGroup：
+ * 本机偏好组 → `/golf` 下已有内容的组 → 唯一远端组。
  */
 export async function resolveGolfDataGroup(connected: any): Promise<AppDataGroup | null> {
-  const direct = connected?.dataGroup as AppDataGroup | undefined
-  if (direct?.fs?.promises) return direct
-  const repo = connected?.repo as any
-  if (repo?.listAppDataGroups && repo?.getAppDataGroup) {
-    try {
-      const descriptors = await repo.listAppDataGroups()
-      for (const d of descriptors) {
-        const g = await repo.getAppDataGroup(d.id)
-        if (g?.fs?.promises) return g
-      }
-    } catch { /* 落到 connect 兜底 */ }
-  }
-  try {
-    const result = await connect('golf')
-    const groups = result.appDataGroups || []
-    return groups.find((g) => g?.fs?.promises) || null
-  } catch (e) {
-    console.warn('[golf] 无法解析数据组实例:', e)
-    return null
-  }
+  return resolveDataGroup(connected, 'golf', { preferPath: GOLF_DATA_PATH })
 }
 
 export function registerGolfBackends(): void {

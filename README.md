@@ -11,6 +11,23 @@
 - **固定书签**：可将常用书签置顶显示
 - **点击统计**：记录访问频率，支持"常用"标签
 - **多设备同步**：通过 RemoteStorage 或 WebDAV 同步数据
+- **强制检查更新**：主页与所有独立应用页都有「检查更新」按钮，不依赖后台 `sw.js` 定时检查
+
+## 强制检查页面更新
+
+主页右上角与每个独立应用页（`apps/<id>/index.html`）顶部都有刷新图标按钮，点击即主动检查线上是否已更新，不用等 Service Worker 的 3 秒 / 5 分钟自动检查。
+
+检查走两条独立通道，任一可用即可得出结论：
+
+1. **版本清单通道（不依赖 SW）**：`fetch('<站点根>/version.json', { cache: 'no-store' })`，与编译进本包的 `sha/buildTime` 比对。站点根由当前 URL 推导（`/apps/<id>/index.html` 自动回退两级），所以主页和应用页共用同一份清单。
+2. **Service Worker 通道**：`getRegistration()` + `update()`，并轮询 `reg.waiting` 判断新 Worker 是否已装好；同时探测 `sw.js` 的 HTTP 状态与 MIME，把「404 / 非 JavaScript」这类异常直接显示在提示里。
+
+发现新版本后点「立即更新」：
+
+- 有 waiting Worker → `postMessage({ type: 'SKIP_WAITING' })`，等 `controllerchange` 后带 `_u=<时间戳>` 重载；
+- 没有（例如 `sw.js` 异常导致后台更新从未成功）→ 注销 SW、清空 Cache Storage，再带防缓存参数重载，保证下次请求真的走网络拿到新页面。
+
+构建说明：`vite.config.ts` 的 `emit-version-manifest` 插件把 `src/version.json` 原样输出到 `dist/version.json`（站点根目录），同时 `injectManifest.globIgnores` 排除了它——否则它会进入 SW 预缓存，`no-store` 请求也会被 Workbox 拦截成旧清单，检查永远显示「已是最新」。
 
 ## 存储模式
 
@@ -116,6 +133,26 @@ RemoteStorage 同步基于 [zen-fs](https://github.com/zen-fs) 实现：
 - `storage/pinned.json` → `cfg:pinned`
 - `storage/bookmarks/{encoded_url}.json` → `bm:{url}`
 - `storage/stats/clicks.json` → `stats:clicks`
+
+### 独立应用页的「缓存优先」加载
+
+每个内置应用（点击应用卡片后的独立页面）统一套 `AppHost`：
+
+- 应用主体**立即挂载**，先用本机数据打开（主库 PouchDB 或应用自己的 IndexedDB 快照），不再等待后端连接；
+- RemoteStorage 连接与首轮双向同步在后台进行，进度写入全局同步状态（`lib/sync-status.ts`），由页面底部的同步胶囊显示；
+- 每次连接/同步尝试结束后派发 `onenav:rs-synced`，应用收到后重读本地库，显示同步后的更新内容；
+- 本地快照来源：记账 / 高尔夫直接读本地 PouchDB；文件浏览器（目录清单）、设备监控（ufs-nodes）、点菜助手（按月记录）用 IndexedDB 缓存，未连上后端时只读展示并标注「缓存 · 时间」。
+- **应用数据落点**：配置了数据组后端之后，应用数据走各自的 zen-fs-config **数据同步组**（appId = 应用 id）；
+  主库 `onenav` 只保留书签、配置、点击统计等配置类文档——应用数据不写「配置同步」链路。
+  记账已拆到独立库 `onenav-bookkeeping`（数据组 appId=`bookkeeping`），旧主库 `bk:` 文档在首次加载时增量迁移；
+  高尔夫 `onenav-golf`、点菜助手、文件浏览器同理。设备监控为只读，直接展示 home_cloud 写入 RemoteStorage 的 `ufs-nodes/`。
+- **默认不建空数据组（模式 C）**：启动阶段不写 `.config/app-data-groups/`，本地数据先落应用暂存库；
+  用户第一次给数据组配置后端时，才 `createAppDataGroup(id, [backend])` 并迁移本地数据。
+  这样不会在远端已有同 id 组、配置首次拉取尚未完成时，用空描述符覆盖远端后端信息。
+  两个核心函数和用法见 [`docs/zen-fs-config-usage.md`](docs/zen-fs-config-usage.md)（`connect` + `getOrCreateAppDataGroup`）。
+  对外接口草案见 [`docs/proposal-public-api.md`](docs/proposal-public-api.md)（`connect` + `repo.getDefaultDataGroup` + `group.addBackend`）。
+  当前四个面板仍在使用 `ensureDataGroup` 自动建组，属于待迁移的过渡实现。
+- **数据组里的 `local-idb` 不是独立组**：zen-fs-config 为每个数据组内置一个隐式本地主存储（浏览器里是 IndexedDB，store 名 `zen-fs-config-data-<appId>` / `-<groupId>`），只做本地 source 与离线缓存，不参与远端同步。配置同步组卡片会显示这一行；数据组卡片（config-sync 视图）上游 UI 没渲染，OneNav 在候选组列表里补上了同样的 `local-idb · IndexedDB · 隐式 source · 不参与同步` 行。
 
 ## 开发
 

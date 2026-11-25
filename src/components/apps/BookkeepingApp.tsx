@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import {
   Trash2,
   TrendingUp,
@@ -34,7 +34,10 @@ import {
   priceTotalOf,
 } from '@/lib/bookkeeping-store'
 import { mergePrices } from '@/lib/bookkeeping-price'
-import SyncStatusChip from '@/components/apps/SyncStatusChip'
+// 记账数据走独立库 + zen-fs-config 数据同步组（不再随主库/配置同步）
+import { BOOKKEEPING_SYNCED_EVENT, isBookkeepingGroupReady } from '@/lib/bookkeeping-sync'
+import { RS_SYNCED_EVENT } from '@/lib/app-host-sync'
+import BookkeepingSyncPanel from './bookkeeping/BookkeepingSyncPanel'
 
 // 单据类型（TxRecord / PriceRecord / OrderRecord / BookkeepingRecord）与存储函数
 // 统一 type 模型 + 每条记录一个独立 PouchDB 文档，见 src/lib/bookkeeping-store.ts 与 docs/bookkeeping-data-model.md
@@ -989,6 +992,12 @@ function RecordEditModal({
 export default function BookkeepingApp() {
   const [records, setRecords] = useState<BookkeepingRecord[]>([])
   const [loading, setLoading] = useState(true)
+
+  const reloadRecords = useCallback(async () => {
+    const r = await loadAllRecords()
+    setRecords(r)
+  }, [])
+
   useEffect(() => {
     let cancelled = false
     setLoading(true)
@@ -1007,29 +1016,23 @@ export default function BookkeepingApp() {
     }
   }, [])
 
-  // ── RemoteStorage 同步完成后的重新读取 ──
-  // 修复「能存不能读」：bootstrap 初始同步（拉取远端大量数据文件 / 等待 .sync.lock 锁）常常
-  // 远超 AppHost 的 RS_BOOTSTRAP_TIMEOUT 门控，导致应用挂载时本地 PouchDB 仍为空、
-  // 首次读取拿不到远端数据且永不刷新。AppHost 在 bootstrap 落定后派发 onenav:rs-synced，
-  // 这里据此重新读取，保证远端/跨设备数据在同步完成后出现。
+  // ── 同步完成后的重新读取 ──
+  // 1) bookkeeping:synced：记账数据组完成一次双向同步（远端数据已落到独立库）；
+  // 2) onenav:rs-synced：主库（配置同步）完成一次同步——只用于补迁移历史 bk: 文档，
+  //    记账新数据不再走主库，这里重读是幂等的。
   useEffect(() => {
-    let cancelled = false
-    const reload = () => {
-      loadAllRecords()
-        .then((r) => {
-          if (!cancelled) setRecords(r)
-        })
-        .catch(() => {
-          // 忽略：后续同步完成仍会再次触发
-        })
+    const onSynced = () => {
+      void reloadRecords().catch(() => {
+        // 忽略：后续同步完成仍会再次触发
+      })
     }
-    const onSynced = () => reload()
-    window.addEventListener('onenav:rs-synced', onSynced)
+    window.addEventListener(BOOKKEEPING_SYNCED_EVENT, onSynced)
+    window.addEventListener(RS_SYNCED_EVENT, onSynced)
     return () => {
-      cancelled = true
-      window.removeEventListener('onenav:rs-synced', onSynced)
+      window.removeEventListener(BOOKKEEPING_SYNCED_EVENT, onSynced)
+      window.removeEventListener(RS_SYNCED_EVENT, onSynced)
     }
-  }, [])
+  }, [reloadRecords])
 
   // 统一时间线筛选：全部 / 流水 / 订单 / 报价
   const [viewFilter, setViewFilter] = useState<'all' | 'tx' | 'order' | 'price'>('all')
@@ -1390,8 +1393,18 @@ export default function BookkeepingApp() {
     return <div className="text-center text-white/40 py-10">加载中…</div>
   }
 
+  // 数据同步组是否就绪：未连接时数据只在本机独立库，底部面板可配置
+  const groupReady = isBookkeepingGroupReady()
+
   return (
     <div className="max-w-3xl mx-auto px-4 py-5 space-y-5">
+      {/* 记账走独立库 + 数据同步组；未连接时提示数据只在本机 */}
+      {!groupReady && (
+        <p className="rounded-lg bg-amber-400/10 border border-amber-400/25 px-3 py-2 text-xs text-amber-100">
+          数据同步组未连接：记账数据当前只在本机独立库；在页面底部「数据同步组」配置并连接后自动跨设备同步。
+        </p>
+      )}
+
       {/* 筛选 chip：全部 / 流水 / 订单 / 报价 */}
       <div className="flex gap-1 p-1 rounded-xl bg-white/5 border border-white/10">
         {([
@@ -2027,8 +2040,10 @@ export default function BookkeepingApp() {
         </div>
       )}
 
-      {/* 同步进度胶囊（常驻显示 RemoteStorage 同步进度） */}
-      <SyncStatusChip />
+      {/* 同步进度胶囊由 AppHost 统一渲染 */}
+
+      {/* 记账数据同步组（appId: bookkeeping）——数据只经此组跨设备同步 */}
+      <BookkeepingSyncPanel onReady={reloadRecords} />
 
     </div>
   )

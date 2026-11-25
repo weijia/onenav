@@ -1,29 +1,26 @@
-// 记账数据「保存 → 同步到后端」行为验证测试。
+// 记账数据「保存 → 同步」行为验证测试。
 //
-// 背景 / 待验证缺陷（bookkeeping-data-model.md 声称）：
-//   - RemoteStorage 整库同步自动覆盖 bk: 文档；
-//   - WebDAV 兜底聚合为 app_data/onenav/apps/bookkeeping-records.json。
+// 架构（2026-11 起）：记账数据存独立库 `onenav-bookkeeping`，经 zen-fs-config
+// 「数据同步组」（appId=bookkeeping）跨设备同步；不再写入主库 onenav（书签/配置的
+// 同步链路），也不再聚合写 WebDAV。
 //
-// 根因假设：记账是独立 HTML 页（apps/bookkeeping/index.html，独立 Vite 入口 / 独立模块实例），
-//   该页从不调用 configureRemoteStorage()/syncToRemoteStorage()，因此
-//   remotestorage-sync.ts 的模块级 isConfigured 恒为 false，afterWrite() 的
-//   `if (isRemoteStorageConfigured())` 分支永远跳过 → 记账数据只落本地 PouchDB，不 push 到 RemoteStorage。
-//
-// 本测试通过 mock 掉 4 个依赖，在「未配置 RS（独立页状态）」与「已配置 RS（主应用状态）」两种
-// 条件下驱动真实的 bookkeeping-store 代码路径，断言同步行为差异，从而验证上述根因。
-// 注意：不修改任何业务源码，只新增本测试。
+// 本测试 mock 掉存储边界，驱动真实 bookkeeping-store 代码，断言：
+//  - 读写都发生在独立库；
+//  - 每次写入后调用 scheduleBookkeepingSync（由数据组同步层 debounce 同步）；
+//  - 不再写 WebDAV 聚合文件（仍保留空库时的一次性 WebDAV 读取兜底）；
+//  - 加载前会调用 migrateBookkeepingDocsFromMain（主库历史数据增量迁移）。
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // ── 共享的可变状态（hoisted，供 mock 工厂闭包引用）──
 const h = vi.hoisted(() => ({
-  // RemoteStorage 是否「已配置」（对应独立记账页 false / 主应用 true）
-  configured: false,
-  // scheduleAutoSync 被调用的次数
-  scheduleSyncCalls: 0,
+  // scheduleBookkeepingSync 被调用的次数
+  scheduleCalls: 0,
+  // migrateBookkeepingDocsFromMain 被调用的次数
+  migrateCalls: 0,
   // WebDAV 配置（null 表示未配置）
   wdav: null as null | { url: string; username: string; password: string },
-  // WebDAV 侧实际写入的 {path, content} 列表
+  // WebDAV 侧实际写入的 {path, content} 列表（改造后应始终为空）
   webdavWrites: [] as Array<{ path: string; content: string }>,
   // WebDAV 文件读取兜底（loadAllRecords 空库回退用；null 表示文件不存在 → 抛错）
   wdavFile: null as string | null,
@@ -31,10 +28,21 @@ const h = vi.hoisted(() => ({
   db: null as any,
 }))
 
-vi.mock('@/lib/remotestorage-sync', () => ({
-  isRemoteStorageConfigured: () => h.configured,
-  scheduleAutoSync: vi.fn(async () => {
-    h.scheduleSyncCalls++
+vi.mock('@/lib/bookkeeping-db', () => ({
+  BK_PREFIX: 'bk:',
+  BK_END: 'bk:\uffff',
+  getBookkeepingDb: async () => h.db,
+  getBookkeepingPouchDB: async () => h.db,
+  migrateBookkeepingDocsFromMain: async () => {
+    h.migrateCalls++
+    return 0
+  },
+}))
+
+vi.mock('@/lib/bookkeeping-sync', () => ({
+  BOOKKEEPING_SYNCED_EVENT: 'bookkeeping:synced',
+  scheduleBookkeepingSync: vi.fn(() => {
+    h.scheduleCalls++
   }),
 }))
 
@@ -51,10 +59,6 @@ vi.mock('@/lib/webdav', () => ({
     if (h.wdavFile == null) throw new Error('ENOENT')
     return h.wdavFile
   }),
-}))
-
-vi.mock('@/lib/pouchdb', () => ({
-  getPouchDB: async () => h.db,
 }))
 
 // 导入被测模块（在 vi.mock 之后）
@@ -125,8 +129,8 @@ function makePrice(): PriceRecord {
 }
 
 beforeEach(() => {
-  h.configured = false
-  h.scheduleSyncCalls = 0
+  h.scheduleCalls = 0
+  h.migrateCalls = 0
   h.wdav = null
   h.webdavWrites = []
   h.wdavFile = null
@@ -134,75 +138,49 @@ beforeEach(() => {
   h.db = built.db
 })
 
-describe('记账 putRecords 写后同步（afterWrite）', () => {
-  it('A-1 独立记账页（未配置 RemoteStorage）：只写本地 PouchDB，不触发 RS 同步', async () => {
-    // 独立页状态：isRemoteStorageConfigured() === false（该页从未建立连接）
-    h.configured = false
-    h.wdav = null
-
+describe('记账写入：落独立库 + 触发数据组同步', () => {
+  it('A-1 写入记录：落到独立库，并调用 scheduleBookkeepingSync', async () => {
     await putRecords([makeTx()])
 
-    // 本地确实落库（bk:tx:tx-1 存在）
     const stored = await h.db.get('bk:tx:tx-1')
     expect(stored.amount).toBe(35)
     expect(stored.type).toBe('tx')
-    // 但从未触发 RemoteStorage 同步 —— 根因所在
-    expect(h.scheduleSyncCalls).toBe(0)
-    // 也未配置 WebDAV 兜底
+    expect(h.scheduleCalls).toBe(1)
+    // 不再聚合写 WebDAV
     expect(h.webdavWrites).toHaveLength(0)
   })
 
-  it('A-2 主应用（已配置 RemoteStorage）：写入后触发 scheduleAutoSync 推送后端', async () => {
-    h.configured = true
-    h.wdav = null
-
-    await putRecords([makeTx()])
-
-    expect(await h.db.get('bk:tx:tx-1')).toBeDefined()
-    expect(h.scheduleSyncCalls).toBeGreaterThanOrEqual(1)
-  })
-
-  it('A-3 已配置 WebDAV：写入后把整库记账聚合为 bookkeeping-records.json', async () => {
-    h.configured = false // 即使 RS 未配置，WebDAV 兜底也应生效
+  it('A-2 已配置 WebDAV 也不再把记账数据写进 WebDAV（数据只走数据同步组）', async () => {
     h.wdav = { url: 'https://wdav.test', username: 'u', password: 'p' }
 
     await putRecords([makeTx(), makePrice()])
 
-    expect(h.webdavWrites).toHaveLength(1)
-    const w = h.webdavWrites[0]
-    expect(w.path).toBe('app_data/onenav/apps/bookkeeping-records.json')
-    const parsed = JSON.parse(w.content)
-    expect(parsed.records).toHaveLength(2)
-    expect(parsed.records.map((r: any) => r.id)).toContain('tx-1')
-    expect(parsed.records.map((r: any) => r.id)).toContain('p-1')
+    expect(h.scheduleCalls).toBe(1)
+    expect(h.webdavWrites).toHaveLength(0)
   })
 
-  it('A-4 删除记录 removeRecord 同样走 afterWrite：未配置 RS 时不触发同步', async () => {
-    h.configured = false
-    h.wdav = null
+  it('A-3 删除记录同样触发数据组同步', async () => {
     await putRecords([makeTx()])
-    expect(h.scheduleSyncCalls).toBe(0)
+    h.scheduleCalls = 0
 
     await removeRecord(makeTx())
     await expect(h.db.get('bk:tx:tx-1')).rejects.toMatchObject({ status: 404 })
-    // 删除也未触发任何后端同步
-    expect(h.scheduleSyncCalls).toBe(0)
+    expect(h.scheduleCalls).toBe(1)
     expect(h.webdavWrites).toHaveLength(0)
   })
 })
 
 describe('记账 loadAllRecords 读取路径', () => {
-  it('B-1 从本地 PouchDB 读取 bk: 文档（独立页数据可见）', async () => {
+  it('B-1 加载前先做「主库历史文档」增量迁移，再从独立库读取', async () => {
     await putRecords([makeTx(), makePrice()])
-    h.scheduleSyncCalls = 0 // 清掉写入时的计数，只看读取
+    h.scheduleCalls = 0
 
     const all = await loadAllRecords()
+    expect(h.migrateCalls).toBe(1)
     expect(all.map((r) => r.id).sort()).toEqual(['p-1', 'tx-1'])
   })
 
-  it('B-2 本地空库时回退读取 WebDAV 聚合文件并回灌 PouchDB', async () => {
-    // 空本地库
-    h.configured = false
+  it('B-2 独立库为空时仍可一次性读取 WebDAV 旧聚合文件并回灌', async () => {
     h.wdav = { url: 'https://wdav.test', username: 'u', password: 'p' }
     h.wdavFile = JSON.stringify({
       updatedAt: 1,
@@ -212,20 +190,18 @@ describe('记账 loadAllRecords 读取路径', () => {
     const all = await loadAllRecords()
     expect(all).toHaveLength(1)
     expect(all[0].id).toBe('legacy-1')
-    // 已回灌到本地 PouchDB
+    // 已回灌到独立库
     expect(await h.db.get('bk:tx:legacy-1')).toBeDefined()
+    // 读取路径本身不触发写后同步
+    expect(h.scheduleCalls).toBe(0)
   })
 
   it('B-3 空库且无 WebDAV：返回空数组（不抛错）', async () => {
-    h.configured = false
-    h.wdav = null
     const all = await loadAllRecords()
     expect(all).toEqual([])
   })
 
-  it('B-4 价格记录带 note：写入 PouchDB 后再读取，note 完整保留', async () => {
-    h.configured = false
-    h.wdav = null
+  it('B-4 价格记录带 note：写入独立库后再读取，note 完整保留', async () => {
     const withNote: PriceRecord = {
       type: 'price',
       kind: 'item',
@@ -238,41 +214,31 @@ describe('记账 loadAllRecords 读取路径', () => {
       createdAt: 2,
     }
     await putRecords([withNote])
-    // 落库的 PouchDB 文档带 note
     const stored = await h.db.get('bk:price:p-note')
     expect(stored.note).toBe('药店买的，活动价')
-    // 读回后 note 仍然在
+
     const all = await loadAllRecords()
     const back = all.find((r) => r.id === 'p-note' && r.type === 'price') as PriceRecord | undefined
     expect(back).toBeDefined()
-    if (back) {
-      expect(back.kind).toBe('item')
-      if (back.kind === 'item') {
-        expect(back.note).toBe('药店买的，活动价')
-        expect(back.unitPrice).toBe(0.82)
-      }
+    if (back && back.kind === 'item') {
+      expect(back.note).toBe('药店买的，活动价')
+      expect(back.unitPrice).toBe(0.82)
     }
   })
 })
 
 describe('记账 updateRecord 更新已有记录', () => {
-  it('U-1 更新价格记录的单价与备注，本地文档被覆盖且保留 id/type/createdAt', async () => {
-    const p = makePrice() as Extract<PriceRecord, { kind: 'item' }> // bk:price:p-1，单价 5.8
+  it('U-1 更新价格记录的单价与备注，独立库文档被覆盖且保留身份字段', async () => {
+    const p = makePrice() as Extract<PriceRecord, { kind: 'item' }>
     await putRecords([p])
 
-    const updated: PriceRecord = {
-      ...p,
-      unitPrice: 6.5,
-      note: '涨价了',
-      quantity: 2,
-    }
+    const updated: PriceRecord = { ...p, unitPrice: 6.5, note: '涨价了', quantity: 2 }
     await updateRecord(updated)
 
     const stored = await h.db.get('bk:price:p-1')
     expect(stored.unitPrice).toBe(6.5)
     expect(stored.note).toBe('涨价了')
     expect(stored.quantity).toBe(2)
-    // 身份字段不变
     expect(stored.id).toBe('p-1')
     expect(stored.type).toBe('price')
     expect(stored.createdAt).toBe(1)
@@ -280,7 +246,6 @@ describe('记账 updateRecord 更新已有记录', () => {
     const all = await loadAllRecords()
     expect(all).toHaveLength(1)
     const back = all[0] as PriceRecord
-    expect(back.kind).toBe('item')
     if (back.kind === 'item') expect(back.unitPrice).toBe(6.5)
   })
 
@@ -300,18 +265,16 @@ describe('记账 updateRecord 更新已有记录', () => {
     expect(stored.unitPrice).toBe(9)
   })
 
-  it('U-3 未配置 RemoteStorage 时更新仍触发 afterWrite（WebDAV 兜底写）', async () => {
-    h.configured = false
+  it('U-3 更新后触发数据组同步（不写 WebDAV）', async () => {
     h.wdav = { url: 'https://wdav.test', username: 'u', password: 'p' }
     const tx = makeTx()
     await putRecords([tx])
-    h.webdavWrites = []
+    h.scheduleCalls = 0
 
     await updateRecord({ ...tx, amount: 88, note: '改后' })
 
-    const stored = await h.db.get('bk:tx:tx-1')
-    expect(stored.amount).toBe(88)
-    // afterWrite 的 WebDAV 兜底应再次触发
-    expect(h.webdavWrites).toHaveLength(1)
+    expect(await h.db.get('bk:tx:tx-1')).toMatchObject({ amount: 88 })
+    expect(h.scheduleCalls).toBe(1)
+    expect(h.webdavWrites).toHaveLength(0)
   })
 })
