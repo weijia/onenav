@@ -38,6 +38,9 @@ const ROAM_DIRS: Record<string, { dCol: number; dRow: number; heading: number; l
   ArrowDown: { dCol: 0, dRow: -1, heading: 180, label: '南', arrow: '↓' },
   ArrowLeft: { dCol: -1, dRow: 0, heading: 270, label: '西', arrow: '←' },
 }
+// 每键默认连续前进的格数（栅格默认 2 米/格 → 约 20 米），用户可在漫游面板调整。
+const DEFAULT_ROAM_STEP_CELLS = 10
+
 // 键盘映射：W/A/S/D 对应 上/左/下/右；同时兼容 ↑↓←→。
 // 用 e.code 优先（不受输入法/大小写影响），e.key 兜底。
 const ROAM_KEY_MAP: Record<string, string> = {
@@ -81,10 +84,12 @@ export default function GolfNavApp() {
   const [roaming, setRoaming] = useState(false)
   const [heading, setHeading] = useState<number>(0) // 0=北，顺时针
   const [roamHint, setRoamHint] = useState('')
+  const [roamStepCells, setRoamStepCells] = useState(DEFAULT_ROAM_STEP_CELLS) // 每键前进格数（速度）
   const routeRef = useRef<any[] | null>(null)
   const positionRef = useRef<Point | null>(null)
   const headingRef = useRef<number>(0)
   const roamGridRef = useRef<any>(null)
+  const viewCenterRef = useRef<Point | null>(null) // 上次地图居中点，用于漫游时延迟跟随
   const roamingRef = useRef(false)
 
   // 当前应高亮的几何 id：选中的单个标注优先；否则聚焦分类时高亮该分类跨所有洞的全部区域
@@ -154,8 +159,16 @@ export default function GolfNavApp() {
       const display = a.toDisplayPoint(p)
       if (provider === 'amap') a.map.setView(display, 16)
       else if (provider === 'tencent') a.map.setCenter(display)
+      viewCenterRef.current = p
     } catch { /* ignore */ }
   }, [provider])
+
+  // 漫游时不要每走一步都把标记钉在屏幕中心（那样看起来标记没动）；
+  // 只有离上次居中点超过 60 米才重新居中，既自动跟随又能看到标记在地图上移动。
+  const followIfNeeded = useCallback((p: Point) => {
+    const c = viewCenterRef.current
+    if (!c || latLngDistance(c, p) > 60) centerOn(p)
+  }, [centerOn])
 
   // 从「标注列表」点击一条：构造与地图点击一致的 hit，复用同一套高亮链路；并把地图定位到该标注。
   const selectFromList = useCallback((g: any) => {
@@ -188,6 +201,7 @@ export default function GolfNavApp() {
       }
       const adapter = createAdapter(p, { region: course.region, L, course, canvas: mapEl.current })
       adapter.create(mapEl.current, center, 16)
+      viewCenterRef.current = center
       adapterRef.current = adapter
       adapter.setPolygons(displayGeom.polygons)
       adapter.setLines([
@@ -328,7 +342,8 @@ export default function GolfNavApp() {
     return `可走：${walk}${blocked}`
   }, [getRoamGrid])
 
-  // 走一步：箭头先转向该方向；目标格被挡则原地不动，否则移动一格并让地图跟随。
+  // 走一步：箭头先转向该方向；连续前进 roamStepCells 格，遇到障碍即停在该格之前。
+  // 每键步长可调；至少走 1 格，避免挡住时 0 格看起来毫无反应。
   const roamStep = useCallback((dirKey: string) => {
     const dir = ROAM_DIRS[dirKey]
     if (!dir) return
@@ -338,9 +353,17 @@ export default function GolfNavApp() {
     if (!p) { setResult('请先定位或点击地图设置位置，再开始键盘漫游。'); return }
     const cell = roamCell(p)
     const g = getRoamGrid()
-    const nc = cell.col + dir.dCol
-    const nr = cell.row + dir.dRow
-    if (isBlocked(g, nc, nr)) {
+    let nc = cell.col
+    let nr = cell.row
+    for (let step = 0; step < roamStepCells; step++) {
+      const tc = nc + dir.dCol
+      const tr = nr + dir.dRow
+      if (isBlocked(g, tc, tr)) break
+      nc = tc
+      nr = tr
+    }
+    const moved = Math.abs(nc - cell.col) + Math.abs(nr - cell.row)
+    if (moved === 0) {
       // 边缘外即停：位置不变，仅刷新朝向标记与提示
       syncMyPosition(p)
       setRoamHint(buildRoamHint(cell))
@@ -350,10 +373,10 @@ export default function GolfNavApp() {
     const next = cellToLatLng(g, nc, nr)
     setPosition(next)
     syncMyPosition(next)
-    centerOn(next)
+    followIfNeeded(next)
     setRoamHint(buildRoamHint({ col: nc, row: nr }))
-    setResult(`已朝${dir.label}移动一格（约 2 米）。`)
-  }, [roamCell, getRoamGrid, syncMyPosition, centerOn, buildRoamHint])
+    setResult(`已朝${dir.label}移动 ${moved * g.resolution} 米${moved < roamStepCells ? '（前方受阻，已停在边缘）' : ''}。`)
+  }, [roamCell, getRoamGrid, syncMyPosition, followIfNeeded, buildRoamHint, roamStepCells])
 
   // 键盘监听：仅漫游开启时接管 WASD / 方向键。
   // 用 capture 阶段抢在地图（Leaflet/高德）之前处理，避免地图把方向键当平移。
@@ -479,7 +502,26 @@ export default function GolfNavApp() {
                 朝向：<span className="text-sky-300 text-lg">{HEADING_ARROW(heading)}</span>
                 <span className="opacity-70 ml-1">（{heading}°）</span>
               </p>
+              <p className="text-sm mb-1 font-mono">
+                坐标：<span className="text-sky-200">{position ? `${position.lat.toFixed(6)}, ${position.lng.toFixed(6)}` : '未设置'}</span>
+              </p>
               <p className="text-sm whitespace-pre-line leading-relaxed">{roamHint || '正在计算可走方向…'}</p>
+              <div className="mt-2 flex items-center gap-2">
+                <label htmlFor="roam-step" className="text-xs opacity-70">每键步长</label>
+                <select
+                  id="roam-step"
+                  value={roamStepCells}
+                  onChange={(e) => setRoamStepCells(Number(e.target.value))}
+                  className="rounded bg-white/10 px-2 py-1 text-xs"
+                >
+                  <option value={1}>1 格（约 2 米）</option>
+                  <option value={2}>2 格（约 4 米）</option>
+                  <option value={5}>5 格（约 10 米）</option>
+                  <option value={10}>10 格（约 20 米）</option>
+                  <option value={20}>20 格（约 40 米）</option>
+                  <option value={50}>50 格（约 100 米）</option>
+                </select>
+              </div>
               <div className="mt-2 grid grid-cols-3 gap-1 w-max mx-auto select-none" aria-label="屏幕方向键">
                 <span />
                 <button type="button" onClick={() => roamStep('ArrowUp')} title="向上（W）" className="h-11 w-11 rounded bg-white/10 active:bg-sky-600 text-xl touch-manipulation">↑</button>
@@ -491,7 +533,7 @@ export default function GolfNavApp() {
                 <button type="button" onClick={() => roamStep('ArrowDown')} title="向下（S）" className="h-11 w-11 rounded bg-white/10 active:bg-sky-600 text-xl touch-manipulation">↓</button>
                 <span />
               </div>
-              <p className="mt-2 text-xs opacity-60">键盘 W↑ A← S↓ D→（也支持 ↑↓←→）或点屏幕方向键；箭头指向行进方向，遇障碍停在边缘外。</p>
+              <p className="mt-2 text-xs opacity-60">键盘 W↑ A← S↓ D→（也支持 ↑↓←→）或点屏幕方向键；坐标每按一次都会更新，按住可连续移动，遇障碍停在边缘外。</p>
             </div>
           )}
           {selected && (
