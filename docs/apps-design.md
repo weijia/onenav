@@ -118,6 +118,7 @@ export function isAppVisible(meta: AppMeta, apps?: Record<string, { hidden: bool
 
 | 应用 | 本地存储 | 同步通道 |
 | --- | --- | --- |
+| 在线日历 calendar | PouchDB `onenav-calendar`（`cal:<YYYY-MM-DD>:<id>` 文档） | zen-fs-config **v2** 数据组（appId=`calendar`，`AppRepo.getDefaultDataGroup()` 提供 fs，basePath `/calendar`）；PouchDB ↔ fs 走 universal-sync-v2，配置面板用 `SyncGroupConfiguratorV2` |
 | 记账 bookkeeping | PouchDB `onenav-bookkeeping`（`bk:*` 文档） | 数据同步组 appId=`bookkeeping`（basePath `/bookkeeping`） |
 | 点菜助手 dish-order | 数据组文件（按月 `orders/…`） | 数据同步组 appId=`dish-order` |
 | 文件浏览器 filebrowser | 数据组文件（`struct/…`、`host-disks/…`） | 数据同步组 appId=`dir-struct-gen`（与 zip-browser 写侧共用） |

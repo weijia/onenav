@@ -10,8 +10,11 @@ type Phase = 'idle' | 'checking' | 'available' | 'latest' | 'unknown' | 'applyin
  * 不依赖 sw.js 的自动检查——点击即主动拉取远端 `version.json` 比对，
  * 同时探测 SW 是否已有 waiting Worker；sw.js 异常/未注册时版本清单通道仍能发现更新。
  * 发现新版本后点「立即更新」：有 waiting Worker 走 SKIP_WAITING，没有则注销 SW + 清缓存后重载。
+ *
+ * theme 只影响配色：深色底页面用 dark（默认），浅色底页面传 light。
  */
-export default function UpdateCheckButton({ className = '' }: { className?: string }) {
+export default function UpdateCheckButton({ className = '', theme = 'dark' }: { className?: string; theme?: 'dark' | 'light' }) {
+  const light = theme === 'light'
   const [phase, setPhase] = useState<Phase>('idle')
   const [result, setResult] = useState<UpdateCheckResult | null>(null)
   const [detail, setDetail] = useState('')
@@ -80,13 +83,18 @@ export default function UpdateCheckButton({ className = '' }: { className?: stri
 
   const open = phase !== 'idle' && phase !== 'checking'
   const spin = phase === 'checking' || phase === 'applying'
+  const okColor = light ? 'text-emerald-600' : 'text-emerald-300'
+  const warnColor = light ? 'text-amber-600' : 'text-amber-300'
+  const subColor = light ? 'text-slate-500' : 'text-white/40'
 
   return (
     <div className={`relative ${className}`}>
       <button
         onClick={handleClick}
         disabled={spin}
-        className="relative w-9 h-9 rounded-lg flex items-center justify-center text-white/40 hover:text-white/70 hover:bg-white/10 transition-all disabled:opacity-60"
+        className={`relative w-9 h-9 rounded-lg flex items-center justify-center transition-all disabled:opacity-60 ${
+          light ? 'text-slate-500 hover:text-slate-800 hover:bg-slate-200/70' : 'text-white/40 hover:text-white/70 hover:bg-white/10'
+        }`}
         title="检查页面版本并更新（主动比对远端 version.json，不等 SW 定时检查）"
         aria-label="检查页面版本并更新"
       >
@@ -99,12 +107,14 @@ export default function UpdateCheckButton({ className = '' }: { className?: stri
       </button>
 
       {open && (
-        <div className="absolute right-0 top-11 z-[80] w-72 rounded-xl border border-white/15 bg-gray-900/95 backdrop-blur-xl px-3 py-2.5 text-xs text-white/80 shadow-xl">
+        <div className={`absolute right-0 top-11 z-[80] w-72 rounded-xl border backdrop-blur-xl px-3 py-2.5 text-xs shadow-xl ${
+          light ? 'border-slate-200 bg-white/95 text-slate-700' : 'border-white/15 bg-gray-900/95 text-white/80'
+        }`}>
           <div className="flex items-start gap-2">
-            {phase === 'available' && <RefreshCw className="w-4 h-4 shrink-0 text-emerald-300 mt-0.5" />}
-            {phase === 'latest' && <Check className="w-4 h-4 shrink-0 text-emerald-300 mt-0.5" />}
+            {phase === 'available' && <RefreshCw className={`w-4 h-4 shrink-0 mt-0.5 ${okColor}`} />}
+            {phase === 'latest' && <Check className={`w-4 h-4 shrink-0 mt-0.5 ${okColor}`} />}
             {(phase === 'unknown' || phase === 'applying') && (
-              <AlertTriangle className="w-4 h-4 shrink-0 text-amber-300 mt-0.5" />
+              <AlertTriangle className={`w-4 h-4 shrink-0 mt-0.5 ${warnColor}`} />
             )}
             <div className="flex-1 leading-relaxed break-all">
               {phase === 'available' && (result?.message || '发现新版本')}
@@ -112,7 +122,7 @@ export default function UpdateCheckButton({ className = '' }: { className?: stri
               {phase === 'unknown' && (detail || '无法确认是否有更新')}
               {phase === 'applying' && (detail || '正在应用更新…')}
               {(phase === 'available' || phase === 'latest') && result && (
-                <div className="mt-1 text-[11px] text-white/40">
+                <div className={`mt-1 text-[11px] ${subColor}`}>
                   本机 {result.local.sha || '?'} · {result.local.buildTime || '未知时间'}
                   {result.remote && phase === 'available' ? ` → 远端 ${result.remote.sha || '?'}` : ''}
                 </div>
@@ -124,7 +134,9 @@ export default function UpdateCheckButton({ className = '' }: { className?: stri
                   if (hideTimer.current) clearTimeout(hideTimer.current)
                   setPhase('idle')
                 }}
-                className="shrink-0 w-5 h-5 rounded flex items-center justify-center text-white/40 hover:text-white hover:bg-white/10"
+                className={`shrink-0 w-5 h-5 rounded flex items-center justify-center ${
+                  light ? 'text-slate-500 hover:text-slate-800 hover:bg-slate-200/70' : 'text-white/40 hover:text-white hover:bg-white/10'
+                }`}
                 title="关闭"
               >
                 <X className="w-3.5 h-3.5" />
@@ -139,13 +151,17 @@ export default function UpdateCheckButton({ className = '' }: { className?: stri
                   if (hideTimer.current) clearTimeout(hideTimer.current)
                   setPhase('idle')
                 }}
-                className="rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 text-white/70 hover:bg-white/10"
+                className={`rounded-lg border px-2.5 py-1.5 ${
+                  light ? 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100' : 'border-white/15 bg-white/5 text-white/70 hover:bg-white/10'
+                }`}
               >
                 稍后
               </button>
               <button
                 onClick={() => void doApply()}
-                className="rounded-lg border border-emerald-300/30 bg-emerald-400/20 px-2.5 py-1.5 text-emerald-100 hover:bg-emerald-400/30"
+                className={`rounded-lg border px-2.5 py-1.5 ${
+                  light ? 'border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700' : 'border-emerald-300/30 bg-emerald-400/20 text-emerald-100 hover:bg-emerald-400/30'
+                }`}
               >
                 立即更新
               </button>

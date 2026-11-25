@@ -139,7 +139,7 @@ export default function GolfSyncPanel() {
   }, [])
 
   return (
-    <details className="rounded-lg bg-white/5 p-3 text-sm" open>
+    <details className="rounded-lg bg-white/80 border border-slate-200 p-3 text-sm shadow-sm" open>
       <summary className="cursor-pointer font-medium">
         数据同步组（appId: golf）{ready ? `· 已连接 ${activeId ? activeId.slice(0, 8) : ''}` : '· 未连接'}
       </summary>
@@ -156,7 +156,7 @@ export default function GolfSyncPanel() {
           busy={busy}
           dataPath={DATA_PATH}
         />
-        <div className="max-h-96 overflow-auto rounded bg-white/5 p-2">
+          <div className="max-h-96 overflow-auto rounded bg-slate-50 border border-slate-200 p-2">
           <SyncGroupConfigurator
             key={uiNonce}
             appId={APP_ID}
@@ -177,7 +177,7 @@ export default function GolfSyncPanel() {
           >
             立即同步
           </button>
-          {activeId && <span className="font-mono text-xs text-white/40">组 {activeId}</span>}
+          {activeId && <span className="font-mono text-xs text-slate-500">组 {activeId}</span>}
         </div>
         {message && <p className="text-xs opacity-80">{message}</p>}
       </div>

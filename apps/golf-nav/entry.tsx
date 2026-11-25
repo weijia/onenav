@@ -17,8 +17,9 @@ function goBack() {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <div className="fixed inset-0 bg-gradient-to-br from-slate-900 via-emerald-950 to-slate-900">
+    <div className="fixed inset-0 bg-gradient-to-br from-slate-100 via-emerald-50 to-sky-100 text-slate-800">
       <AppHost
+        theme="light"
         name={meta.name}
         description={meta.description}
         accent={meta.accent}

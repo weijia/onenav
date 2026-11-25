@@ -42,10 +42,10 @@ export default function SyncStatusChip() {
 
   const cls =
     st.status === 'syncing'
-      ? 'bg-blue-400/15 text-blue-100 border-blue-300/20 animate-pulse'
+      ? 'bg-blue-100/90 text-blue-900 border-blue-300'
       : st.status === 'synced'
-        ? 'bg-emerald-400/15 text-emerald-100 border-emerald-300/20'
-        : 'bg-red-400/15 text-red-100 border-red-300/20'
+        ? 'bg-emerald-100/90 text-emerald-900 border-emerald-300'
+        : 'bg-red-100/90 text-red-900 border-red-300'
 
   const pct = st.ratio != null ? Math.min(100, Math.round(st.ratio * 100)) : null
 
@@ -54,15 +54,15 @@ export default function SyncStatusChip() {
       <div className={`rounded-full border px-3 py-1.5 text-xs backdrop-blur-sm shadow-lg ${cls}`}>
         <div className="flex items-center gap-2 whitespace-nowrap">
           {st.status === 'syncing' && (
-            <span className="inline-block h-2 w-2 rounded-full bg-blue-300 animate-pulse" />
+            <span className="inline-block h-2 w-2 rounded-full bg-blue-600 animate-pulse" />
           )}
           <span>{label}</span>
           {pct != null && st.status === 'syncing' && <span className="opacity-70">{pct}%</span>}
         </div>
         {st.status === 'syncing' && (
-          <div className="mt-1 h-1 w-40 max-w-[60vw] overflow-hidden rounded-full bg-white/15">
+          <div className="mt-1 h-1 w-40 max-w-[60vw] overflow-hidden rounded-full bg-slate-300/60">
             <div
-              className="h-full rounded-full bg-blue-300 transition-all duration-200"
+              className="h-full rounded-full bg-blue-600 transition-all duration-200"
               style={{ width: `${pct ?? 0}%` }}
             />
           </div>

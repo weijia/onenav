@@ -22,6 +22,8 @@ interface AppHostProps {
   component: ComponentType
   /** 返回书签区 */
   onBack: () => void
+  /** 配色主题：dark=深色底（默认），light=浅色底 */
+  theme?: 'dark' | 'light'
 }
 
 /**
@@ -40,7 +42,8 @@ interface AppHostProps {
  * 同步结束后 bootstrapAppRemoteStorage 会派发 RS_SYNCED_EVENT，应用重读本地库后显示更新内容。
  * 这样冷启动连组 + 首轮同步再慢也不会把页面卡在「正在连接 RemoteStorage…」上。
  */
-export default function AppHost({ name, description, accent, icon: Icon, component: AppComp, onBack }: AppHostProps) {
+export default function AppHost({ name, description, accent, icon: Icon, component: AppComp, onBack, theme = 'dark' }: AppHostProps) {
+  const light = theme === 'light'
   // 注册根 SW：../../sw.js 相对 apps/<id>/index.html 解析到根目录，作用域覆盖全站。
   // 幂等——若主页或其他应用页已注册同一 SW，浏览器返回同一 registration。
   useEffect(() => {
@@ -56,11 +59,13 @@ export default function AppHost({ name, description, accent, icon: Icon, compone
   }, [])
 
   return (
-    <div className="w-full h-full flex flex-col">
-      <div className="flex items-center gap-3 px-4 py-3 border-b border-white/10 shrink-0">
+    <div className={`w-full h-full flex flex-col ${light ? 'text-slate-800' : ''}`}>
+      <div className={`flex items-center gap-3 px-4 py-3 border-b shrink-0 ${light ? 'border-slate-200 bg-white/70' : 'border-white/10'}`}>
         <button
           onClick={onBack}
-          className="w-9 h-9 rounded-lg flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 transition-all"
+          className={`w-9 h-9 rounded-lg flex items-center justify-center transition-all ${
+            light ? 'text-slate-500 hover:text-slate-800 hover:bg-slate-200/70' : 'text-white/60 hover:text-white hover:bg-white/10'
+          }`}
           title="返回书签"
         >
           <ArrowLeft className="w-5 h-5" />
@@ -69,16 +74,16 @@ export default function AppHost({ name, description, accent, icon: Icon, compone
           <Icon className="w-5 h-5 text-white" />
         </div>
         <div>
-          <h2 className="text-white/90 font-medium leading-tight">{name}</h2>
-          <p className="text-white/40 text-xs">{description}</p>
+          <h2 className={`font-medium leading-tight ${light ? 'text-slate-800' : 'text-white/90'}`}>{name}</h2>
+          <p className={`text-xs ${light ? 'text-slate-500' : 'text-white/40'}`}>{description}</p>
         </div>
         {/* 每个独立应用页都有「强制检查更新」：站点根 version.json + SW 双通道，不依赖 sw.js 定时检查 */}
-        <UpdateCheckButton className="ml-auto" />
+        <UpdateCheckButton className="ml-auto" theme={theme} />
       </div>
       <div className="flex-1 overflow-y-auto">
         <AppComp />
       </div>
-      <div className="text-center py-2 text-white/20 text-xs shrink-0 flex items-center justify-center gap-2">
+      <div className={`text-center py-2 text-xs shrink-0 flex items-center justify-center gap-2 ${light ? 'text-slate-400' : 'text-white/20'}`}>
         <span>{versionDisplay}</span>
         <span>·</span>
         <span>{buildTimeDisplay}</span>

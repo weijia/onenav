@@ -604,47 +604,47 @@ export default function GolfNavApp() {
   }
 
   return (
-    <div className="flex flex-col gap-3 p-4 h-full">
+    <div className="flex flex-col gap-3 p-4 h-full text-slate-800">
       <div className="flex flex-wrap items-center gap-2">
-        <select value={provider} onChange={(e) => initMap(e.target.value as Provider)} className="rounded bg-white/10 px-2 py-1">
+        <select value={provider} onChange={(e) => initMap(e.target.value as Provider)} className="rounded border border-slate-300 bg-white px-2 py-1 text-slate-800 shadow-sm">
           {(Object.keys(PROVIDER_LABELS) as Provider[]).map((p) => <option key={p} value={p}>{PROVIDER_LABELS[p]}</option>)}
         </select>
-        <select value={hole} onChange={(e) => changeHole(Number(e.target.value))} className="rounded bg-white/10 px-2 py-1">
+        <select value={hole} onChange={(e) => changeHole(Number(e.target.value))} className="rounded border border-slate-300 bg-white px-2 py-1 text-slate-800 shadow-sm">
           {course.holes.map((h: any) => <option key={h.number} value={h.number}>第 {h.number} 洞 · Par {h.par}</option>)}
         </select>
-        <button onClick={() => { void locate() }} className="rounded bg-white/10 px-3 py-1">定位</button>
+        <button onClick={() => { void locate() }} className="rounded border border-slate-300 bg-white px-3 py-1 text-slate-800 shadow-sm hover:bg-slate-100">定位</button>
         <button
           onClick={toggleRoaming}
-          className={`rounded px-3 py-1 ${roaming ? 'bg-sky-600 ring-1 ring-sky-300' : 'bg-white/10'}`}
+          className={`rounded px-3 py-1 shadow-sm ${roaming ? 'bg-sky-600 text-white ring-1 ring-sky-300' : 'border border-slate-300 bg-white text-slate-800 hover:bg-slate-100'}`}
           title="用键盘上下左右键控制带方向的标记移动，自动避开障碍"
         >{roaming ? '■ 停止漫游' : '▶ 键盘漫游'}</button>
-        <div className="flex rounded overflow-hidden">
-          <button onClick={() => setMode('route')} className={`px-3 py-1 ${mode === 'route' ? 'bg-emerald-600' : 'bg-white/10'}`}>场内找路</button>
-          <button onClick={() => setMode('shot')} className={`px-3 py-1 ${mode === 'shot' ? 'bg-emerald-600' : 'bg-white/10'}`}>击球决策</button>
+        <div className="flex rounded overflow-hidden border border-slate-300 shadow-sm">
+          <button onClick={() => setMode('route')} className={`px-3 py-1 ${mode === 'route' ? 'bg-emerald-600 text-white' : 'bg-white text-slate-800'}`}>场内找路</button>
+          <button onClick={() => setMode('shot')} className={`px-3 py-1 ${mode === 'shot' ? 'bg-emerald-600 text-white' : 'bg-white text-slate-800'}`}>击球决策</button>
         </div>
       </div>
 
-      {notice && <div className="rounded bg-amber-900/40 px-3 py-2 text-sm">{notice}</div>}
-      <p className="text-xs opacity-70">
+      {notice && <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">{notice}</div>}
+      <p className="text-xs text-slate-500">
         数据源：{usingShared ? '球场地图共享标注（独立库 golf）' : '内置示例球场（共享数据尚无 tee/green 标注）'}
         {sharedLoading ? ' · 加载中…' : ''}
       </p>
 
       <div className="flex flex-col md:flex-row gap-3 flex-1 min-h-0">
         <div className="w-full md:w-64 shrink-0 flex flex-col gap-3">
-          <div className="rounded-lg bg-white/5 p-3">
+          <div className="rounded-lg border border-slate-200 bg-white/90 p-3 shadow-sm">
             <h3 className="font-medium mb-2">状态</h3>
             <p className="text-sm whitespace-pre-line leading-relaxed">{result}</p>
           </div>
           {roaming && (
-            <div className="rounded-lg bg-sky-950/40 p-3 ring-1 ring-sky-500/40">
+            <div className="rounded-lg bg-sky-50 p-3 ring-1 ring-sky-200">
               <h3 className="font-medium mb-2">漫游提示</h3>
               <p className="text-sm mb-1">
-                朝向：<span className="text-sky-300 text-lg">{HEADING_ARROW(heading)}</span>
+                朝向：<span className="text-sky-600 text-lg">{HEADING_ARROW(heading)}</span>
                 <span className="opacity-70 ml-1">（{heading}°）</span>
               </p>
               <p className="text-sm mb-1 font-mono">
-                坐标：<span className="text-sky-200">{position && Number.isFinite(position.lat) && Number.isFinite(position.lng) ? `${position.lat.toFixed(6)}, ${position.lng.toFixed(6)}` : '未设置或无效'}</span>
+                坐标：<span className="text-sky-700">{position && Number.isFinite(position.lat) && Number.isFinite(position.lng) ? `${position.lat.toFixed(6)}, ${position.lng.toFixed(6)}` : '未设置或无效'}</span>
               </p>
               <p className="text-sm whitespace-pre-line leading-relaxed">{roamHint || '正在计算可走方向…'}</p>
               <div className="mt-2 flex items-center gap-2">
@@ -653,7 +653,7 @@ export default function GolfNavApp() {
                   id="roam-step"
                   value={roamStepMeters}
                   onChange={(e) => setRoamStepMeters(Number(e.target.value))}
-                  className="rounded bg-white/10 px-2 py-1 text-xs"
+                  className="rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm"
                 >
                   {ROAM_STEP_METERS.map((m) => <option key={m} value={m}>{m} 米</option>)}
                 </select>
@@ -661,31 +661,31 @@ export default function GolfNavApp() {
               </div>
               <div className="mt-2 grid grid-cols-3 gap-1 w-max mx-auto select-none" aria-label="屏幕方向键">
                 <span />
-                <button type="button" onClick={() => roamStep('ArrowUp')} title="向上（W）" className="h-11 w-11 rounded bg-white/10 active:bg-sky-600 text-xl touch-manipulation">↑</button>
+                <button type="button" onClick={() => roamStep('ArrowUp')} title="向上（W）" className="h-11 w-11 rounded border border-slate-300 bg-white shadow-sm text-slate-800 active:bg-sky-600 active:text-white text-xl touch-manipulation">↑</button>
                 <span />
-                <button type="button" onClick={() => roamStep('ArrowLeft')} title="向左（A）" className="h-11 w-11 rounded bg-white/10 active:bg-sky-600 text-xl touch-manipulation">←</button>
-                <span className="flex items-center justify-center text-sky-300 text-xl">{HEADING_ARROW(heading)}</span>
-                <button type="button" onClick={() => roamStep('ArrowRight')} title="向右（D）" className="h-11 w-11 rounded bg-white/10 active:bg-sky-600 text-xl touch-manipulation">→</button>
+                <button type="button" onClick={() => roamStep('ArrowLeft')} title="向左（A）" className="h-11 w-11 rounded border border-slate-300 bg-white shadow-sm text-slate-800 active:bg-sky-600 active:text-white text-xl touch-manipulation">←</button>
+                <span className="flex items-center justify-center text-sky-600 text-xl">{HEADING_ARROW(heading)}</span>
+                <button type="button" onClick={() => roamStep('ArrowRight')} title="向右（D）" className="h-11 w-11 rounded border border-slate-300 bg-white shadow-sm text-slate-800 active:bg-sky-600 active:text-white text-xl touch-manipulation">→</button>
                 <span />
-                <button type="button" onClick={() => roamStep('ArrowDown')} title="向下（S）" className="h-11 w-11 rounded bg-white/10 active:bg-sky-600 text-xl touch-manipulation">↓</button>
+                <button type="button" onClick={() => roamStep('ArrowDown')} title="向下（S）" className="h-11 w-11 rounded border border-slate-300 bg-white shadow-sm text-slate-800 active:bg-sky-600 active:text-white text-xl touch-manipulation">↓</button>
                 <span />
               </div>
               <p className="mt-2 text-xs opacity-60">键盘 W↑ A← S↓ D→（也支持 ↑↓←→）或点屏幕方向键；按实际米数移动，坐标每按一次都会更新，按住可连续移动，遇障碍停在边缘外。</p>
             </div>
           )}
           {selected && (
-            <div className="rounded-lg bg-sky-950/40 p-3 ring-1 ring-sky-500/40">
+            <div className="rounded-lg bg-sky-50 p-3 ring-1 ring-sky-200">
               <h3 className="font-medium mb-1">选中标注</h3>
               <p className="text-sm">{selected.name || LABELS[selected.featureType] || selected.featureType}</p>
               <p className="text-sm opacity-80">类型：{LABELS[selected.featureType] || selected.featureType}</p>
               <p className="text-sm opacity-80">第 {selected.hole} 洞 · {(selected.kind || selected.geomKind) === 'polygon' ? '面状区域' : '线状要素'}</p>
               <button
                 onClick={() => setSelected(null)}
-                className="mt-2 rounded bg-white/10 px-2 py-1 text-xs"
+                className="mt-2 rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm"
               >清除选中</button>
             </div>
           )}
-          <div className="rounded-lg bg-white/5 p-3">
+          <div className="rounded-lg border border-slate-200 bg-white/90 p-3 shadow-sm">
             <div className="flex items-center justify-between mb-2">
               <h3 className="font-medium">标注分类</h3>
               <button
@@ -707,7 +707,7 @@ export default function GolfNavApp() {
                       setSelected(null)
                     }}
                     title={on ? `取消聚焦${LABELS[type] || type}，显示全部` : `显示并高亮所有${LABELS[type] || type}区域`}
-                    className={`flex items-center gap-1 rounded px-2 py-1 text-xs transition ${on ? 'bg-sky-500/40 ring-1 ring-sky-300' : 'bg-white/10 hover:bg-white/20'}`}
+                    className={`flex items-center gap-1 rounded px-2 py-1 text-xs transition border ${on ? 'bg-sky-100 ring-1 ring-sky-400 border-sky-300 text-sky-900' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'}`}
                   >
                     <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: color }} />
                     {LABELS[type] || type}
@@ -717,7 +717,7 @@ export default function GolfNavApp() {
             </div>
             <p className="mt-2 text-xs opacity-60">点击分类显示并高亮该类全部区域（跨所有洞）；再次点击恢复全部。</p>
           </div>
-          <div className="rounded-lg bg-white/5 p-3">
+          <div className="rounded-lg border border-slate-200 bg-white/90 p-3 shadow-sm">
             <div className="flex items-center justify-between mb-2">
               <h3 className="font-medium">标注列表</h3>
               <span className="text-xs opacity-60">{activeType ? `全部洞 · ${LABELS[activeType] || activeType}` : `第 ${hole} 洞`}</span>
@@ -749,7 +749,7 @@ export default function GolfNavApp() {
                             <button
                               key={g.id}
                               onClick={() => selectFromList(g)}
-                              className={`w-full text-left rounded px-2 py-1 text-xs transition truncate ${active ? 'bg-sky-500/30 ring-1 ring-sky-400' : 'bg-white/5 hover:bg-white/10'}`}
+                              className={`w-full text-left rounded border px-2 py-1 text-xs transition truncate ${active ? 'bg-sky-100 ring-1 ring-sky-400 border-sky-300' : 'bg-slate-50 border-slate-200 hover:bg-slate-100'}`}
                               title={g.name || `${LABELS[type] || type} ${i + 1}`}
                             >
                               {g.name || `${LABELS[type] || type} ${i + 1}`}
@@ -764,17 +764,17 @@ export default function GolfNavApp() {
             )}
           </div>
           {mode === 'route' && (
-            <div className="rounded-lg bg-white/5 p-3">
+            <div className="rounded-lg border border-slate-200 bg-white/90 p-3 shadow-sm">
               <h3 className="font-medium mb-2">目标</h3>
               <label className="block text-sm"><input type="radio" name="gtarget" checked={target === 'green'} onChange={() => setTarget('green')} /> 果岭</label>
               <label className="block text-sm"><input type="radio" name="gtarget" checked={target === 'tee'} onChange={() => setTarget('tee')} /> 发球台</label>
-              <button onClick={calculateRoute} className="mt-2 w-full rounded bg-emerald-600 px-3 py-1">计算路线</button>
+              <button onClick={calculateRoute} className="mt-2 w-full rounded bg-emerald-600 px-3 py-1 text-white">计算路线</button>
             </div>
           )}
           {mode === 'shot' && (
-            <div className="rounded-lg bg-white/5 p-3">
+            <div className="rounded-lg border border-slate-200 bg-white/90 p-3 shadow-sm">
               <h3 className="font-medium mb-2">击球建议</h3>
-              <button onClick={calculateShot} className="w-full rounded bg-emerald-600 px-3 py-1">生成建议</button>
+              <button onClick={calculateShot} className="w-full rounded bg-emerald-600 px-3 py-1 text-white">生成建议</button>
             </div>
           )}
         </div>
@@ -783,14 +783,14 @@ export default function GolfNavApp() {
           {/* 数据同步组入口（appId: golf）——与球场地图页保持一致的右上角范式 */}
           <button
             onClick={() => setSyncOpen((v) => !v)}
-            className="absolute top-3 right-3 z-[650] px-3 py-1.5 rounded-lg bg-slate-900/90 border border-white/15 text-white/80 text-xs shadow"
+            className="absolute top-3 right-3 z-[650] px-3 py-1.5 rounded-lg bg-white/95 border border-slate-300 text-slate-700 text-xs shadow"
             title="数据同步组设置"
           >
             同步组
           </button>
           {/* 面板常驻挂载、只切显隐：连接由 config-ui 在挂载时发起，条件渲染会导致「不点开就永不连接」 */}
           <div
-            className={`absolute top-14 right-3 z-[650] w-96 max-w-[calc(100%-1.5rem)] rounded-lg bg-slate-900/95 border border-white/15 text-white shadow-lg ${syncOpen ? '' : 'hidden'}`}
+            className={`absolute top-14 right-3 z-[650] w-96 max-w-[calc(100%-1.5rem)] rounded-lg bg-white border border-slate-200 text-slate-800 shadow-xl ${syncOpen ? '' : 'hidden'}`}
           >
             <GolfSyncPanel />
           </div>

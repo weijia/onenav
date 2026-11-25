@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react'
-import { Compass, Flag, FolderTree, NotebookPen, Server, UtensilsCrossed, Wallet } from 'lucide-react'
+import { CalendarDays, Compass, Flag, FolderTree, NotebookPen, Server, UtensilsCrossed, Wallet } from 'lucide-react'
 
 /**
  * 内置小应用的轻量元信息。
@@ -29,6 +29,14 @@ export interface AppMeta {
  *   3) vite.config.ts 已自动发现 apps 下各应用的 index.html 作为独立入口，无需手动注册。
  */
 export const APP_MANIFEST: AppMeta[] = [
+  {
+    id: 'calendar',
+    name: '在线日历',
+    icon: CalendarDays,
+    accent: 'from-sky-500 to-indigo-600',
+    description: '按日期记录事件与备忘',
+    entry: 'apps/calendar/index.html',
+  },
   {
     id: 'bookkeeping',
     name: '记账',
