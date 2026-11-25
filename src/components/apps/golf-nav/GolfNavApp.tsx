@@ -38,8 +38,11 @@ const ROAM_DIRS: Record<string, { dCol: number; dRow: number; heading: number; l
   ArrowDown: { dCol: 0, dRow: -1, heading: 180, label: '南', arrow: '↓' },
   ArrowLeft: { dCol: -1, dRow: 0, heading: 270, label: '西', arrow: '←' },
 }
-// 每键默认连续前进的格数（栅格默认 2 米/格 → 约 20 米），用户可在漫游面板调整。
-const DEFAULT_ROAM_STEP_CELLS = 10
+// 每键默认前进的**实际距离**（米）。步长按米设置而不是按格数：
+// 球场范围较大时 buildGrid 会自动放大栅格分辨率（可能远大于 2 米/格），
+// 若仍按「格」设置步长，显示的米数会严重失真。
+const DEFAULT_ROAM_STEP_METERS = 20
+const ROAM_STEP_METERS = [2, 5, 10, 20, 50, 100]
 
 // 键盘映射：W/A/S/D 对应 上/左/下/右；同时兼容 ↑↓←→。
 // 用 e.code 优先（不受输入法/大小写影响），e.key 兜底。
@@ -84,7 +87,7 @@ export default function GolfNavApp() {
   const [roaming, setRoaming] = useState(false)
   const [heading, setHeading] = useState<number>(0) // 0=北，顺时针
   const [roamHint, setRoamHint] = useState('')
-  const [roamStepCells, setRoamStepCells] = useState(DEFAULT_ROAM_STEP_CELLS) // 每键前进格数（速度）
+  const [roamStepMeters, setRoamStepMeters] = useState(DEFAULT_ROAM_STEP_METERS) // 每键前进的实际距离（米）
   const routeRef = useRef<any[] | null>(null)
   const positionRef = useRef<Point | null>(null)
   const headingRef = useRef<number>(0)
@@ -152,22 +155,30 @@ export default function GolfNavApp() {
     return { lat: (b.south + b.north) / 2, lng: (b.west + b.east) / 2 }
   }, [course])
 
-  const centerOn = useCallback((p: Point) => {
+  // keepZoom=true 时只平移、不改缩放：漫游跟随不应重置用户手动调整的比例尺。
+  const centerOn = useCallback((p: Point, keepZoom = false) => {
     const a = adapterRef.current
     if (!a || !a.map || !a.toDisplayPoint) return
     try {
       const display = a.toDisplayPoint(p)
-      if (provider === 'amap') a.map.setView(display, 16)
-      else if (provider === 'tencent') a.map.setCenter(display)
+      if (provider === 'amap') {
+        if (keepZoom) {
+          // 高德适配层基于 Leaflet：panTo 保留当前 zoom，回退分支也取当前 zoom。
+          if (typeof a.map.panTo === 'function') a.map.panTo(display)
+          else a.map.setView(display, a.map.getZoom ? a.map.getZoom() : 16)
+        } else {
+          a.map.setView(display, 16)
+        }
+      } else if (provider === 'tencent') a.map.setCenter(display)
       viewCenterRef.current = p
     } catch { /* ignore */ }
   }, [provider])
 
   // 漫游时不要每走一步都把标记钉在屏幕中心（那样看起来标记没动）；
-  // 只有离上次居中点超过 60 米才重新居中，既自动跟随又能看到标记在地图上移动。
+  // 只有离上次居中点超过 60 米才重新居中，且保留当前缩放（比例尺不跳变）。
   const followIfNeeded = useCallback((p: Point) => {
     const c = viewCenterRef.current
-    if (!c || latLngDistance(c, p) > 60) centerOn(p)
+    if (!c || latLngDistance(c, p) > 60) centerOn(p, true)
   }, [centerOn])
 
   // 从「标注列表」点击一条：构造与地图点击一致的 hit，复用同一套高亮链路；并把地图定位到该标注。
@@ -290,20 +301,33 @@ export default function GolfNavApp() {
       currentHole.tee, currentHole.green, ...currentHole.centerLine,
       ...(currentHole.features || []).flatMap((f: any) => [f.polygon, f.line, f.point].filter(Boolean)),
     ]
+    // 单个洞的合理半径：远超最长球洞（约 600 米），但能挡住 (0,0) 一类野点
+    // 把 bounds 撑到几十公里，进而触发 buildGrid 自动放大栅格分辨率。
+    const tee = normalizePoint(currentHole.tee)
+    const green = normalizePoint(currentHole.green)
+    const anchor = {
+      lat: (tee.lat + green.lat) / 2,
+      lng: (tee.lng + green.lng) / 2,
+    }
+    const plausible = (lat: number, lng: number) =>
+      Number.isFinite(lat) && Number.isFinite(lng)
+      && Math.abs(lat) <= 90 && Math.abs(lng) <= 180
+      && latLngDistance({ lat, lng }, anchor) <= 5000
+
     // 递归收集全部坐标：点可为 [lat,lng] / {lat,lng} / 类数组，polygon/line 是「点数组」。
     // 之前只取 p[0]，把 polygon 的点数组塞进 Math.min → bounds 变 NaN → 漫游坐标全变 NaN。
     const collect = (v: any, out: number[], wantLat: boolean) => {
       if (v == null) return
       if (Array.isArray(v)) {
         if (v.length >= 2 && Number.isFinite(Number(v[0])) && Number.isFinite(Number(v[1]))) {
-          out.push(wantLat ? Number(v[0]) : Number(v[1]))
+          if (plausible(Number(v[0]), Number(v[1]))) out.push(wantLat ? Number(v[0]) : Number(v[1]))
         } else {
           v.forEach((q: any) => collect(q, out, wantLat))
         }
       } else if (typeof v === 'object') {
         const a = typeof v.lat === 'number' ? v.lat : Number(v[0])
         const b = typeof v.lng === 'number' ? v.lng : Number(v[1])
-        if (Number.isFinite(a) && Number.isFinite(b)) out.push(wantLat ? a : b)
+        if (plausible(a, b)) out.push(wantLat ? a : b)
       }
     }
     const lats: number[] = []
@@ -361,8 +385,8 @@ export default function GolfNavApp() {
     return `可走：${walk}${blocked}`
   }, [getRoamGrid])
 
-  // 走一步：箭头先转向该方向；连续前进 roamStepCells 格，遇到障碍即停在该格之前。
-  // 每键步长可调；至少走 1 格，避免挡住时 0 格看起来毫无反应。
+  // 走一步：箭头先转向该方向；按「米」换算成格数连续前进，遇到障碍即停在前一格。
+  // 步长按米而非格，避免栅格分辨率被自动放大时实际距离与显示值不符。
   const roamStep = useCallback((dirKey: string) => {
     const dir = ROAM_DIRS[dirKey]
     if (!dir) return
@@ -376,9 +400,11 @@ export default function GolfNavApp() {
       setResult('当前位置坐标无效，请重新定位或点击地图设置位置。')
       return
     }
+    // 实际栅格分辨率可能因球场范围过大被 buildGrid 放大；按米数反推本次要走多少格。
+    const stepCells = Math.max(1, Math.round(roamStepMeters / (Number(g.resolution) || 2)))
     let nc = cell.col
     let nr = cell.row
-    for (let step = 0; step < roamStepCells; step++) {
+    for (let step = 0; step < stepCells; step++) {
       const tc = nc + dir.dCol
       const tr = nr + dir.dRow
       if (isBlocked(g, tc, tr)) break
@@ -402,8 +428,10 @@ export default function GolfNavApp() {
     syncMyPosition(next)
     followIfNeeded(next)
     setRoamHint(buildRoamHint({ col: nc, row: nr }))
-    setResult(`已朝${dir.label}移动 ${moved * g.resolution} 米${moved < roamStepCells ? '（前方受阻，已停在边缘）' : ''}。`)
-  }, [roamCell, getRoamGrid, syncMyPosition, followIfNeeded, buildRoamHint, roamStepCells])
+    // 用真实经纬度算距离，而不是「格数 × 分辨率」，确保显示的米数与地图一致。
+    const realMeters = latLngDistance(p, next)
+    setResult(`已朝${dir.label}移动 ${realMeters.toFixed(1)} 米${moved < stepCells ? '（前方受阻，已停在边缘）' : ''}。`)
+  }, [roamCell, getRoamGrid, syncMyPosition, followIfNeeded, buildRoamHint, roamStepMeters])
 
   // 键盘监听：仅漫游开启时接管 WASD / 方向键。
   // 用 capture 阶段抢在地图（Leaflet/高德）之前处理，避免地图把方向键当平移。
@@ -537,17 +565,13 @@ export default function GolfNavApp() {
                 <label htmlFor="roam-step" className="text-xs opacity-70">每键步长</label>
                 <select
                   id="roam-step"
-                  value={roamStepCells}
-                  onChange={(e) => setRoamStepCells(Number(e.target.value))}
+                  value={roamStepMeters}
+                  onChange={(e) => setRoamStepMeters(Number(e.target.value))}
                   className="rounded bg-white/10 px-2 py-1 text-xs"
                 >
-                  <option value={1}>1 格（约 2 米）</option>
-                  <option value={2}>2 格（约 4 米）</option>
-                  <option value={5}>5 格（约 10 米）</option>
-                  <option value={10}>10 格（约 20 米）</option>
-                  <option value={20}>20 格（约 40 米）</option>
-                  <option value={50}>50 格（约 100 米）</option>
+                  {ROAM_STEP_METERS.map((m) => <option key={m} value={m}>{m} 米</option>)}
                 </select>
+                <span className="text-xs opacity-50">当前精度 {getRoamGrid().resolution} 米/格</span>
               </div>
               <div className="mt-2 grid grid-cols-3 gap-1 w-max mx-auto select-none" aria-label="屏幕方向键">
                 <span />
@@ -560,7 +584,7 @@ export default function GolfNavApp() {
                 <button type="button" onClick={() => roamStep('ArrowDown')} title="向下（S）" className="h-11 w-11 rounded bg-white/10 active:bg-sky-600 text-xl touch-manipulation">↓</button>
                 <span />
               </div>
-              <p className="mt-2 text-xs opacity-60">键盘 W↑ A← S↓ D→（也支持 ↑↓←→）或点屏幕方向键；坐标每按一次都会更新，按住可连续移动，遇障碍停在边缘外。</p>
+              <p className="mt-2 text-xs opacity-60">键盘 W↑ A← S↓ D→（也支持 ↑↓←→）或点屏幕方向键；按实际米数移动，坐标每按一次都会更新，按住可连续移动，遇障碍停在边缘外。</p>
             </div>
           )}
           {selected && (
