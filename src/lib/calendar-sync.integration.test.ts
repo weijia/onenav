@@ -1,7 +1,7 @@
 // 日历 v2 同步链路集成测试：PouchDB --universal-sync-v2--> DataGroup.fs（zen-fs-config v2 提供的文件系统）。
 // 用临时 Folder 后端代替远端，PouchDB 用 memory 适配器，不依赖网络。
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -110,8 +110,8 @@ describe('日历 v2 数据组同步', () => {
     const pulled = await db.get(remoteId)
     expect(pulled.title).toBe('远端事件')
 
-    const allFiles = await readdir(path.join(base, 'config')).catch(() => [])
-    expect(Array.isArray(allFiles)).toBe(true)
-    expect(typeof (await readFile(path.join(base, 'config', '.meta', 'group.json'), 'utf8'))).toBe('string')
+    // 同步后本地文档与 fs 分片都仍存在。
+    expect((await db.get('cal:2026-11-25:event-1')).title).toBe('同步测试事件')
+    expect((await group.fs.promises.readdir(dayDir)).length).toBeGreaterThanOrEqual(2)
   })
 })
