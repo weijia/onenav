@@ -89,19 +89,25 @@ export class AmapAdapter {
     });
   }
 
-  setSelection(id) {
-    const prev = this._selectedId && this._hitLayers[this._selectedId]
-      ? this._hitLayers[this._selectedId] : null;
-    if (prev) prev.layer.setStyle(prev.baseStyle);
-    this._selectedId = id || null;
-    const cur = id && this._hitLayers[id] ? this._hitLayers[id] : null;
-    if (cur) {
+  setSelection(ids) {
+    // 先恢复所有旧高亮（支持此前只高亮单个 id 的写法）
+    const prevIds = this._selectedIds || (this._selectedId ? [this._selectedId] : []);
+    prevIds.forEach((id) => {
+      const prev = this._hitLayers[id];
+      if (prev) prev.layer.setStyle(prev.baseStyle);
+    });
+    const list = Array.isArray(ids) ? ids : (ids ? [ids] : []);
+    this._selectedIds = list;
+    this._selectedId = list.length ? list[0] : null;
+    list.forEach((id) => {
+      const cur = this._hitLayers[id];
+      if (!cur) return;
       const highlight = { ...cur.baseStyle, color: '#38bdf8', weight: 4 };
       if (cur.kind === 'polygon') highlight.fillOpacity = Math.max(0.35, cur.baseStyle.fillOpacity || 0.5);
       else highlight.opacity = 1;
       cur.layer.setStyle(highlight);
       if (cur.layer.bringToFront) cur.layer.bringToFront();
-    }
+    });
   }
 
   onFeatureClick(handler) { this.featureClickHandler = handler; }

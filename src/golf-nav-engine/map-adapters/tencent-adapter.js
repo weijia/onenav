@@ -134,27 +134,28 @@ export class TencentAdapter {
 
   onFeatureClick(handler) { this.featureClickHandler = handler; }
 
-  setSelection(id) {
-    this._selectedId = id || null;
+  setSelection(ids) {
+    const list = Array.isArray(ids) ? ids : (ids ? [ids] : []);
+    this._selectedIds = list;
+    this._selectedId = list.length ? list[0] : null;
     this._refreshSelection();
   }
 
   _refreshSelection() {
     if (!this.layers.selectionPolygons || !this.layers.selectionLines) return;
-    const cur = this._selectedId ? this._baseGeoms[this._selectedId] : null;
-    if (!cur) {
-      this.layers.selectionPolygons.setGeometries([]);
-      this.layers.selectionLines.setGeometries([]);
-      return;
-    }
-    const paths = cur.geom.paths.map((pt) => this.toDisplayPoint(pt));
-    if (cur.kind === 'polygon') {
-      this.layers.selectionPolygons.setGeometries([{ id: 'selection', styleId: 'selection', paths }]);
-      this.layers.selectionLines.setGeometries([]);
-    } else {
-      this.layers.selectionLines.setGeometries([{ id: 'selection', styleId: 'selection', paths }]);
-      this.layers.selectionPolygons.setGeometries([]);
-    }
+    const ids = this._selectedIds || (this._selectedId ? [this._selectedId] : []);
+    const polyGeoms = [];
+    const lineGeoms = [];
+    ids.forEach((id) => {
+      const cur = this._baseGeoms[id];
+      if (!cur) return;
+      const paths = cur.geom.paths.map((pt) => this.toDisplayPoint(pt));
+      const g = { id: `selection-${id}`, styleId: 'selection', paths };
+      if (cur.kind === 'polygon') polyGeoms.push(g);
+      else lineGeoms.push(g);
+    });
+    this.layers.selectionPolygons.setGeometries(polyGeoms);
+    this.layers.selectionLines.setGeometries(lineGeoms);
   }
 
   destroy() {

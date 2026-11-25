@@ -54,13 +54,24 @@ export default function GolfNavApp() {
   const [position, setPosition] = useState<Point | null>(null)
   const [result, setResult] = useState('点击「定位」或地图设置当前位置，再生成路线。')
   const [notice, setNotice] = useState('')
-  const [visibleTypes, setVisibleTypes] = useState<Record<string, boolean>>(
-    () => Object.fromEntries(FEATURE_TYPES.map((t: string) => [t, true])) as Record<string, boolean>,
-  )
+  const [activeType, setActiveType] = useState<string | null>(null)
   const [selected, setSelected] = useState<any>(null)
-  const selectedRef = useRef<string | null>(null)
   const routeRef = useRef<any[] | null>(null)
   const positionRef = useRef<Point | null>(null)
+
+  // 当前应高亮的几何 id：选中的单个标注优先；否则聚焦分类时高亮该分类跨所有洞的全部区域
+  const highlightIds = useMemo(() => {
+    if (selected) return [selected.id] as string[]
+    if (activeType) {
+      return [
+        ...courseGeom.polygons.filter((p: any) => p.featureType === activeType).map((p: any) => p.id),
+        ...courseGeom.lines.filter((l: any) => l.styleId !== 'center' && l.featureType === activeType).map((l: any) => l.id),
+      ] as string[]
+    }
+    return [] as string[]
+  }, [selected, activeType, courseGeom])
+  const highlightIdsRef = useRef<string[]>([])
+  highlightIdsRef.current = highlightIds
 
   // 统一绘制「我的位置」：me 标记始终在最前，extras 用于叠加击球建议的候选点
   const syncMyPosition = useCallback((p: Point | null, extras: any[] = []) => {
@@ -69,13 +80,15 @@ export default function GolfNavApp() {
     if (a) a.setMarkers(p ? [myMarker(p), ...extras] : extras)
   }, [])
 
-  // 按分类过滤后的几何；中心线属于辅助线，始终显示
+  // 按分类过滤后的几何；未选中分类时显示全部，选中时只显示该分类（跨所有洞）。
+  // 中心线属于辅助线，始终显示。
   const displayGeom = useMemo(() => ({
-    polygons: courseGeom.polygons.filter((p: any) => visibleTypes[p.featureType] !== false),
-    lines: courseGeom.lines.filter((l: any) => l.styleId === 'center' || visibleTypes[l.featureType] !== false),
-  }), [courseGeom, visibleTypes])
+    polygons: courseGeom.polygons.filter((p: any) => !activeType || p.featureType === activeType),
+    lines: courseGeom.lines.filter((l: any) => l.styleId === 'center' || !activeType || l.featureType === activeType),
+  }), [courseGeom, activeType])
 
-  // 按分类分组的标注列表（仅当前洞，排除中心线辅助线）。
+  // 按分类分组的标注列表：选中某分类时列出该分类跨所有洞的全部区域；
+  // 未选中时仅列当前洞。排除中心线辅助线。
   // 名称来自球场地图真实标注（经 golfDataToCourse → buildCourseGeometry 透传），无名称时按类型+序号兜底。
   const featureGroups = useMemo(() => {
     const geoms: any[] = [
@@ -83,7 +96,9 @@ export default function GolfNavApp() {
       ...courseGeom.lines
         .filter((l: any) => l.styleId !== 'center')
         .map((l: any) => ({ ...l, geomKind: 'line' })),
-    ].filter((g: any) => g.hole === hole && visibleTypes[g.featureType || g.styleId] !== false)
+    ].filter((g: any) => activeType
+      ? g.featureType === activeType
+      : g.hole === hole)
     const map = new Map<string, any[]>()
     for (const g of geoms) {
       const key = g.featureType || g.styleId || 'other'
@@ -91,7 +106,7 @@ export default function GolfNavApp() {
       map.get(key)!.push(g)
     }
     return map
-  }, [courseGeom, hole, visibleTypes])
+  }, [courseGeom, hole, activeType])
 
   const currentHole = useMemo(
     () => course.holes.find((h: any) => h.number === hole) || course.holes[0],
@@ -126,8 +141,6 @@ export default function GolfNavApp() {
       kind: g.geomKind,
     }
     setSelected(hit)
-    selectedRef.current = g.id
-    if (adapterRef.current) adapterRef.current.setSelection(g.id)
     // 取几何顶点的中心作为定位点，避免飞到某个角落
     if (g.paths && g.paths.length) {
       const lat = g.paths.reduce((s: number, p: any) => s + p.lat, 0) / g.paths.length
@@ -156,15 +169,13 @@ export default function GolfNavApp() {
         setPosition(pt)
         syncMyPosition(pt)
         setSelected(null)
-        selectedRef.current = null
         setResult('已手动设置位置。')
       })
       adapter.onFeatureClick((hit: any) => {
         setSelected(hit)
-        selectedRef.current = hit.id
-        adapter.setSelection(hit.id)
       })
-      if (selectedRef.current) adapter.setSelection(selectedRef.current)
+      // 初始化后立即应用当前高亮（选中标注或聚焦分类）
+      adapter.setSelection(highlightIdsRef.current)
       if (positionRef.current) adapter.setMarkers([myMarker(positionRef.current)])
       setProvider(p)
       setNotice('')
@@ -173,7 +184,7 @@ export default function GolfNavApp() {
     }
   }, [course, center, displayGeom, syncMyPosition])
 
-  // 分类筛选/切洞后的图层同步，保留已有路线与选中高亮
+  // 分类筛选/切洞后的图层同步，保留已有路线；高亮由 syncHighlight 单独负责
   const applyLines = useCallback(() => {
     const a = adapterRef.current
     if (!a) return
@@ -181,8 +192,14 @@ export default function GolfNavApp() {
       ...displayGeom.lines,
       ...(routeRef.current ? [{ id: 'route', styleId: 'route', paths: routeRef.current.map(toBusinessPoint) }] : []),
     ])
-    if (selectedRef.current) a.setSelection(selectedRef.current)
   }, [displayGeom])
+
+  // 统一的高亮同步：选中单个标注时高亮它；聚焦分类时高亮该分类全部区域；
+  // 两者都无则清空。图层重建后也会重新应用。
+  const syncHighlight = useCallback(() => {
+    const a = adapterRef.current
+    if (a) a.setSelection(highlightIdsRef.current)
+  }, [])
 
   useEffect(() => {
     const a = adapterRef.current
@@ -191,6 +208,9 @@ export default function GolfNavApp() {
     a.setPolygons(displayGeom.polygons)
     applyLines()
   }, [course, displayGeom, applyLines])
+
+  // 高亮状态变化时同步到地图
+  useEffect(() => { syncHighlight() }, [highlightIds, syncHighlight])
 
   useEffect(() => {
     initMap('amap')
@@ -269,9 +289,7 @@ export default function GolfNavApp() {
     const h = course.holes.find((x: any) => x.number === n) || course.holes[0]
     routeRef.current = null
     setSelected(null)
-    selectedRef.current = null
-    const a = adapterRef.current
-    if (a) { applyLines(); a.setSelection(null) }
+    if (adapterRef.current) applyLines()
     syncMyPosition(position)
     const tee = normalizePoint(h.tee); const green = normalizePoint(h.green)
     centerOn({ lat: (tee.lat + green.lat) / 2, lng: (tee.lng + green.lng) / 2 })
@@ -313,11 +331,7 @@ export default function GolfNavApp() {
               <p className="text-sm opacity-80">类型：{LABELS[selected.featureType] || selected.featureType}</p>
               <p className="text-sm opacity-80">第 {selected.hole} 洞 · {(selected.kind || selected.geomKind) === 'polygon' ? '面状区域' : '线状要素'}</p>
               <button
-                onClick={() => {
-                  setSelected(null)
-                  selectedRef.current = null
-                  if (adapterRef.current) adapterRef.current.setSelection(null)
-                }}
+                onClick={() => setSelected(null)}
                 className="mt-2 rounded bg-white/10 px-2 py-1 text-xs"
               >清除选中</button>
             </div>
@@ -326,28 +340,25 @@ export default function GolfNavApp() {
             <div className="flex items-center justify-between mb-2">
               <h3 className="font-medium">标注分类</h3>
               <button
-                onClick={() => setVisibleTypes(Object.fromEntries(FEATURE_TYPES.map((t: string) => [t, true])) as Record<string, boolean>)}
+                onClick={() => { setActiveType(null); setSelected(null) }}
                 className="text-xs opacity-70 hover:opacity-100"
               >全部显示</button>
             </div>
             <div className="flex flex-wrap gap-1.5">
               {FEATURE_TYPES.map((type: string) => {
-                const on = visibleTypes[type] !== false
+                const on = activeType === type
                 const color = COLORS[type] || 'rgba(148,163,184,0.8)'
                 return (
                   <button
                     key={type}
                     onClick={() => {
-                      const next = !visibleTypes[type]
-                      setVisibleTypes((prev) => ({ ...prev, [type]: next }))
-                      if (!next && selected && selected.featureType === type) {
-                        setSelected(null)
-                        selectedRef.current = null
-                        if (adapterRef.current) adapterRef.current.setSelection(null)
-                      }
+                      // 选中分类 = 聚焦显示并高亮该分类跨所有洞的全部区域；再次点击取消
+                      const next = activeType === type ? null : type
+                      setActiveType(next)
+                      setSelected(null)
                     }}
-                    title={on ? `隐藏${LABELS[type] || type}` : `显示${LABELS[type] || type}`}
-                    className={`flex items-center gap-1 rounded px-2 py-1 text-xs transition ${on ? 'bg-white/15 ring-1 ring-sky-400/50' : 'bg-white/5 opacity-40'}`}
+                    title={on ? `取消聚焦${LABELS[type] || type}，显示全部` : `显示并高亮所有${LABELS[type] || type}区域`}
+                    className={`flex items-center gap-1 rounded px-2 py-1 text-xs transition ${on ? 'bg-sky-500/40 ring-1 ring-sky-300' : 'bg-white/10 hover:bg-white/20'}`}
                   >
                     <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: color }} />
                     {LABELS[type] || type}
@@ -355,15 +366,15 @@ export default function GolfNavApp() {
                 )
               })}
             </div>
-            <p className="mt-2 text-xs opacity-60">点击标注可高亮并查看类型；点击空白处设置当前位置。</p>
+            <p className="mt-2 text-xs opacity-60">点击分类显示并高亮该类全部区域（跨所有洞）；再次点击恢复全部。</p>
           </div>
           <div className="rounded-lg bg-white/5 p-3">
             <div className="flex items-center justify-between mb-2">
               <h3 className="font-medium">标注列表</h3>
-              <span className="text-xs opacity-60">第 {hole} 洞</span>
+              <span className="text-xs opacity-60">{activeType ? `全部洞 · ${LABELS[activeType] || activeType}` : `第 ${hole} 洞`}</span>
             </div>
             {featureGroups.size === 0 ? (
-              <p className="text-xs opacity-60">当前洞暂无标注（或全部已隐藏）。</p>
+              <p className="text-xs opacity-60">{activeType ? '该分类暂无标注。' : '当前洞暂无标注。'}</p>
             ) : (
               <div className="flex flex-col gap-2 max-h-72 overflow-y-auto pr-1">
                 {Array.from(featureGroups.keys())

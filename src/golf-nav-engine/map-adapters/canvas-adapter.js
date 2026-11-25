@@ -34,6 +34,7 @@ export class CanvasAdapter {
     this.featureClickHandler = null;
     this._hitRegions = [];
     this._selectedId = null;
+    this._selectedIds = [];
     this._bound = false;
   }
 
@@ -94,7 +95,11 @@ export class CanvasAdapter {
     return null;
   }
 
-  setSelection(id) { this._selectedId = id || null; this.redraw(); }
+  setSelection(ids) {
+    this._selectedIds = Array.isArray(ids) ? ids : (ids ? [ids] : []);
+    this._selectedId = this._selectedIds.length ? this._selectedIds[0] : null;
+    this.redraw();
+  }
 
   onFeatureClick(handler) { this.featureClickHandler = handler; }
 
@@ -139,7 +144,7 @@ export class CanvasAdapter {
       ctx.fillStyle = color;
       ctx.fill();
       ctx.globalAlpha = 1;
-      if (this._selectedId === poly.id) {
+      if (this._selectedIds.includes(poly.id)) {
         ctx.strokeStyle = '#38bdf8';
         ctx.lineWidth = 4;
         ctx.stroke();
@@ -157,8 +162,9 @@ export class CanvasAdapter {
       const style = LINE_STYLES[line.styleId] || LINE_STYLES.center;
       ctx.beginPath();
       pts.forEach((q, i) => { if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y); });
-      ctx.strokeStyle = this._selectedId === line.id ? '#38bdf8' : style.color;
-      ctx.lineWidth = this._selectedId === line.id ? Math.max(4, style.width + 2) : style.width;
+      const isSelected = this._selectedIds.includes(line.id);
+      ctx.strokeStyle = isSelected ? '#38bdf8' : style.color;
+      ctx.lineWidth = isSelected ? Math.max(4, style.width + 2) : style.width;
       ctx.globalAlpha = style.opacity;
       ctx.stroke();
       ctx.globalAlpha = 1;
