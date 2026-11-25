@@ -88,7 +88,8 @@ export default function GolfNavApp() {
   const [position, setPosition] = useState<Point | null>(null)
   const [result, setResult] = useState('正在获取当前位置…')
   const [notice, setNotice] = useState('')
-  const [activeType, setActiveType] = useState<string | null>(null)
+  // 分类筛选支持多选：空数组 = 只看当前洞的全部；选中若干类 = 只看这些类（跨所有洞）。
+  const [activeTypes, setActiveTypes] = useState<string[]>([])
   const [selected, setSelected] = useState<any>(null)
   const [roaming, setRoaming] = useState(false)
   const [heading, setHeading] = useState<number>(0) // 0=北，顺时针
@@ -106,14 +107,15 @@ export default function GolfNavApp() {
   // 当前应高亮的几何 id：选中的单个标注优先；否则聚焦分类时高亮该分类跨所有洞的全部区域
   const highlightIds = useMemo(() => {
     if (selected) return [selected.id] as string[]
-    if (activeType) {
+    // 选中部分分类时高亮这些分类；全选等同于「不做筛选」，此时不高亮，避免整图都在闪。
+    if (activeTypes.length && activeTypes.length < FEATURE_TYPES.length) {
       return [
-        ...courseGeom.polygons.filter((p: any) => p.featureType === activeType).map((p: any) => p.id),
-        ...courseGeom.lines.filter((l: any) => l.styleId !== 'center' && l.featureType === activeType).map((l: any) => l.id),
+        ...courseGeom.polygons.filter((p: any) => activeTypes.includes(p.featureType)).map((p: any) => p.id),
+        ...courseGeom.lines.filter((l: any) => l.styleId !== 'center' && activeTypes.includes(l.featureType)).map((l: any) => l.id),
       ] as string[]
     }
     return [] as string[]
-  }, [selected, activeType, courseGeom])
+  }, [selected, activeTypes, courseGeom])
   const highlightIdsRef = useRef<string[]>([])
   highlightIdsRef.current = highlightIds
 
@@ -128,9 +130,9 @@ export default function GolfNavApp() {
   // 按分类过滤后的几何；未选中分类时显示全部，选中时只显示该分类（跨所有洞）。
   // 中心线属于辅助线，始终显示。
   const displayGeom = useMemo(() => ({
-    polygons: courseGeom.polygons.filter((p: any) => !activeType || p.featureType === activeType),
-    lines: courseGeom.lines.filter((l: any) => l.styleId === 'center' || !activeType || l.featureType === activeType),
-  }), [courseGeom, activeType])
+    polygons: courseGeom.polygons.filter((p: any) => !activeTypes.length || activeTypes.includes(p.featureType)),
+    lines: courseGeom.lines.filter((l: any) => l.styleId === 'center' || !activeTypes.length || activeTypes.includes(l.featureType)),
+  }), [courseGeom, activeTypes])
 
   // 按分类分组的标注列表：选中某分类时列出该分类跨所有洞的全部区域；
   // 未选中时仅列当前洞。排除中心线辅助线。
@@ -141,8 +143,8 @@ export default function GolfNavApp() {
       ...courseGeom.lines
         .filter((l: any) => l.styleId !== 'center')
         .map((l: any) => ({ ...l, geomKind: 'line' })),
-    ].filter((g: any) => activeType
-      ? g.featureType === activeType
+    ].filter((g: any) => activeTypes.length
+      ? activeTypes.includes(g.featureType)
       : g.hole === hole)
     const map = new Map<string, any[]>()
     for (const g of geoms) {
@@ -151,7 +153,7 @@ export default function GolfNavApp() {
       map.get(key)!.push(g)
     }
     return map
-  }, [courseGeom, hole, activeType])
+  }, [courseGeom, hole, activeTypes])
 
   const currentHole = useMemo(
     () => course.holes.find((h: any) => h.number === hole) || course.holes[0],
@@ -698,25 +700,34 @@ export default function GolfNavApp() {
           <div className="rounded-lg border border-slate-200 bg-white/90 p-3 shadow-sm">
             <div className="flex items-center justify-between mb-2">
               <h3 className="font-medium">标注分类</h3>
-              <button
-                onClick={() => { setActiveType(null); setSelected(null) }}
-                className="text-xs opacity-70 hover:opacity-100"
-              >全部显示</button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => { setActiveTypes([...FEATURE_TYPES]); setSelected(null) }}
+                  className="text-xs text-slate-500 hover:text-slate-800"
+                  title="选中全部标注分类（等同于显示全部）"
+                >全部显示</button>
+                {activeTypes.length > 0 && (
+                  <button
+                    onClick={() => { setActiveTypes([]); setSelected(null) }}
+                    className="text-xs text-slate-500 hover:text-slate-800"
+                    title="清空分类选择，回到只看当前洞"
+                  >清空</button>
+                )}
+              </div>
             </div>
             <div className="flex flex-wrap gap-1.5">
               {FEATURE_TYPES.map((type: string) => {
-                const on = activeType === type
+                const on = activeTypes.includes(type)
                 const color = COLORS[type] || 'rgba(148,163,184,0.8)'
                 return (
                   <button
                     key={type}
                     onClick={() => {
-                      // 选中分类 = 聚焦显示并高亮该分类跨所有洞的全部区域；再次点击取消
-                      const next = activeType === type ? null : type
-                      setActiveType(next)
+                      // 多选：点一次加入所选集合，再点一次取消；选中后只看所选分类（跨所有洞）。
+                      setActiveTypes((prev) => (prev.includes(type) ? prev.filter((t) => t !== type) : [...prev, type]))
                       setSelected(null)
                     }}
-                    title={on ? `取消聚焦${LABELS[type] || type}，显示全部` : `显示并高亮所有${LABELS[type] || type}区域`}
+                    title={on ? `取消选择${LABELS[type] || type}` : `加上${LABELS[type] || type}（可多选）`}
                     className={`flex items-center gap-1 rounded px-2 py-1 text-xs transition border ${on ? 'bg-sky-100 ring-1 ring-sky-400 border-sky-300 text-sky-900' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'}`}
                   >
                     <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: color }} />
@@ -725,15 +736,15 @@ export default function GolfNavApp() {
                 )
               })}
             </div>
-            <p className="mt-2 text-xs opacity-60">点击分类显示并高亮该类全部区域（跨所有洞）；再次点击恢复全部。</p>
+            <p className="mt-2 text-xs opacity-60">分类可多选：地图只显示所选分类（跨所有洞）。「全部显示」= 选中全部，「清空」= 回到只看当前洞。</p>
           </div>
           <div className="rounded-lg border border-slate-200 bg-white/90 p-3 shadow-sm">
             <div className="flex items-center justify-between mb-2">
               <h3 className="font-medium">标注列表</h3>
-              <span className="text-xs opacity-60">{activeType ? `全部洞 · ${LABELS[activeType] || activeType}` : `第 ${hole} 洞`}</span>
+              <span className="text-xs opacity-60">{activeTypes.length ? `全部洞 · 已选 ${activeTypes.length} 类` : `第 ${hole} 洞`}</span>
             </div>
             {featureGroups.size === 0 ? (
-              <p className="text-xs opacity-60">{activeType ? '该分类暂无标注。' : '当前洞暂无标注。'}</p>
+              <p className="text-xs opacity-60">{activeTypes.length ? '所选分类暂无标注。' : '当前洞暂无标注。'}</p>
             ) : (
               <div className="flex flex-col gap-2 max-h-72 overflow-y-auto pr-1">
                 {Array.from(featureGroups.keys())
