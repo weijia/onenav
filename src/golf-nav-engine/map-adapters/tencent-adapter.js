@@ -2,9 +2,15 @@
 import { toDisplay, fromDisplay } from '../data/coordinates.js';
 import { STYLE_COLORS, LINE_STYLES, MARKER_COLORS } from './geometry.js';
 
-const markerSvg = (color) => `data:image/svg+xml,${encodeURIComponent(
-  `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="${color}" stroke="#ffffff" stroke-width="2"/></svg>`,
-)}`;
+const markerSvg = (color, heading) => {
+  // 带朝向时叠加一个指北三角并整体旋转；heading 0=北，顺时针为正。
+  const arrow = Number.isFinite(heading)
+    ? `<g transform="rotate(${heading} 12 12)"><path d="M12 2 L17 11 L7 11 Z" fill="#ffffff" stroke="${color}" stroke-width="0.8"/></g>`
+    : '';
+  return `data:image/svg+xml,${encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="${color}" stroke="#ffffff" stroke-width="2"/>${arrow}</svg>`,
+  )}`;
+};
 
 export class TencentAdapter {
   constructor(region) {
@@ -14,6 +20,7 @@ export class TencentAdapter {
     this.clickHandler = null;
     this.featureClickHandler = null;
     this._baseGeoms = {};
+    this._headingStyles = new Set();
     this._selectedId = null;
     this._suppressMapClickUntil = 0;
   }
@@ -101,11 +108,27 @@ export class TencentAdapter {
   }
 
   setMarkers(markers) {
-    this.layers.markers.setGeometries(markers.map((m, i) => ({
-      id: `${m.id || m.kind || 'm'}-${i}`,
-      styleId: MARKER_COLORS[m.styleId] ? m.styleId : 'landing',
-      position: this.toDisplayPoint(m.position),
-    })));
+    const TMap = window.TMap;
+    const geoms = markers.map((m, i) => {
+      const baseStyleId = MARKER_COLORS[m.styleId] ? m.styleId : 'landing';
+      const hasHeading = m.styleId === 'me' && Number.isFinite(m.heading);
+      // 朝向标记按角度动态注册样式（腾讯 style 是创建时静态集合，不能每帧改 src）
+      const styleId = hasHeading ? `me-h${Math.round((m.heading % 360 + 360) % 360)}` : baseStyleId;
+      if (hasHeading && !this._headingStyles.has(styleId)) {
+        this.layers.markers.setStyles({
+          [styleId]: new TMap.MarkerStyle({
+            width: 28, height: 28, anchor: { x: 14, y: 14 }, src: markerSvg(MARKER_COLORS.me, m.heading),
+          }),
+        });
+        this._headingStyles.add(styleId);
+      }
+      return {
+        id: `${m.id || m.kind || 'm'}-${i}`,
+        styleId,
+        position: this.toDisplayPoint(m.position),
+      };
+    });
+    this.layers.markers.setGeometries(geoms);
   }
 
   onClick(handler) {
@@ -163,6 +186,7 @@ export class TencentAdapter {
     this.map = null;
     this.layers = {};
     this._baseGeoms = {};
+    this._headingStyles = new Set();
     this._selectedId = null;
     this._suppressMapClickUntil = 0;
   }

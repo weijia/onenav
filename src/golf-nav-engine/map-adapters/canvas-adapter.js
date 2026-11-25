@@ -171,13 +171,37 @@ export class CanvasAdapter {
     });
     this.markers.forEach((m) => {
       const q = project(m.position);
-      ctx.beginPath();
-      ctx.arc(q.x, q.y, 6, 0, Math.PI * 2);
-      ctx.fillStyle = MARKER_COLORS[m.styleId] || '#378add';
-      ctx.fill();
-      ctx.strokeStyle = '#fff';
-      ctx.lineWidth = 2;
-      ctx.stroke();
+      const color = MARKER_COLORS[m.styleId] || '#378add';
+      const hasHeading = m.styleId === 'me' && Number.isFinite(m.heading);
+      if (hasHeading) {
+        // 圆点 + 三角指针，整体按 heading 旋转（canvas 中 y 轴向下，rotate 正值为顺时针，与 0=北顺时针约定一致）
+        ctx.save();
+        ctx.translate(q.x, q.y);
+        ctx.rotate((m.heading * Math.PI) / 180);
+        ctx.beginPath();
+        ctx.arc(0, 0, 8, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(0, -15);
+        ctx.lineTo(6, -4);
+        ctx.lineTo(-6, -4);
+        ctx.closePath();
+        ctx.fillStyle = '#fff';
+        ctx.fill();
+        ctx.restore();
+      } else {
+        ctx.beginPath();
+        ctx.arc(q.x, q.y, 6, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
     });
   }
 

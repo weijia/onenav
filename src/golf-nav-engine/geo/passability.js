@@ -10,6 +10,9 @@ const BASE_COST = {
 };
 const APPLY_ORDER = ['rough', 'fairway', 'green', 'tee', 'cartPath', 'bunker', 'water', 'tree', 'outOfBounds'];
 const BLOCKING = new Set(['bunker', 'water', 'tree', 'outOfBounds']);
+// 障碍类型 → 数字编码（供 TypedArray 存储），以及反查表
+const BLOCK_CODE = { bunker: 1, water: 2, tree: 3, outOfBounds: 4 };
+const CODE_BLOCK = { 1: 'bunker', 2: 'water', 3: 'tree', 4: 'outOfBounds' };
 
 function mPoint(value, origin) {
   if (Array.isArray(value)) return toLocalMeters(value[0], value[1], origin);
@@ -69,8 +72,10 @@ export function buildGrid(course, options = {}) {
   }
   const size = width * height;
   const blocked = new Uint8Array(size);
+  // 记录每个受阻格被哪类障碍占据（数字编码），供「可走方向 + 受阻原因」提示使用。
+  const blockerCode = new Uint8Array(size);
   const cost = new Float32Array(size).fill(1);
-  const grid = { origin, resolution, minX, minY, width, height, blocked, cost };
+  const grid = { origin, resolution, minX, minY, width, height, blocked, cost, blockerCode };
 
   const holes = options.holeNumbers
     ? course.holes.filter((h) => options.holeNumbers.includes(h.number))
@@ -113,15 +118,16 @@ export function buildGrid(course, options = {}) {
           if (!hit && circle) hit = Math.hypot(p.x - circle.x, p.y - circle.y) <= circle.radius;
           if (!hit) continue;
           const idx = row * width + col;
-          if (BLOCKING.has(type)) blocked[idx] = 1;
+          if (BLOCKING.has(type)) { blocked[idx] = 1; blockerCode[idx] = BLOCK_CODE[type] || 0; }
           else if (BASE_COST[type]) cost[idx] = BASE_COST[type];
         }
       }
     });
   });
 
-  // 障碍膨胀一格，避免路径贴边穿越
+  // 障碍膨胀一格，避免路径贴边穿越；膨胀格继承障碍类型以便给出受阻原因
   const snapshot = blocked.slice();
+  const snapshotCode = blockerCode.slice();
   for (let row = 0; row < height; row += 1) {
     for (let col = 0; col < width; col += 1) {
       const idx = row * width + col;
@@ -129,7 +135,11 @@ export function buildGrid(course, options = {}) {
       for (let dy = -1; dy <= 1; dy += 1) {
         for (let dx = -1; dx <= 1; dx += 1) {
           const rr = row + dy; const cc = col + dx;
-          if (rr >= 0 && rr < height && cc >= 0 && cc < width) blocked[rr * width + cc] = 1;
+          if (rr >= 0 && rr < height && cc >= 0 && cc < width) {
+            const nIdx = rr * width + cc;
+            blocked[nIdx] = 1;
+            if (!blockerCode[nIdx] && snapshotCode[idx]) blockerCode[nIdx] = snapshotCode[idx];
+          }
         }
       }
     }
@@ -158,6 +168,13 @@ export function cellToLatLng(grid, col, row) {
 export function isBlocked(grid, col, row) {
   if (col < 0 || row < 0 || col >= grid.width || row >= grid.height) return true;
   return grid.blocked[cellIndex(grid, col, row)] === 1;
+}
+
+// 返回该格受阻的障碍类型（如 bunker/water/tree/outOfBounds），可通行或越界返回 null。
+export function blockerTypeAt(grid, col, row) {
+  if (col < 0 || row < 0 || col >= grid.width || row >= grid.height) return null;
+  if (!grid.blockerCode) return null;
+  return CODE_BLOCK[grid.blockerCode[cellIndex(grid, col, row)]] || null;
 }
 
 export function costAt(grid, col, row, mode = 'walk') {

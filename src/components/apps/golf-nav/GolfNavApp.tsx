@@ -3,7 +3,7 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { FEATURE_TYPES, loadCourse } from '@/golf-nav-engine/data/course-schema.js'
 import { normalizePoint } from '@/golf-nav-engine/data/coordinates.js'
-import { buildGrid, worldToCell, cellToLatLng, snapToPassable } from '@/golf-nav-engine/geo/passability.js'
+import { buildGrid, worldToCell, cellToLatLng, snapToPassable, isBlocked, blockerTypeAt } from '@/golf-nav-engine/geo/passability.js'
 import { latLngDistance } from '@/golf-nav-engine/geo/geometry.js'
 import { findPath } from '@/golf-nav-engine/nav/astar.js'
 import { adviseShot } from '@/golf-nav-engine/nav/shot-advisor.js'
@@ -27,7 +27,21 @@ const PROVIDER_LABELS: Record<Provider, string> = {
 const LABELS = FEATURE_LABELS as Record<string, string>
 const COLORS = STYLE_COLORS as Record<string, string>
 
-const myMarker = (p: Point) => ({ id: 'me', styleId: 'me', position: toBusinessPoint(p) })
+const myMarker = (p: Point, heading?: number) => ({
+  id: 'me', styleId: 'me', position: toBusinessPoint(p), ...(Number.isFinite(heading) ? { heading } : {}),
+})
+
+// 键盘漫游的方向定义：heading 0=北（上），顺时针；栅格 col 向东、row 向北。
+const ROAM_DIRS: Record<string, { dCol: number; dRow: number; heading: number; label: string; arrow: string }> = {
+  ArrowUp: { dCol: 0, dRow: 1, heading: 0, label: '北', arrow: '↑' },
+  ArrowRight: { dCol: 1, dRow: 0, heading: 90, label: '东', arrow: '→' },
+  ArrowDown: { dCol: 0, dRow: -1, heading: 180, label: '南', arrow: '↓' },
+  ArrowLeft: { dCol: -1, dRow: 0, heading: 270, label: '西', arrow: '←' },
+}
+const HEADING_ARROW = (h: number) => {
+  const idx = ((Math.round(h / 90) % 4) + 4) % 4
+  return ['↑', '→', '↓', '←'][idx]
+}
 
 export default function GolfNavApp() {
   const { data: sharedData, loading: sharedLoading } = useSharedGolfData()
@@ -56,8 +70,14 @@ export default function GolfNavApp() {
   const [notice, setNotice] = useState('')
   const [activeType, setActiveType] = useState<string | null>(null)
   const [selected, setSelected] = useState<any>(null)
+  const [roaming, setRoaming] = useState(false)
+  const [heading, setHeading] = useState<number>(0) // 0=北，顺时针
+  const [roamHint, setRoamHint] = useState('')
   const routeRef = useRef<any[] | null>(null)
   const positionRef = useRef<Point | null>(null)
+  const headingRef = useRef<number>(0)
+  const roamGridRef = useRef<any>(null)
+  const roamingRef = useRef(false)
 
   // 当前应高亮的几何 id：选中的单个标注优先；否则聚焦分类时高亮该分类跨所有洞的全部区域
   const highlightIds = useMemo(() => {
@@ -74,10 +94,11 @@ export default function GolfNavApp() {
   highlightIdsRef.current = highlightIds
 
   // 统一绘制「我的位置」：me 标记始终在最前，extras 用于叠加击球建议的候选点
+  // 漫游开启时标记带朝向箭头，关闭时退回普通圆点。
   const syncMyPosition = useCallback((p: Point | null, extras: any[] = []) => {
     positionRef.current = p
     const a = adapterRef.current
-    if (a) a.setMarkers(p ? [myMarker(p), ...extras] : extras)
+    if (a) a.setMarkers(p ? [myMarker(p, roamingRef.current ? headingRef.current : undefined), ...extras] : extras)
   }, [])
 
   // 按分类过滤后的几何；未选中分类时显示全部，选中时只显示该分类（跨所有洞）。
@@ -176,7 +197,9 @@ export default function GolfNavApp() {
       })
       // 初始化后立即应用当前高亮（选中标注或聚焦分类）
       adapter.setSelection(highlightIdsRef.current)
-      if (positionRef.current) adapter.setMarkers([myMarker(positionRef.current)])
+      if (positionRef.current) {
+        adapter.setMarkers([myMarker(positionRef.current, roamingRef.current ? headingRef.current : undefined)])
+      }
       setProvider(p)
       setNotice('')
     } catch (e: any) {
@@ -259,6 +282,115 @@ export default function GolfNavApp() {
     return snapToPassable(g, c.col, c.row) || c
   }
 
+  // ===== 键盘漫游 =====
+  // 栅格按洞缓存，避免每次按键重建；切洞后自动失效。
+  const getRoamGrid = useCallback(() => {
+    const cached = roamGridRef.current
+    if (cached && cached.hole === hole && cached.course === course) return cached.grid
+    const grid = ensureGrid()
+    roamGridRef.current = { hole, course, grid }
+    return grid
+  }, [hole, course, currentHole])
+
+  // 当前位置所在的可通行格；若落在障碍内则吸附到最近可通行格。
+  const roamCell = useCallback((p: Point) => {
+    const g = getRoamGrid()
+    const c = worldToCell(g, p)
+    return snapToPassable(g, c.col, c.row) || c
+  }, [getRoamGrid])
+
+  // 扫描四周，生成「可走方向 + 受阻原因」提示。
+  const buildRoamHint = useCallback((cell: { col: number; row: number }) => {
+    const g = getRoamGrid()
+    const walkable: string[] = []
+    const blockedNotes: string[] = []
+    for (const dir of Object.values(ROAM_DIRS)) {
+      const c = cell.col + dir.dCol
+      const r = cell.row + dir.dRow
+      if (isBlocked(g, c, r)) {
+        const type = blockerTypeAt(g, c, r)
+        const name = type ? (LABELS[type] || type) : '边界'
+        blockedNotes.push(`${dir.arrow}${dir.label}：${name}`)
+      } else {
+        walkable.push(`${dir.arrow}${dir.label}`)
+      }
+    }
+    const walk = walkable.length ? walkable.join(' ') : '无'
+    const blocked = blockedNotes.length ? `；受阻 ${blockedNotes.join('、')}` : ''
+    return `可走：${walk}${blocked}`
+  }, [getRoamGrid])
+
+  // 走一步：箭头先转向该方向；目标格被挡则原地不动，否则移动一格并让地图跟随。
+  const roamStep = useCallback((dirKey: string) => {
+    const dir = ROAM_DIRS[dirKey]
+    if (!dir) return
+    headingRef.current = dir.heading
+    setHeading(dir.heading)
+    const p = positionRef.current
+    if (!p) { setResult('请先定位或点击地图设置位置，再开始键盘漫游。'); return }
+    const cell = roamCell(p)
+    const g = getRoamGrid()
+    const nc = cell.col + dir.dCol
+    const nr = cell.row + dir.dRow
+    if (isBlocked(g, nc, nr)) {
+      // 边缘外即停：位置不变，仅刷新朝向标记与提示
+      syncMyPosition(p)
+      setRoamHint(buildRoamHint(cell))
+      setResult(`朝${dir.label}被阻挡，停在障碍边缘。`)
+      return
+    }
+    const next = cellToLatLng(g, nc, nr)
+    setPosition(next)
+    syncMyPosition(next)
+    centerOn(next)
+    setRoamHint(buildRoamHint({ col: nc, row: nr }))
+    setResult(`已朝${dir.label}移动一格（约 2 米）。`)
+  }, [roamCell, getRoamGrid, syncMyPosition, centerOn, buildRoamHint])
+
+  // 键盘监听：仅漫游开启时接管方向键，阻止页面滚动。
+  useEffect(() => {
+    if (!roaming) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!ROAM_DIRS[e.key]) return
+      // 输入框（如同步面板表单）聚焦时不劫持按键
+      const tag = (e.target as HTMLElement)?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+      e.preventDefault()
+      roamStep(e.key)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [roaming, roamStep])
+
+  // 位置/洞号/开关变化后自动刷新可走提示（覆盖点击设点、定位、切洞等所有路径）
+  useEffect(() => {
+    if (!roaming || !positionRef.current) return
+    setRoamHint(buildRoamHint(roamCell(positionRef.current)))
+  }, [roaming, position, hole, buildRoamHint, roamCell])
+
+  const toggleRoaming = () => {
+    const next = !roaming
+    roamingRef.current = next
+    setRoaming(next)
+    if (next) {
+      if (!positionRef.current) {
+        const tee = normalizePoint(currentHole.tee)
+        setPosition(tee)
+        syncMyPosition(tee)
+        setRoamHint(buildRoamHint(roamCell(tee)))
+        setResult('键盘漫游已开启：用 ↑↓←→ 移动，点击地图可重设起点。')
+      } else {
+        syncMyPosition(positionRef.current) // 立即重绘为带箭头标记
+        setRoamHint(buildRoamHint(roamCell(positionRef.current)))
+        setResult(`键盘漫游已开启（朝向${HEADING_ARROW(headingRef.current)}）：用 ↑↓←→ 移动。`)
+      }
+    } else {
+      syncMyPosition(positionRef.current) // 立即重绘回普通圆点
+      setRoamHint('')
+      setResult('键盘漫游已关闭。')
+    }
+  }
+
   const calculateRoute = () => {
     if (!position) { setResult('请先定位或点击地图设置位置。'); return }
     const goal = target === 'tee' ? currentHole.tee : currentHole.green
@@ -306,6 +438,11 @@ export default function GolfNavApp() {
           {course.holes.map((h: any) => <option key={h.number} value={h.number}>第 {h.number} 洞 · Par {h.par}</option>)}
         </select>
         <button onClick={locate} className="rounded bg-white/10 px-3 py-1">定位</button>
+        <button
+          onClick={toggleRoaming}
+          className={`rounded px-3 py-1 ${roaming ? 'bg-sky-600 ring-1 ring-sky-300' : 'bg-white/10'}`}
+          title="用键盘上下左右键控制带方向的标记移动，自动避开障碍"
+        >{roaming ? '■ 停止漫游' : '▶ 键盘漫游'}</button>
         <div className="flex rounded overflow-hidden">
           <button onClick={() => setMode('route')} className={`px-3 py-1 ${mode === 'route' ? 'bg-emerald-600' : 'bg-white/10'}`}>场内找路</button>
           <button onClick={() => setMode('shot')} className={`px-3 py-1 ${mode === 'shot' ? 'bg-emerald-600' : 'bg-white/10'}`}>击球决策</button>
@@ -324,6 +461,17 @@ export default function GolfNavApp() {
             <h3 className="font-medium mb-2">状态</h3>
             <p className="text-sm whitespace-pre-line leading-relaxed">{result}</p>
           </div>
+          {roaming && (
+            <div className="rounded-lg bg-sky-950/40 p-3 ring-1 ring-sky-500/40">
+              <h3 className="font-medium mb-2">漫游提示</h3>
+              <p className="text-sm mb-1">
+                朝向：<span className="text-sky-300 text-lg">{HEADING_ARROW(heading)}</span>
+                <span className="opacity-70 ml-1">（{heading}°）</span>
+              </p>
+              <p className="text-sm whitespace-pre-line leading-relaxed">{roamHint || '正在计算可走方向…'}</p>
+              <p className="mt-2 text-xs opacity-60">用键盘 ↑ ↓ ← → 移动；箭头指向行进方向，遇障碍自动停在边缘外。</p>
+            </div>
+          )}
           {selected && (
             <div className="rounded-lg bg-sky-950/40 p-3 ring-1 ring-sky-500/40">
               <h3 className="font-medium mb-1">选中标注</h3>

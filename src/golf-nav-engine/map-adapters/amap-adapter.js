@@ -118,11 +118,22 @@ export class AmapAdapter {
     markers.forEach((m, i) => {
       const styleId = MARKER_COLORS[m.styleId] ? m.styleId : 'landing';
       const color = MARKER_COLORS[styleId];
+      // 带朝向的标记（键盘漫游）：圆点 + 一个指向 heading 的三角箭头。
+      // heading 约定：0=北（上），顺时针为正；箭头用 CSS transform 旋转。
+      const hasHeading = m.styleId === 'me' && Number.isFinite(m.heading);
+      const inner = hasHeading
+        ? `<div style="position:relative;width:24px;height:24px">
+             <div style="position:absolute;inset:2px;border-radius:50%;background:${color};border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4)"></div>
+             <div style="position:absolute;inset:0;transform:rotate(${m.heading}deg)">
+               <div style="position:absolute;left:50%;top:0;transform:translateX(-50%);width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-bottom:10px solid #fff"></div>
+             </div>
+           </div>`
+        : `<div style="width:20px;height:20px;border-radius:50%;background:${color};border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4)"></div>`;
       const icon = L.divIcon({
         className: 'gnav-marker',
-        html: `<div style="width:20px;height:20px;border-radius:50%;background:${color};border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4)"></div>`,
-        iconSize: [20, 20],
-        iconAnchor: [10, 10],
+        html: inner,
+        iconSize: hasHeading ? [24, 24] : [20, 20],
+        iconAnchor: hasHeading ? [12, 12] : [10, 10],
       });
       L.marker(this.toDisplayPoint(m.position), {
         icon,
