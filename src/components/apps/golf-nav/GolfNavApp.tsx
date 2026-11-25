@@ -80,7 +80,7 @@ export default function GolfNavApp() {
   const [hole, setHole] = useState(1)
   const [target, setTarget] = useState<'tee' | 'green'>('green')
   const [position, setPosition] = useState<Point | null>(null)
-  const [result, setResult] = useState('点击「定位」或地图设置当前位置，再生成路线。')
+  const [result, setResult] = useState('正在获取当前位置…')
   const [notice, setNotice] = useState('')
   const [activeType, setActiveType] = useState<string | null>(null)
   const [selected, setSelected] = useState<any>(null)
@@ -94,6 +94,8 @@ export default function GolfNavApp() {
   const roamGridRef = useRef<any>(null)
   const viewCenterRef = useRef<Point | null>(null) // 上次地图居中点，用于漫游时延迟跟随
   const roamingRef = useRef(false)
+  const autoLocatedRef = useRef(false) // 首次建图后只自动定位一次，切底图不重复打断视野
+  const locatingRef = useRef(false) // 定位进行中，避免连点或严格模式双挂载重复请求
 
   // 当前应高亮的几何 id：选中的单个标注优先；否则聚焦分类时高亮该分类跨所有洞的全部区域
   const highlightIds = useMemo(() => {
@@ -156,23 +158,28 @@ export default function GolfNavApp() {
   }, [course])
 
   // keepZoom=true 时只平移、不改缩放：漫游跟随不应重置用户手动调整的比例尺。
-  const centerOn = useCallback((p: Point, keepZoom = false) => {
+  // 用能力探测代替 provider 分支：initMap 里的 setProvider 是异步 state，
+  // 自动定位的回调可能早于它生效，按 provider 判断会走到错误的适配器。
+  // canvas 适配器没有视口概念（始终按 bounds 铺满），这里会静默返回。
+  const centerOn = useCallback((p: Point, keepZoom = false, zoom = 16) => {
     const a = adapterRef.current
     if (!a || !a.map || !a.toDisplayPoint) return
     try {
       const display = a.toDisplayPoint(p)
-      if (provider === 'amap') {
-        if (keepZoom) {
-          // 高德适配层基于 Leaflet：panTo 保留当前 zoom，回退分支也取当前 zoom。
-          if (typeof a.map.panTo === 'function') a.map.panTo(display)
-          else a.map.setView(display, a.map.getZoom ? a.map.getZoom() : 16)
-        } else {
-          a.map.setView(display, 16)
-        }
-      } else if (provider === 'tencent') a.map.setCenter(display)
+      const m: any = a.map
+      if (keepZoom) {
+        // 只平移：Leaflet 有 panTo，回退时保留当前 zoom
+        if (typeof m.panTo === 'function') m.panTo(display)
+        else if (typeof m.setView === 'function') m.setView(display, typeof m.getZoom === 'function' ? m.getZoom() : zoom)
+        else if (typeof m.setCenter === 'function') m.setCenter(display)
+      } else if (typeof m.setView === 'function') {
+        m.setView(display, zoom)
+      } else if (typeof m.setCenter === 'function') {
+        m.setCenter(display)
+      }
       viewCenterRef.current = p
     } catch { /* ignore */ }
-  }, [provider])
+  }, [])
 
   // 漫游时不要每走一步都把标记钉在屏幕中心（那样看起来标记没动）；
   // 只有离上次居中点超过 60 米才重新居中，且保留当前缩放（比例尺不跳变）。
@@ -201,6 +208,74 @@ export default function GolfNavApp() {
       centerOn({ lat, lng })
     }
   }, [centerOn])
+
+  // 单次定位请求：Promise 化 + 兜底计时器。
+  // Windows 的系统定位服务冷启动常常超过 8 秒，而且部分实现里 getCurrentPosition 的
+  // timeout 参数并不生效（系统侧挂起时会一直不回调），所以另加计时器保证一定收尾。
+  const requestPosition = useCallback((timeout = 20000) => new Promise<GeolocationPosition | null>((resolve) => {
+    if (!navigator.geolocation) { resolve(null); return }
+    let settled = false
+    let guard: ReturnType<typeof setTimeout> | undefined
+    const finish = (v: GeolocationPosition | null) => {
+      if (settled) return
+      settled = true
+      if (guard) clearTimeout(guard)
+      resolve(v)
+    }
+    guard = setTimeout(() => finish(null), timeout + 3000)
+    try {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => finish(pos),
+        () => finish(null),
+        { enableHighAccuracy: true, timeout, maximumAge: 0 },
+      )
+    } catch { finish(null) }
+  }), [])
+
+  // 定位并落到地图。auto=true 是「打开页面即定位」，失败时不再伪装成定位成功。
+  const locate = useCallback(async (opts: { auto?: boolean } = {}) => {
+    if (locatingRef.current) return
+    locatingRef.current = true
+    const tee = normalizePoint(currentHole.tee)
+    try {
+      if (!navigator.geolocation) {
+        setPosition(tee)
+        syncMyPosition(tee)
+        setResult('浏览器不支持定位，已使用本洞发球台作为参考位置。')
+        return
+      }
+      setResult('正在获取当前位置…')
+      // 冷启动第一次经常超时，失败后再请求一次
+      let pos = await requestPosition(20000)
+      if (!pos) pos = await requestPosition(20000)
+      if (!pos) {
+        if (opts.auto) {
+          setResult('未能获取定位（可能未授权，或系统定位服务未开启），地图仍按球场中心显示；可点「定位」重试，或直接点地图手动设置。')
+        } else {
+          setPosition(tee)
+          syncMyPosition(tee)
+          setResult('定位不可用，已使用本洞发球台作为参考位置；可点击地图手动设置。')
+        }
+        return
+      }
+      const p = { lat: pos.coords.latitude, lng: pos.coords.longitude }
+      const acc = Math.round(pos.coords.accuracy)
+      const dist = latLngDistance(p, center)
+      setPosition(p)
+      syncMyPosition(p)
+      // 桌面端只有 IP/WiFi 级的百米精度，定位点常远离球场；此时按 16 级缩放只会看到空白，
+      // 退到 13 级让球场和当前位置同时可见。
+      centerOn(p, false, dist > 2000 ? 13 : 16)
+      const head = acc > 50
+        ? `已按当前位置显示（精度约 ${acc} 米；桌面端通常只有百米级，球场内建议点地图校准）`
+        : `定位成功（精度约 ${acc} 米）`
+      setResult(dist > 2000
+        ? `${head}。\n当前位置距球场中心约 ${(dist / 1000).toFixed(1)} 公里，可切换洞号回到球场视野。`
+        : `${head}。`)
+    } finally {
+      locatingRef.current = false
+    }
+  }, [currentHole, center, requestPosition, syncMyPosition, centerOn])
 
   const initMap = useCallback((p: Provider) => {
     if (!mapEl.current) return
@@ -235,10 +310,16 @@ export default function GolfNavApp() {
       }
       setProvider(p)
       setNotice('')
+      // 打开页面即定位：只在首次建图后触发，切底图时不重复打断用户视野。
+      // 放在 create 之后执行，确保定位回来时 adapterRef 已有值，标记和居中都能生效。
+      if (!autoLocatedRef.current) {
+        autoLocatedRef.current = true
+        void locate({ auto: true })
+      }
     } catch (e: any) {
       setNotice(`地图初始化失败：${e.message}`)
     }
-  }, [course, center, displayGeom, syncMyPosition])
+  }, [course, center, displayGeom, syncMyPosition, locate])
 
   // 分类筛选/切洞后的图层同步，保留已有路线；高亮由 syncHighlight 单独负责
   const applyLines = useCallback(() => {
@@ -272,29 +353,6 @@ export default function GolfNavApp() {
     initMap('amap')
     return () => { try { adapterRef.current && adapterRef.current.destroy() } catch { /* ignore */ } }
   }, [])
-
-  const locate = () => {
-    const apply = (p: Point, msg: string, doCenter = false) => {
-      setPosition(p)
-      syncMyPosition(p)
-      setResult(msg)
-      if (doCenter) centerOn(p)
-    }
-    if (!navigator.geolocation) {
-      apply(normalizePoint(currentHole.tee), '浏览器不支持定位，已使用本洞发球台作为模拟位置。')
-      return
-    }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const p = { lat: pos.coords.latitude, lng: pos.coords.longitude }
-        apply(p, `定位成功（精度约 ${Math.round(pos.coords.accuracy)} 米）。`, true)
-      },
-      () => {
-        apply(normalizePoint(currentHole.tee), '定位不可用，已使用本洞发球台作为模拟位置；可点击地图手动设置。')
-      },
-      { enableHighAccuracy: true, timeout: 8000 },
-    )
-  }
 
   const ensureGrid = () => {
     const parts = [
@@ -526,7 +584,7 @@ export default function GolfNavApp() {
         <select value={hole} onChange={(e) => changeHole(Number(e.target.value))} className="rounded bg-white/10 px-2 py-1">
           {course.holes.map((h: any) => <option key={h.number} value={h.number}>第 {h.number} 洞 · Par {h.par}</option>)}
         </select>
-        <button onClick={locate} className="rounded bg-white/10 px-3 py-1">定位</button>
+        <button onClick={() => { void locate() }} className="rounded bg-white/10 px-3 py-1">定位</button>
         <button
           onClick={toggleRoaming}
           className={`rounded px-3 py-1 ${roaming ? 'bg-sky-600 ring-1 ring-sky-300' : 'bg-white/10'}`}
