@@ -544,15 +544,19 @@ export default function GolfNavApp() {
     roamingRef.current = next
     setRoaming(next)
     if (next) {
-      if (!positionRef.current) {
+      // 起点以渲染中的 position 为准：自动定位是异步的，ref 可能落后于 state。
+      // 取到后回写 ref，后面 roamStep / getRoamGrid 统一读 ref。
+      const start = position || positionRef.current
+      if (start) positionRef.current = start
+      if (!start) {
         const tee = normalizePoint(currentHole.tee)
         setPosition(tee)
         syncMyPosition(tee)
         setRoamHint(buildRoamHint(roamCell(tee)))
         setResult('键盘漫游已开启：用 W A S D / ↑↓←→ / 屏幕方向键移动，点击地图可重设起点。')
       } else {
-        syncMyPosition(positionRef.current) // 立即重绘为带箭头标记
-        setRoamHint(buildRoamHint(roamCell(positionRef.current)))
+        syncMyPosition(start) // 立即重绘为带箭头标记
+        setRoamHint(buildRoamHint(roamCell(start)))
         setResult(`键盘漫游已开启（朝向${HEADING_ARROW(headingRef.current)}）：用 W A S D / ↑↓←→ / 屏幕方向键移动。`)
       }
     } else {
