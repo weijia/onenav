@@ -107,8 +107,15 @@ export default function GolfNavApp() {
   // 当前应高亮的几何 id：选中的单个标注优先；否则聚焦分类时高亮该分类跨所有洞的全部区域
   const highlightIds = useMemo(() => {
     if (selected) return [selected.id] as string[]
-    // 选中部分分类时高亮这些分类；全选等同于「不做筛选」，此时不高亮，避免整图都在闪。
-    if (activeTypes.length && activeTypes.length < FEATURE_TYPES.length) {
+    // 选中（含全选）的分类统一高亮：全选时就是把所有标注都点亮，
+    // 否则只落到 baseStyle（细线+低填充），在亮底图上几乎看不见。
+    if (activeTypes.length >= (FEATURE_TYPES as string[]).length) {
+      return [
+        ...courseGeom.polygons.map((p: any) => p.id),
+        ...courseGeom.lines.filter((l: any) => l.styleId !== 'center').map((l: any) => l.id),
+      ] as string[]
+    }
+    if (activeTypes.length) {
       return [
         ...courseGeom.polygons.filter((p: any) => activeTypes.includes(p.featureType)).map((p: any) => p.id),
         ...courseGeom.lines.filter((l: any) => l.styleId !== 'center' && activeTypes.includes(l.featureType)).map((l: any) => l.id),
