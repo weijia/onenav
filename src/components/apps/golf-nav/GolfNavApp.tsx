@@ -190,11 +190,14 @@ export default function GolfNavApp() {
       const last = deviceHeadingRef.current
       const moved = last == null || Math.abs(((next - last + 540) % 360) - 180) > 4
       deviceHeadingRef.current = next
-      if (!moved) return
-      setDeviceHeading(next)
-      setCompassState((s) => (s === 'on' ? s : 'on'))
+      // 角度整数变了才 setState：EMA 收敛时的零点几度抖动不会重渲染，
+      // 也不会像固定阈值那样把 12° 这种残留值一直挂在界面上。
+      if (Math.round(next) !== Math.round(last ?? -1)) {
+        setDeviceHeading(next)
+        setCompassState((s) => (s === 'on' ? s : 'on'))
+      }
       const now = performance.now()
-      if (roamingRef.current && now - lastCompassPaintRef.current > 200) {
+      if (moved && roamingRef.current && now - lastCompassPaintRef.current > 200) {
         lastCompassPaintRef.current = now
         drawMyMarker()
       }
@@ -591,9 +594,13 @@ export default function GolfNavApp() {
       return { d, blocked, diff }
     })
     const walkable = cands.filter((c) => !c.blocked)
-    if (!walkable.length) return { allBlocked: true, dir: null as any, diff: 0 }
+    if (!walkable.length) return { allBlocked: true, dir: null as any, diff: 0, turn: '' }
     walkable.sort((a, b) => Math.abs(a.diff) - Math.abs(b.diff))
-    return { allBlocked: false, dir: walkable[0].d as any, diff: walkable[0].diff }
+    const best = walkable[0]
+    const turn = Math.abs(best.diff) < 8
+      ? '正前方'
+      : `${Math.round(Math.abs(best.diff) / 5) * 5}° ${best.diff > 0 ? '右转' : '左转'}`
+    return { allBlocked: false, dir: best.d as any, diff: best.diff, turn }
   }, [roaming, position, deviceHeading, getRoamGrid, roamCell])
 
   // 走一步：箭头先转向该方向；按「米」换算成格数连续前进，遇到障碍即停在前一格。
@@ -802,7 +809,7 @@ export default function GolfNavApp() {
                 <p className="text-sm mt-1 text-emerald-700">
                   {compassHint.allBlocked
                     ? '四向都被挡住：先退出当前标注区域再走。'
-                    : `建议：${compassHint.dir.arrow} ${compassHint.dir.label}（${compassHint.diff === 0 ? '正前方' : `${Math.abs(Math.round(compassHint.diff))}° ${compassHint.diff > 0 ? '右转' : '左转'}`}）`}
+                    : `建议：${compassHint.dir.arrow} ${compassHint.dir.label}（${compassHint.turn}）`}
                 </p>
               )}
               <div className="mt-2 flex items-center gap-2">
