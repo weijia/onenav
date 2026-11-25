@@ -105,20 +105,31 @@ function toNavPath(path: LngLat[]): LatLng[] {
   return path.map(toNavPoint)
 }
 
-/** 区域类型映射到导航引擎的障碍类型 */
+/** 区域类型映射到导航引擎的要素类型；未列出的若本身就是引擎类型则直接透传 */
 const AREA_TO_FEATURE: Record<string, string> = {
   water: 'water',
   bunker: 'bunker',
   rough: 'rough',
-  ob: 'outOfBounds',
+  fairway: 'fairway',
+  green: 'green',
+  tee: 'tee',
+  tree: 'tree',
   woods: 'tree',
+  ob: 'outOfBounds',
+  outOfBounds: 'outOfBounds',
+  out_of_bounds: 'outOfBounds',
   closed: 'outOfBounds',
+  cartPath: 'cartPath',
+  cartpath: 'cartPath',
 }
 
 const FACILITY_TO_FEATURE: Record<string, string> = {
   water: 'water',
   bunker: 'bunker',
   fairway: 'fairway',
+  green: 'green',
+  tee: 'tee',
+  tree: 'tree',
   cartpath: 'cartPath',
 }
 

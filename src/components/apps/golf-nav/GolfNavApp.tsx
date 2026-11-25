@@ -46,6 +46,9 @@ const ROAM_STEP_METERS = [2, 5, 10, 20, 50, 100]
 // 漫游栅格半径（米）：以当前位置为中心现建，不再受球场 bounds 限制。
 // 500 米半径 + 2 米分辨率 ≈ 500×500 格，重建一次也在毫秒级。
 const ROAM_GRID_RADIUS_METERS = 500
+// 避障漫游把**所有面状标注**都当障碍：球道、果岭、发球台、长草区、沙坑、水域、树木、界外。
+// 球车道是线状导航辅助，不算区域；找路/击球决策仍用引擎默认的真障碍集合。
+const ROAM_BLOCKING_TYPES = ['rough', 'fairway', 'green', 'tee', 'bunker', 'water', 'tree', 'outOfBounds']
 
 // 键盘映射：W/A/S/D 对应 上/左/下/右；同时兼容 ↑↓←→。
 // 用 e.code 优先（不受输入法/大小写影响），e.key 兜底。
@@ -429,6 +432,7 @@ export default function GolfNavApp() {
         west: anchor.lng - dLng, east: anchor.lng + dLng,
       },
       resolutionMeters: 2,
+      blockingTypes: ROAM_BLOCKING_TYPES,
     })
     roamGridRef.current = { anchor, grid }
     return grid
@@ -557,7 +561,13 @@ export default function GolfNavApp() {
       } else {
         syncMyPosition(start) // 立即重绘为带箭头标记
         setRoamHint(buildRoamHint(roamCell(start)))
-        setResult(`键盘漫游已开启（朝向${HEADING_ARROW(headingRef.current)}）：用 W A S D / ↑↓←→ / 屏幕方向键移动。`)
+        // 起点若落在某个标注区域内，四向都会被挡；直接把原因说清楚，避免看起来「标记不动」。
+        const g = getRoamGrid()
+        const raw = worldToCell(g, start)
+        const cover = isBlocked(g, raw.col, raw.row) ? blockerTypeAt(g, raw.col, raw.row) : null
+        setResult(cover
+          ? `键盘漫游已开启（朝向${HEADING_ARROW(headingRef.current)}）。\n当前位置落在「${LABELS[cover] || cover}」标注范围内，四向都会被挡住；请点击地图移到标注外再走。`
+          : `键盘漫游已开启（朝向${HEADING_ARROW(headingRef.current)}）：用 W A S D / ↑↓←→ / 屏幕方向键移动，所有标注区域都会被绕开。`)
       }
     } else {
       syncMyPosition(positionRef.current) // 立即重绘回普通圆点
@@ -670,7 +680,7 @@ export default function GolfNavApp() {
                 <button type="button" onClick={() => roamStep('ArrowDown')} title="向下（S）" className="h-11 w-11 rounded border border-slate-300 bg-white shadow-sm text-slate-800 active:bg-sky-600 active:text-white text-xl touch-manipulation">↓</button>
                 <span />
               </div>
-              <p className="mt-2 text-xs opacity-60">键盘 W↑ A← S↓ D→（也支持 ↑↓←→）或点屏幕方向键；按实际米数移动，坐标每按一次都会更新，按住可连续移动，遇障碍停在边缘外。</p>
+              <p className="mt-2 text-xs opacity-60">键盘 W↑ A← S↓ D→（也支持 ↑↓←→）或点屏幕方向键；按实际米数移动，坐标每按一次都会更新，按住可连续移动。所有已标注区域（球道、果岭、发球台、长草区、沙坑、水域、树木、界外）都会挡住脚步，遇障碍停在边缘外。</p>
             </div>
           )}
           {selected && (

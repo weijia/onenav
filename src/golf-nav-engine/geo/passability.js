@@ -9,10 +9,18 @@ const BASE_COST = {
   cartPath: 0.6,
 };
 const APPLY_ORDER = ['rough', 'fairway', 'green', 'tee', 'cartPath', 'bunker', 'water', 'tree', 'outOfBounds'];
+// 默认阻挡集合：只把真障碍算不可通行，供找路/击球决策使用。
 const BLOCKING = new Set(['bunker', 'water', 'tree', 'outOfBounds']);
-// 障碍类型 → 数字编码（供 TypedArray 存储），以及反查表
-const BLOCK_CODE = { bunker: 1, water: 2, tree: 3, outOfBounds: 4 };
-const CODE_BLOCK = { 1: 'bunker', 2: 'water', 3: 'tree', 4: 'outOfBounds' };
+// 障碍类型 → 数字编码（供 TypedArray 存储），以及反查表。
+// 编码覆盖全部要素类型：避障漫游可以把整片标注区域（长草区/球道/果岭/发球台）都当障碍。
+const BLOCK_CODE = {
+  bunker: 1, water: 2, tree: 3, outOfBounds: 4,
+  rough: 5, fairway: 6, green: 7, tee: 8, cartPath: 9,
+};
+const CODE_BLOCK = {
+  1: 'bunker', 2: 'water', 3: 'tree', 4: 'outOfBounds',
+  5: 'rough', 6: 'fairway', 7: 'green', 8: 'tee', 9: 'cartPath',
+};
 
 function mPoint(value, origin) {
   if (Array.isArray(value)) return toLocalMeters(value[0], value[1], origin);
@@ -70,6 +78,11 @@ export function buildGrid(course, options = {}) {
     const scale = Math.sqrt((width * height) / MAX_CELLS);
     return buildGrid(course, { ...options, resolutionMeters: resolution * scale });
   }
+  // 哪些要素类型算不可通行。默认只算真障碍；漫游可通过 blockingTypes 传入
+  // 「所有标注区域」的类型，让球道/果岭/长草区等面上要素也能挡住脚步。
+  const blocking = Array.isArray(options.blockingTypes) && options.blockingTypes.length
+    ? new Set(options.blockingTypes)
+    : BLOCKING;
   const size = width * height;
   const blocked = new Uint8Array(size);
   // 记录每个受阻格被哪类障碍占据（数字编码），供「可走方向 + 受阻原因」提示使用。
@@ -118,7 +131,7 @@ export function buildGrid(course, options = {}) {
           if (!hit && circle) hit = Math.hypot(p.x - circle.x, p.y - circle.y) <= circle.radius;
           if (!hit) continue;
           const idx = row * width + col;
-          if (BLOCKING.has(type)) { blocked[idx] = 1; blockerCode[idx] = BLOCK_CODE[type] || 0; }
+          if (blocking.has(type)) { blocked[idx] = 1; blockerCode[idx] = BLOCK_CODE[type] || 0; }
           else if (BASE_COST[type]) cost[idx] = BASE_COST[type];
         }
       }
