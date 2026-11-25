@@ -13,6 +13,7 @@ import {
   Clock,
   Pencil,
   Plus,
+  Search,
   Trash2,
   X,
 } from 'lucide-react'
@@ -23,7 +24,7 @@ import {
   shiftMonth,
   todayKey,
 } from '@/lib/calendar-date'
-import { CALENDAR_CATEGORIES, categoryMeta, type CalendarEvent } from '@/lib/calendar-model'
+import { CALENDAR_CATEGORIES, categoryMeta, searchCalendarEvents, type CalendarEvent } from '@/lib/calendar-model'
 import { CALENDAR_SYNCED_EVENT } from '@/lib/calendar-sync'
 import { loadAllEvents, putEvent, removeEvent } from '@/lib/calendar-store'
 import CalendarSyncPanel from '@/components/apps/calendar/CalendarSyncPanel'
@@ -66,6 +67,7 @@ export default function CalendarApp() {
   const [draft, setDraft] = useState<Draft | null>(null)
   const [saving, setSaving] = useState(false)
   const [notice, setNotice] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
 
   const load = useCallback(async () => {
     try {
@@ -96,8 +98,14 @@ export default function CalendarApp() {
   }, [events])
   const selectedEvents = eventsByDate.get(selectedDate) ?? []
   const selectedWeekday = dateKeyToDate(selectedDate)
+  const searchResults = useMemo(() => searchCalendarEvents(events, searchQuery), [events, searchQuery])
 
   const changeMonth = (delta: number) => setCursor((prev) => shiftMonth(prev.year, prev.month, delta))
+
+  const jumpToEvent = (event: CalendarEvent) => {
+    setSelectedDate(event.date)
+    setCursor({ year: Number(event.date.slice(0, 4)), month: Number(event.date.slice(5, 7)) })
+  }
 
   const save = async () => {
     if (!draft) return
@@ -147,6 +155,69 @@ export default function CalendarApp() {
           </button>
         </div>
       )}
+
+      <section className="rounded-xl bg-white/5 border border-white/10 p-3">
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-3 top-1/2 w-4 h-4 -translate-y-1/2 text-white/40" />
+          <input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') setSearchQuery('')
+            }}
+            placeholder="搜索事件标题、内容、日期、分类…（空格分隔多个关键词）"
+            aria-label="搜索日历事件"
+            className="w-full rounded-lg bg-white/10 py-2 pl-9 pr-9 text-sm text-white placeholder:text-white/30 focus:outline-none focus:ring-1 focus:ring-sky-400"
+          />
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery('')}
+              aria-label="清空搜索"
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-white/40 hover:bg-white/10 hover:text-white/80"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+        {searchQuery.trim() && (
+          <div className="mt-3">
+            <p className="mb-2 text-xs text-white/50">
+              找到 {searchResults.length} 条结果 · 点击结果定位到当天
+            </p>
+            {searchResults.length === 0 ? (
+              <p className="py-4 text-center text-sm text-white/40">没有匹配的事件</p>
+            ) : (
+              <ul className="max-h-72 space-y-2 overflow-y-auto pr-1">
+                {searchResults.map((event) => (
+                  <li key={event.id} className="flex items-start gap-1 rounded-lg bg-white/5 border border-white/10 p-2">
+                    <button
+                      onClick={() => jumpToEvent(event)}
+                      title="定位到这一天"
+                      className="min-w-0 flex-1 text-left hover:bg-white/5"
+                    >
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: event.color }} />
+                        <span className="font-medium">{event.title}</span>
+                        <span className="text-xs text-white/40">
+                          {event.date} · {clockLabel(event)} · {categoryMeta(event.category).label}
+                        </span>
+                      </div>
+                      {event.body && <p className="mt-1 line-clamp-2 whitespace-pre-wrap text-xs text-white/60">{event.body}</p>}
+                    </button>
+                    <button
+                      onClick={() => setDraft(draftFromEvent(event))}
+                      aria-label="编辑此事件"
+                      className="shrink-0 rounded p-1 hover:bg-white/10"
+                    >
+                      <Pencil className="w-3.5 h-3.5 text-white/50" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+      </section>
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
         <section className="rounded-xl bg-white/5 border border-white/10 p-4">

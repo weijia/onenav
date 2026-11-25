@@ -31,6 +31,32 @@ export function categoryMeta(id: string): CalendarCategory {
   return CALENDAR_CATEGORIES.find((c) => c.id === id) ?? CALENDAR_CATEGORIES[CALENDAR_CATEGORIES.length - 1]
 }
 
+/**
+ * 按关键词搜索事件。空格分隔多个词，全部命中才算匹配（AND）。
+ * 匹配范围：标题、正文、日期（YYYY-MM-DD）、分类名/id、时间；大小写不敏感。
+ */
+export function searchCalendarEvents(events: CalendarEvent[], query: string): CalendarEvent[] {
+  const tokens = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
+  if (tokens.length === 0) return []
+  return events
+    .filter((event) => {
+      const haystack = [
+        event.title,
+        event.body,
+        event.date,
+        categoryMeta(event.category).label,
+        event.category,
+        event.allDay ? '全天' : '',
+        event.startTime,
+        event.endTime,
+      ]
+        .join(' ')
+        .toLowerCase()
+      return tokens.every((token) => haystack.includes(token))
+    })
+    .sort(compareEvents)
+}
+
 /** 同一天内：全天事件在前，再按开始时间、创建时间排。 */
 export function compareEvents(a: CalendarEvent, b: CalendarEvent): number {
   const date = a.date.localeCompare(b.date)
