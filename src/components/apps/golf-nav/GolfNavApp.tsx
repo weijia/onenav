@@ -62,6 +62,11 @@ const HEADING_ARROW = (h: number) => {
   const idx = ((Math.round(h / 90) % 4) + 4) % 4
   return ['↑', '→', '↓', '←'][idx]
 }
+// 罗盘用 8 向，比四向更能反映手机实际朝向。
+const COMPASS_ARROW = (h: number) => {
+  const idx = ((Math.round(h / 45) % 8) + 8) % 8
+  return ['↑', '↗', '→', '↘', '↓', '↙', '←', '↖'][idx]
+}
 
 export default function GolfNavApp() {
   const { data: sharedData, loading: sharedLoading } = useSharedGolfData()
@@ -94,10 +99,19 @@ export default function GolfNavApp() {
   const [roaming, setRoaming] = useState(false)
   const [heading, setHeading] = useState<number>(0) // 0=北，顺时针
   const [roamHint, setRoamHint] = useState('')
+  // 手机方向（罗盘）：0=北，顺时针；null 表示还没有有效读数。
+  // 只有 webkitCompassHeading 或 absolute 事件才可信，普通 alpha 是相对值，不用。
+  const [deviceHeading, setDeviceHeading] = useState<number | null>(null)
+  const [compassState, setCompassState] = useState<'unsupported' | 'idle' | 'on' | 'denied'>(
+    typeof window !== 'undefined' && typeof (window as any).DeviceOrientationEvent !== 'undefined' ? 'idle' : 'unsupported',
+  )
   const [roamStepMeters, setRoamStepMeters] = useState(DEFAULT_ROAM_STEP_METERS) // 每键前进的实际距离（米）
   const routeRef = useRef<any[] | null>(null)
   const positionRef = useRef<Point | null>(null)
   const headingRef = useRef<number>(0)
+  const deviceHeadingRef = useRef<number | null>(null)
+  const compassSmoothRef = useRef<number | null>(null)
+  const lastCompassPaintRef = useRef(0)
   const roamGridRef = useRef<any>(null)
   const viewCenterRef = useRef<Point | null>(null) // 上次地图居中点，用于漫游时延迟跟随
   const roamingRef = useRef(false)
@@ -136,12 +150,86 @@ export default function GolfNavApp() {
     return activeTypes.includes(ft)
   }, [activeTypes])
 
+  // 只重画「我的位置」标记：罗盘转动时会高频触发，必须轻量。
+  const drawMyMarker = useCallback(() => {
+    const a = adapterRef.current
+    if (!a) return
+    const p = positionRef.current
+    const h = roamingRef.current ? (deviceHeadingRef.current ?? headingRef.current) : undefined
+    a.setMarkers(p ? [myMarker(p, h)] : [])
+  }, [])
+
   // 统一绘制「我的位置」：me 标记始终在最前，extras 用于叠加击球建议的候选点
-  // 漫游开启时标记带朝向箭头，关闭时退回普通圆点。
+  // 漫游开启时标记带朝向箭头：有手机罗盘就跟手机转，没有才用最近一次按键方向。
   const syncMyPosition = useCallback((p: Point | null, extras: any[] = []) => {
     positionRef.current = p
     const a = adapterRef.current
-    if (a) a.setMarkers(p ? [myMarker(p, roamingRef.current ? headingRef.current : undefined), ...extras] : extras)
+    if (!a) return
+    const h = roamingRef.current ? (deviceHeadingRef.current ?? headingRef.current) : undefined
+    a.setMarkers(p ? [myMarker(p, h), ...extras] : extras)
+  }, [])
+
+  // ===== 手机方向（罗盘）=====
+  // iOS 用 webkitCompassHeading（真磁北），Android 用 absolute 事件（alpha 取反）。
+  // 屏幕旋转角要补偿，读数做 EMA 平滑；角度变化小于 4° 不重绘，避免箭头抖动。
+  useEffect(() => {
+    const apply = (rawHeading: number) => {
+      if (!Number.isFinite(rawHeading)) return
+      const rawSo = (typeof screen !== 'undefined' ? (screen as any).orientation?.angle : 0)
+      const so = Number(rawSo ?? (window as any).orientation ?? 0) || 0
+      const abs = (((rawHeading + so) % 360) + 360) % 360
+      const prev = compassSmoothRef.current
+      let next = abs
+      if (prev != null) {
+        let d = abs - prev
+        if (d > 180) d -= 360
+        if (d < -180) d += 360
+        next = (((prev + d * 0.25) % 360) + 360) % 360
+      }
+      compassSmoothRef.current = next
+      const last = deviceHeadingRef.current
+      const moved = last == null || Math.abs(((next - last + 540) % 360) - 180) > 4
+      deviceHeadingRef.current = next
+      if (!moved) return
+      setDeviceHeading(next)
+      setCompassState((s) => (s === 'on' ? s : 'on'))
+      const now = performance.now()
+      if (roamingRef.current && now - lastCompassPaintRef.current > 200) {
+        lastCompassPaintRef.current = now
+        drawMyMarker()
+      }
+    }
+    const onOrient = (e: any) => {
+      const h = typeof e.webkitCompassHeading === 'number' && e.webkitCompassHeading >= 0
+        ? e.webkitCompassHeading
+        : (e.absolute === true && typeof e.alpha === 'number' ? 360 - e.alpha : null)
+      if (h != null) apply(h)
+    }
+    window.addEventListener('deviceorientationabsolute', onOrient, true)
+    window.addEventListener('deviceorientation', onOrient, true)
+    return () => {
+      window.removeEventListener('deviceorientationabsolute', onOrient, true)
+      window.removeEventListener('deviceorientation', onOrient, true)
+    }
+  }, [drawMyMarker])
+
+  // iOS 必须在用户手势里申请方向权限；桌面 Chrome 有这个事件但没有传感器，
+  // 打开后 3 秒仍无读数就判定为「本设备没有可用罗盘」。
+  const enableCompass = useCallback(async () => {
+    const D = (window as any).DeviceOrientationEvent
+    if (!D) { setCompassState('unsupported'); return }
+    try {
+      if (typeof D.requestPermission === 'function') {
+        const r = await D.requestPermission()
+        if (r !== 'granted') { setCompassState('denied'); return }
+      }
+      setCompassState('idle')
+      window.setTimeout(() => {
+        if (deviceHeadingRef.current == null) setCompassState('unsupported')
+      }, 3000)
+    } catch {
+      setCompassState('denied')
+    }
   }, [])
 
   // 按分类过滤后的几何；未选中分类时显示全部，选中时只显示该分类（跨所有洞）。
@@ -488,6 +576,26 @@ export default function GolfNavApp() {
     return `可走：${walk}${blocked}`
   }, [getRoamGrid])
 
+  // 手机方向下的「该往哪走」：在四向可走方向里选与手机朝向夹角最小的那个。
+  // 只给一步建议，不做多步绕行；四向全堵时提示先移出标注区域。
+  const compassHint = useMemo(() => {
+    if (!roaming || !position || deviceHeading == null) return null
+    const g = getRoamGrid()
+    const cell = roamCell(position)
+    const ref = deviceHeading
+    const cands = Object.values(ROAM_DIRS).map((d) => {
+      const blocked = isBlocked(g, cell.col + d.dCol, cell.row + d.dRow)
+      let diff = d.heading - ref
+      if (diff > 180) diff -= 360
+      if (diff < -180) diff += 360
+      return { d, blocked, diff }
+    })
+    const walkable = cands.filter((c) => !c.blocked)
+    if (!walkable.length) return { allBlocked: true, dir: null as any, diff: 0 }
+    walkable.sort((a, b) => Math.abs(a.diff) - Math.abs(b.diff))
+    return { allBlocked: false, dir: walkable[0].d as any, diff: walkable[0].diff }
+  }, [roaming, position, deviceHeading, getRoamGrid, roamCell])
+
   // 走一步：箭头先转向该方向；按「米」换算成格数连续前进，遇到障碍即停在前一格。
   // 步长按米而非格，避免栅格分辨率被自动放大时实际距离与显示值不符。
   const roamStep = useCallback((dirKey: string) => {
@@ -670,10 +778,33 @@ export default function GolfNavApp() {
                 朝向：<span className="text-sky-600 text-lg">{HEADING_ARROW(heading)}</span>
                 <span className="opacity-70 ml-1">（{heading}°）</span>
               </p>
+              {deviceHeading != null ? (
+                <p className="text-sm mb-1">
+                  手机朝向：<span className="text-emerald-600 text-lg">{COMPASS_ARROW(deviceHeading)}</span>
+                  <span className="opacity-70 ml-1">（{Math.round(deviceHeading)}°）</span>
+                </p>
+              ) : compassState !== 'on' ? (
+                <button
+                  type="button"
+                  onClick={() => void enableCompass()}
+                  className="mb-1 rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 shadow-sm hover:bg-slate-100"
+                >
+                  {compassState === 'denied' ? '方向权限被拒，点此重试'
+                    : compassState === 'unsupported' ? '本设备没有可用罗盘'
+                    : '开启手机方向'}
+                </button>
+              ) : null}
               <p className="text-sm mb-1 font-mono">
                 坐标：<span className="text-sky-700">{position && Number.isFinite(position.lat) && Number.isFinite(position.lng) ? `${position.lat.toFixed(6)}, ${position.lng.toFixed(6)}` : '未设置或无效'}</span>
               </p>
               <p className="text-sm whitespace-pre-line leading-relaxed">{roamHint || '正在计算可走方向…'}</p>
+              {compassHint && (
+                <p className="text-sm mt-1 text-emerald-700">
+                  {compassHint.allBlocked
+                    ? '四向都被挡住：先退出当前标注区域再走。'
+                    : `建议：${compassHint.dir.arrow} ${compassHint.dir.label}（${compassHint.diff === 0 ? '正前方' : `${Math.abs(Math.round(compassHint.diff))}° ${compassHint.diff > 0 ? '右转' : '左转'}`}）`}
+                </p>
+              )}
               <div className="mt-2 flex items-center gap-2">
                 <label htmlFor="roam-step" className="text-xs opacity-70">每键步长</label>
                 <select
