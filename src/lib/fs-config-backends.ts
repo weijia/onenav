@@ -13,8 +13,23 @@
  *
  * 本模块与具体 appId 无关，golf / dir-struct-gen(filebrowser) 共用同一套注册。
  */
-import { registerBackend, connect, wrapZenFSFileSystem } from 'zen-fs-config'
-import type { AppDataGroup } from 'zen-fs-config'
+import {
+  registerBackend,
+  wrapZenFSFileSystem,
+  listDataGroupCandidates,
+  groupHasPath,
+  getPreferredDataGroupId as getLibPreferredDataGroupId,
+  setPreferredDataGroupId as setLibPreferredDataGroupId,
+  resolveDataGroup as libResolveDataGroup,
+  ensureDataGroup as libEnsureDataGroup,
+  DATA_GROUP_PREFERENCE_PREFIX,
+} from 'zen-fs-config'
+import type {
+  AppDataGroup,
+  DataGroupCandidate as LibDataGroupCandidate,
+  DataGroupSource,
+  EnsureDataGroupResult as LibEnsureDataGroupResult,
+} from 'zen-fs-config'
 
 let registered = false
 
@@ -41,91 +56,93 @@ async function resolveStorageUrl(userAddress: string): Promise<string> {
   return link.href.replace(/\/$/, '')
 }
 
-/** 本地后端类型：这类后端不跨设备同步，组里只有它们时不算「已连上可用数据组」。 */
-const LOCAL_BACKEND_TYPES = new Set(['IndexedDB', 'InMemory'])
+// ---------------------------------------------------------------------------
+// 数据组选择（候选枚举 / 解析 / 补建默认组）
+//
+// 实现已上移到 zen-fs-config 0.9.5：`listDataGroupCandidates` / `resolveDataGroup`
+// / `ensureDataGroup` / `groupHasPath` / `getPreferredDataGroupId`。本文件只保留
+// 一层薄适配：
+//  - 参数名兼容旧调用（第三个位置参数 `path`、选项里的 `preferPath`）；
+//  - 本机偏好键迁移：新键 `zen-fs-config:data-group:{appId}`，读取时兼容旧键
+//    `onenav:data-group:{appId}`，读到旧值后补写新键；写入时清掉旧键。
+// 页面调用写法不变。
+// ---------------------------------------------------------------------------
 
-/** 取数据组当前已连接后端列表（兼容 listBackends / listDeclaredBackends）。 */
-function listGroupBackends(group: any): any[] {
-  if (!group) return []
-  const connected = typeof group.listBackends === 'function' ? group.listBackends() : []
-  const declared = typeof group.listDeclaredBackends === 'function' ? group.listDeclaredBackends() : []
-  return [...(connected || []), ...(declared || [])]
-}
+/** 旧版（onenav 自己）的偏好键前缀，仅用于一次性迁移。 */
+const LEGACY_PREFERENCE_PREFIX = 'onenav:data-group:'
+const PREFERENCE_READ_PREFIXES = [DATA_GROUP_PREFERENCE_PREFIX, LEGACY_PREFERENCE_PREFIX]
 
-/** 组里是否存在非本地（远端）后端。 */
-function hasRemoteBackend(group: any): boolean {
-  return listGroupBackends(group).some((b) => b && !LOCAL_BACKEND_TYPES.has(b.type))
-}
-
-/**
- * 从 config-ui 的 onConnected 数据里解析出可用的数据组实例。
- * config-sync 模式只给 repo（数据组在内部 groupInstances，未 emit）；
- * data-sync 模式给 dataGroup。
- *
- * 多个候选组时优先选「带已连接远端后端」的组；纯本地/空组排后，避免误选到
- * 只有 IndexedDB/InMemory 的空组导致读侧报未连接。
- */
-export async function resolveDataGroup(
-  connected: any,
-  appId: string,
-  opts?: { preferGroupId?: string; preferPath?: string },
-): Promise<AppDataGroup | null> {
-  const direct = connected?.dataGroup as AppDataGroup | undefined
-  if (direct?.fs?.promises) return direct
-
-  const candidates: AppDataGroup[] = []
-  const repo = connected?.repo as any
-  if (repo?.listAppDataGroups && repo?.getAppDataGroup) {
+export function getPreferredDataGroupId(appId: string): string | null {
+  const id = getLibPreferredDataGroupId(appId, { readPrefixes: PREFERENCE_READ_PREFIXES })
+  if (id) {
     try {
-      const descriptors = await repo.listAppDataGroups()
-      for (const d of descriptors) {
-        const g = await repo.getAppDataGroup(d.id)
-        if (g?.fs?.promises) candidates.push(g)
+      // 读到旧键就补一份新键，下次不再依赖旧前缀
+      if (localStorage.getItem(`${LEGACY_PREFERENCE_PREFIX}${appId}`)) {
+        setLibPreferredDataGroupId(appId, id)
       }
-    } catch {
-      /* 落到 connect 兜底 */
-    }
+    } catch { /* localStorage 不可用 */ }
   }
-  if (candidates.length === 0) {
-    try {
-      const result = await connect(appId)
-      for (const g of result.appDataGroups || []) {
-        if (g?.fs?.promises) candidates.push(g)
-      }
-    } catch (e) {
-      console.warn(`[${appId}] 无法解析数据组实例:`, e)
-    }
-  }
-  if (candidates.length === 0) return null
-
-  // 首选指定 id，但必须「确实有内容」才采纳：残留组（描述符已删/远端未绑定）
-  // 也会被实例化出来，选中它读侧就会永远空态。
-  const preferPath = opts?.preferPath
-  if (opts?.preferGroupId) {
-    const named = candidates.find((g) => (g as any).groupId === opts.preferGroupId)
-    if (named && (!preferPath || (await groupHasPath(named, preferPath)))) return named
-  }
-  // 其次按内容选：哪个组的 preferPath 下有文件就用哪个（顺序不影响结果）。
-  if (preferPath) {
-    for (const g of candidates) {
-      if (await groupHasPath(g, preferPath)) return g
-    }
-  }
-  // 兜底：优先带远端后端的组；其次任意带 fs 的组。
-  return candidates.find((g) => hasRemoteBackend(g)) ?? candidates[0]
+  return id
 }
 
-/** 组在 preferPath 下是否至少有一个条目（读失败/未连接都算空）。 */
-export async function groupHasPath(group: any, path: string): Promise<boolean> {
+export function setPreferredDataGroupId(appId: string, id: string | null): void {
+  setLibPreferredDataGroupId(appId, id)
   try {
-    const p = group?.fs?.promises
-    if (!p?.readdir) return false
-    const names = await p.readdir(path)
-    return Array.isArray(names) ? names.length > 0 : false
-  } catch {
-    return false
-  }
+    localStorage.removeItem(`${LEGACY_PREFERENCE_PREFIX}${appId}`)
+  } catch { /* localStorage 不可用 */ }
 }
+
+export type DataGroupCandidate = LibDataGroupCandidate
+export type EnsureDataGroupResult = LibEnsureDataGroupResult
+
+/** 列出候选（第三个参数是「应用数据目录」，沿用旧签名）。 */
+export async function collectDataGroupCandidates(
+  connected: DataGroupSource,
+  appId: string,
+  path?: string,
+): Promise<DataGroupCandidate[]> {
+  return listDataGroupCandidates(connected, appId, path ? { path } : {})
+}
+
+export interface ResolveOptions {
+  /** 显式指定的组 id（缺省读本机偏好） */
+  preferGroupId?: string | null
+  /** 旧参数名：应用自己的数据目录 */
+  preferPath?: string
+}
+
+/** 解析要挂载的组：偏好 → 有数据 → 唯一远端 → 单候选，其余返回 null。 */
+export async function resolveDataGroup(
+  connected: DataGroupSource,
+  appId: string,
+  opts: ResolveOptions = {},
+): Promise<AppDataGroup | null> {
+  return libResolveDataGroup(connected, appId, {
+    preferGroupId: opts.preferGroupId,
+    path: opts.preferPath,
+    preference: { readPrefixes: PREFERENCE_READ_PREFIXES },
+  })
+}
+
+export interface EnsureOptions extends ResolveOptions {
+  allowCreateLocal?: boolean
+}
+
+/** 确保至少有一个可用数据组；只有「零描述符」时才补建本机 default 组。 */
+export async function ensureDataGroup(
+  connected: DataGroupSource,
+  appId: string,
+  opts: EnsureOptions = {},
+): Promise<EnsureDataGroupResult> {
+  return libEnsureDataGroup(connected, appId, {
+    preferGroupId: opts.preferGroupId,
+    path: opts.preferPath,
+    allowCreateLocal: opts.allowCreateLocal,
+    preference: { readPrefixes: PREFERENCE_READ_PREFIXES },
+  })
+}
+
+export { groupHasPath }
 
 /** 注册 RemoteStorage 后端类型（幂等）。 */
 export function registerFsConfigBackends(): void {
