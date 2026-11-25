@@ -423,6 +423,19 @@ export default function GolfNavApp() {
   }, [getRoamGrid])
 
   // 扫描四周，生成「可走方向 + 受阻原因」提示。
+  // 漫游起点必须落在栅格内。定位点若在球场外（桌面端 IP 定位很常见），
+  // worldToCell 会把它钳到网格边界，而边界通常已被界外区的膨胀格占满，
+  // snapToPassable 追不上来，于是四个方向全部 isBlocked —— 标记纹丝不动。
+  const roamStartOk = useCallback((p: Point | null) => {
+    if (!p) return false
+    const g = getRoamGrid()
+    const c = worldToCell(g, p)
+    const s = snapToPassable(g, c.col, c.row)
+    if (!s) return false
+    // 吸附点离原位置超过 300 米，说明人根本不在场内
+    return latLngDistance(p, cellToLatLng(g, s.col, s.row)) <= 300
+  }, [getRoamGrid])
+
   const buildRoamHint = useCallback((cell: { col: number; row: number }) => {
     const g = getRoamGrid()
     const walkable: string[] = []
@@ -472,9 +485,12 @@ export default function GolfNavApp() {
     const moved = Math.abs(nc - cell.col) + Math.abs(nr - cell.row)
     if (moved === 0) {
       // 边缘外即停：位置不变，仅刷新朝向标记与提示
+      // 分清「撞到障碍」和「人不在场内」：后者四个方向都会失败，很容易被当成 bug
       syncMyPosition(p)
       setRoamHint(buildRoamHint(cell))
-      setResult(`朝${dir.label}被阻挡，停在障碍边缘。`)
+      setResult(roamStartOk(p)
+        ? `朝${dir.label}被阻挡，停在障碍边缘。`
+        : '当前位置不在球场范围内，无法移动；请点击地图在球场内设置起点。')
       return
     }
     const next = cellToLatLng(g, nc, nr)
@@ -489,7 +505,7 @@ export default function GolfNavApp() {
     // 用真实经纬度算距离，而不是「格数 × 分辨率」，确保显示的米数与地图一致。
     const realMeters = latLngDistance(p, next)
     setResult(`已朝${dir.label}移动 ${realMeters.toFixed(1)} 米${moved < stepCells ? '（前方受阻，已停在边缘）' : ''}。`)
-  }, [roamCell, getRoamGrid, syncMyPosition, followIfNeeded, buildRoamHint, roamStepMeters])
+  }, [roamCell, getRoamGrid, syncMyPosition, followIfNeeded, buildRoamHint, roamStepMeters, roamStartOk])
 
   // 键盘监听：仅漫游开启时接管 WASD / 方向键。
   // 用 capture 阶段抢在地图（Leaflet/高德）之前处理，避免地图把方向键当平移。
@@ -526,6 +542,14 @@ export default function GolfNavApp() {
         syncMyPosition(tee)
         setRoamHint(buildRoamHint(roamCell(tee)))
         setResult('键盘漫游已开启：用 W A S D / ↑↓←→ / 屏幕方向键移动，点击地图可重设起点。')
+      } else if (!roamStartOk(positionRef.current)) {
+        // 人不在场内：从发球台起步，否则漫游会被界外区彻底堵死
+        const tee = normalizePoint(currentHole.tee)
+        const km = latLngDistance(positionRef.current, center) / 1000
+        setPosition(tee)
+        syncMyPosition(tee)
+        setRoamHint(buildRoamHint(roamCell(tee)))
+        setResult(`当前位置不在球场范围内（距球场中心约 ${km.toFixed(1)} 公里），键盘漫游只能在球场内进行，已把起点设为本洞发球台；可点地图重新设置起点。`)
       } else {
         syncMyPosition(positionRef.current) // 立即重绘为带箭头标记
         setRoamHint(buildRoamHint(roamCell(positionRef.current)))
