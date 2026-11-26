@@ -1,9 +1,15 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
+import VConsole from 'vconsole'
 import '@/index.css'
 import AppHost from '@/components/apps/AppHost'
 import GolfNavApp from '@/components/apps/golf-nav/GolfNavApp'
 import { APP_MANIFEST } from '@/components/apps/manifest'
+
+// 手机端调试面板：避障页面默认开启，加 ?vconsole=0 可关闭
+if (new URLSearchParams(location.search).get('vconsole') !== '0') {
+  new VConsole()
+}
 
 const meta = APP_MANIFEST.find((m) => m.id === 'golf-nav')!
 
