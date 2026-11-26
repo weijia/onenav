@@ -7,6 +7,10 @@
  * 同步文件系统由 zen-fs-config v2 的 `AppRepo.getDefaultDataGroup()` / `getDataGroup(id)` 提供；
  * UI 侧用 `SyncGroupConfiguratorV2` 配置后端并把同一份 repo 传进来（一个 appId 只允许一个连接）。
  * 主库（书签/配置）的 RemoteStorage 同步与本链路无关。
+ *
+ * 同步触发由 PouchDB 的 live changes feed 统一驱动（覆盖任何绕过 store 的写入）：
+ * 每次成功同步后记录 `db.info().update_seq` 作为水位，change 事件的 seq 不超过水位时
+ * 视为本引擎自己拉回的文档，直接忽略，避免「拉回 → change → 再同步」的循环。
  */
 import type { AppDataGroup, AppRepo, DataGroup } from 'zen-fs-config'
 import { adaptDataGroupFs } from './golf-group-fs-adapter'
@@ -25,6 +29,10 @@ let syncing = false
 let syncTimer: ReturnType<typeof setTimeout> | null = null
 let pullTimer: ReturnType<typeof setTimeout> | null = null
 let lastError: string | null = null
+let changesFeed: { on(event: string, handler: (arg: any) => void): unknown; cancel?: () => void } | null = null
+/** 已完成同步的 PouchDB 序列号；change.seq <= 该值说明是本引擎拉回的，不再触发同步。 */
+let syncedSeq = 0
+let pendingChangeSeq = 0
 
 function notify(): void {
   if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(CALENDAR_SYNCED_EVENT))
@@ -40,6 +48,49 @@ export function getCalendarSyncError(): string | null {
 
 export function getCalendarRepo(): AppRepo | null {
   return repo
+}
+
+function stopCalendarChanges(): void {
+  if (changesFeed && typeof changesFeed.cancel === 'function') changesFeed.cancel()
+  changesFeed = null
+}
+
+/** 连续多次写入合并成一轮同步；执行前再用水位过滤掉已被同步覆盖的 change。 */
+function queueSyncAndFlush(seq = 0): void {
+  if (typeof seq === 'number' && seq > pendingChangeSeq) pendingChangeSeq = seq
+  if (syncTimer) clearTimeout(syncTimer)
+  syncTimer = setTimeout(() => {
+    syncTimer = null
+    const seq = pendingChangeSeq
+    pendingChangeSeq = 0
+    if (seq > 0 && seq <= syncedSeq) return
+    void syncCalendarNow().then((ok) => {
+      if (ok) void flushCalendarGroup()
+    })
+  }, 1500)
+}
+
+/** 挂载后监听 PouchDB 变更：任何 cal: 文档写入都会触发同步，不依赖调用方走 store。 */
+async function startCalendarChanges(): Promise<void> {
+  stopCalendarChanges()
+  const db = await getCalendarPouchDB()
+  if (typeof (db as any).changes !== 'function') return
+  try {
+    const info = await db.info()
+    if (typeof info.update_seq === 'number') syncedSeq = info.update_seq
+  } catch {
+    syncedSeq = 0
+  }
+  const feed = (db as any).changes({ since: 'now', live: true, include_docs: false })
+  feed.on('change', (change: any) => {
+    if (typeof change?.id !== 'string' || !change.id.startsWith('cal:')) return
+    if (typeof change.seq === 'number' && change.seq <= syncedSeq) return
+    queueSyncAndFlush(change.seq)
+  })
+  feed.on('error', (err: unknown) => {
+    lastError = `PouchDB changes 监听失败：${String(err)}`
+  })
+  changesFeed = feed
 }
 
 /** 挂载 v2 连接：保存同一份 repo，取默认数据组并做一次初始双向同步。 */
@@ -67,13 +118,24 @@ export async function attachCalendarGroup(next: DataGroup): Promise<void> {
     }, 300)
   }) ?? null
 
-  await syncCalendarNow()
+  // 打开页面 / 切换数据组时：先让数据组与远端双向同步（远端文件落到 fs），
+  // 再让 SyncEngine 读取 fs 把变更拉进 PouchDB；否则首轮只读到本地旧数据。
+  const remoteReady = await flushCalendarGroup()
+  const remoteError = lastError
+  const localReady = await syncCalendarNow()
+  if (!remoteReady && remoteError && localReady) {
+    lastError = `远端同步失败：${remoteError}；本地已同步`
+  }
+  await startCalendarChanges()
 }
 
-/** 断开/切换连接时清理订阅与定时器。 */
+/** 断开/切换连接时清理订阅、changes feed 与定时器。 */
 export function detachCalendarRepo(): void {
   if (unsubscribe) unsubscribe()
   unsubscribe = null
+  stopCalendarChanges()
+  pendingChangeSeq = 0
+  syncedSeq = 0
   group = null
   repo = null
   if (syncTimer) clearTimeout(syncTimer)
@@ -101,6 +163,9 @@ export async function syncCalendarNow(): Promise<boolean> {
     })
     await engine.initialize()
     await engine.sync()
+    // 抬高水位：本次同步（含从 fs 拉回的文档）产生的 change 不再触发下一轮。
+    const info = await db.info()
+    if (typeof info.update_seq === 'number') syncedSeq = info.update_seq
     lastError = null
     notify()
     return true
@@ -113,7 +178,7 @@ export async function syncCalendarNow(): Promise<boolean> {
   }
 }
 
-/** 让数据组把自己立刻推到远端后端（按钮手动触发 / 写后自动触发）。 */
+/** 让数据组立刻与远端双向同步一轮（pull 远端文件到 fs + push 本地文件到远端）。 */
 export async function flushCalendarGroup(): Promise<boolean> {
   if (!group) return false
   try {
@@ -124,14 +189,4 @@ export async function flushCalendarGroup(): Promise<boolean> {
     console.error('[calendar-sync] 数据组 flush 失败:', e)
     return false
   }
-}
-
-/** 写后防抖：先落到数据组 fs，再让数据组把这一轮变更推到远端。 */
-export function scheduleCalendarSync(delay = 1500): void {
-  if (syncTimer) clearTimeout(syncTimer)
-  syncTimer = setTimeout(() => {
-    void syncCalendarNow().then((ok) => {
-      if (ok) void flushCalendarGroup()
-    })
-  }, delay)
 }

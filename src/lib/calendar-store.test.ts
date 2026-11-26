@@ -1,9 +1,8 @@
-// 日历事件「保存 → 同步」行为验证：mock 掉存储与同步边界，驱动真实 store。
+// 日历事件本地存储行为验证：同步由 calendar-sync 的 changes feed 驱动，这里只测 store 本身。
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const h = vi.hoisted(() => ({
   db: null as any,
-  scheduleCalls: 0,
 }))
 
 vi.mock('@/lib/calendar-db', () => ({
@@ -18,12 +17,6 @@ vi.mock('@/lib/calendar-db', () => ({
     !d.deleted &&
     typeof d.date === 'string' &&
     typeof d.title === 'string',
-}))
-
-vi.mock('@/lib/calendar-sync', () => ({
-  scheduleCalendarSync: vi.fn(() => {
-    h.scheduleCalls++
-  }),
 }))
 
 import { loadAllEvents, loadEventsByDate, loadEventsByMonth, putEvent, removeEvent } from './calendar-store'
@@ -71,17 +64,15 @@ const baseInput = {
 beforeEach(() => {
   const { db } = makeDb()
   h.db = db
-  h.scheduleCalls = 0
 })
 
 describe('日历事件存储', () => {
-  it('写入按日期前缀建文档，每次写入触发同步', async () => {
+  it('写入按日期前缀建文档', async () => {
     const saved = await putEvent(baseInput)
     expect(saved.id).toMatch(/^\d+-\w+$/)
     const res = await h.db.allDocs({ startkey: 'cal:', endkey: 'cal:\uffff' })
     expect(res.rows).toHaveLength(1)
     expect(res.rows[0].id).toMatch(/^cal:2026-11-25:/)
-    expect(h.scheduleCalls).toBe(1)
     const all = await loadAllEvents()
     expect(all).toHaveLength(1)
     expect(all[0].title).toBe('周会')
@@ -98,7 +89,6 @@ describe('日历事件存储', () => {
     const [first] = await loadEventsByDate('2026-11-25')
     await removeEvent(first)
     expect((await loadAllEvents()).map((e) => e.title)).toEqual(['第二天', '下月'])
-    expect(h.scheduleCalls).toBe(4)
   })
 
   it('更新事件保留 createdAt，改日期时迁移文档 id', async () => {

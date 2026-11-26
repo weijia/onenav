@@ -1,13 +1,13 @@
 /**
  * 日历事件存储层（独立库 onenav-calendar，每条事件一个 `cal:` 文档）。
  *
- * 写入后只通知 calendar-sync 做防抖同步；事件不写主库、不写 WebDAV。
+ * store 只负责本地写入；同步由 calendar-sync 注册的 PouchDB changes feed 统一驱动。
+ * 事件不写主库、不写 WebDAV。
  * 由 v2 数据同步组（zen-fs-config v2 的 AppRepo → DataGroup.fs）提供远端文件系统。
  */
 import { CAL_PREFIX, CAL_END, calendarDocId, getCalendarDb, isCalendarDoc } from './calendar-db'
 import { monthRange } from './calendar-date'
 import { compareEvents, type CalendarEvent } from './calendar-model'
-import { scheduleCalendarSync } from './calendar-sync'
 
 export type CalendarEventInput = Omit<CalendarEvent, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }
 
@@ -78,7 +78,6 @@ export async function putEvent(input: CalendarEventInput): Promise<CalendarEvent
     ...event,
     ...(existing && existing._id === docId ? { _rev: existing._rev } : {}),
   })
-  scheduleCalendarSync()
   return event
 }
 
@@ -89,5 +88,4 @@ export async function removeEvent(event: CalendarEvent): Promise<void> {
   const doc = await db.get(docId).catch(() => null)
   if (!doc) return
   await db.put({ ...doc, deleted: true, updatedAt: Date.now() })
-  scheduleCalendarSync()
 }

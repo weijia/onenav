@@ -125,6 +125,8 @@ export function isAppVisible(meta: AppMeta, apps?: Record<string, { hidden: bool
 | 高尔夫 golf / golf-nav | PouchDB `onenav-golf` | 数据同步组 appId=`golf`（basePath `/golf`） |
 | 设备监控 hostmonitor | 无本机权威数据（IndexedDB 只读快照） | 直接读 RemoteStorage `ufs-nodes/`（由 home_cloud 写入，只读展示） |
 
+日历的同步触发（`src/lib/calendar-sync.ts`）：挂载数据组时**先 `group.flush()`**（数据组与远端双向同步，远端文件落到 fs），再用 universal-sync-v2 把 fs 变更拉进 PouchDB，避免首轮只读到本地旧数据；之后由 PouchDB live changes feed 驱动本地改动同步（用 `update_seq` 水位过滤引擎自己拉回的变更，避免循环）。
+
 页面底部（或右上角）的「数据同步组」面板 = `SyncGroupConfigurator`（zen-fs-config-ui），
 负责配置该 appId 的后端（RemoteStorage / Gitee / WebDAV 等）。主库只保留 `cfg:app`、书签、点击统计等配置类文档。
 
