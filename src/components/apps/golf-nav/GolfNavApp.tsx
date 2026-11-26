@@ -773,7 +773,7 @@ export default function GolfNavApp() {
       </p>
 
       <div className="flex flex-col md:flex-row gap-3 flex-1 min-h-0">
-        <div className="w-full md:w-64 shrink-0 flex flex-col gap-3">
+        <div className="order-2 md:order-1 w-full md:w-64 shrink-0 flex flex-col gap-3">
           <div className="rounded-lg border border-slate-200 bg-white/90 p-3 shadow-sm">
             <h3 className="font-medium mb-2">状态</h3>
             <p className="text-sm whitespace-pre-line leading-relaxed">{result}</p>
@@ -951,7 +951,7 @@ export default function GolfNavApp() {
           )}
         </div>
         {/* 地图区：外层 relative 提供定位上下文；地图本身 overflow-hidden，浮层挂外层避免被裁切 */}
-        <div className="relative flex-1 min-w-0 min-h-[420px]">
+        <div className="order-1 md:order-2 relative flex-1 min-w-0 min-h-[420px]">
           {/* 数据同步组入口（appId: golf）——与球场地图页保持一致的右上角范式 */}
           <button
             onClick={() => setSyncOpen((v) => !v)}
