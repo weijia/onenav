@@ -149,6 +149,70 @@ export function registerFsConfigBackends(): void {
   if (registered) return
   registered = true
 
+  // GitHub：与 Gitee 同理，内置工厂的变量式 import 在 Vite 打包后无法解析。用
+  // 字面量 import 让 Vite 收进 chunk，并按内置 GitHub 注册的语义覆盖同一 type。
+  registerBackend('GitHub', async (options: Record<string, unknown>) => {
+    const mod: any = await import('zen-fs-github')
+    const Github = mod?.Github ?? mod?.default
+    if (!Github || (typeof Github !== 'function' && typeof Github.create !== 'function')) {
+      throw new Error('zen-fs-github 未导出可用的 Github 后端')
+    }
+    const token = String(options.token ?? '')
+    const owner = String(options.owner ?? '')
+    const repo = String(options.repo ?? '')
+    if (!owner || !repo) throw new Error('GitHub 后端需要 owner 与 repo')
+    const backend: any = await wrapZenFSFileSystem({
+      backend: Github,
+      token,
+      owner,
+      repo,
+      branch: options.branch,
+      baseUrl: (options.baseUrl as string) || undefined,
+    })
+
+    // shouldSync: 用 branches/commits 的 tree SHA 判断远端是否变化，避免每轮
+    // 都全量拉取。与 zen-fs-config-ui / admin 的 GitHub 注册保持一致。
+    const branch = String(options.branch ?? 'main')
+    const baseUrl = String(options.baseUrl ?? '').trim() || 'https://api.github.com'
+    const cacheKey = `zen-fs-github-sync:${owner}/${repo}/${branch}`
+    backend.shouldSync = async (): Promise<boolean> => {
+      try {
+        const headers: Record<string, string> = { Accept: 'application/vnd.github.v3+json' }
+        if (token) headers.Authorization = `Bearer ${token}`
+        const base = baseUrl.replace(/\/$/, '')
+        const branchRes = await fetch(`${base}/repos/${owner}/${repo}/branches/${branch}`, { headers })
+        if (!branchRes.ok) return true
+        const commitSha = (await branchRes.json())?.commit?.sha
+        if (!commitSha) return true
+        const commitRes = await fetch(`${base}/repos/${owner}/${repo}/git/commits/${commitSha}`, { headers })
+        if (!commitRes.ok) return true
+        const treeSha = (await commitRes.json())?.tree?.sha
+        if (!treeSha) return true
+        const cached = localStorage.getItem(cacheKey)
+        if (cached === treeSha) return false
+        localStorage.setItem(cacheKey, treeSha)
+        return true
+      } catch {
+        return true
+      }
+    }
+    return backend
+  }, {
+    type: 'GitHub',
+    label: 'GitHub',
+    icon: '🐙',
+    fields: [
+      { key: 'owner', label: 'Owner', type: 'text', placeholder: 'weijia', required: true },
+      { key: 'repo', label: 'Repo', type: 'text', placeholder: 'my-configs', required: true },
+      { key: 'branch', label: 'Branch', type: 'text', placeholder: 'main' },
+      { key: 'token', label: 'Token', type: 'password', placeholder: 'ghp_xxxx' },
+      { key: 'baseUrl', label: 'API URL', type: 'text', placeholder: 'https://api.github.com' },
+    ],
+    defaultOptions: { owner: '', repo: '', branch: 'main', token: '', baseUrl: '' },
+    accountFields: ['token', 'owner', 'baseUrl'],
+    identityFields: ['owner', 'repo', 'branch', 'baseUrl'],
+  })
+
   registerBackend('RemoteStorage', async (options: Record<string, unknown>) => {
     const rs = await import('zen-fs-remotestoragejs')
     const Ctor = (rs as any).RemoteStorageFileSystem || (rs as any).default
