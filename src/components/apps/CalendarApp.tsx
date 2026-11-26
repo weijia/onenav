@@ -4,7 +4,7 @@
  * 数据存独立库 onenav-calendar（每条事件一个 cal: 文档），经 universal-sync-v2
  * 与 zen-fs-config v2 数据同步组的文件系统双向同步；不写主库。
  */
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import {
   CalendarDays,
   Check,
@@ -24,7 +24,7 @@ import {
   shiftMonth,
   todayKey,
 } from '@/lib/calendar-date'
-import { CALENDAR_CATEGORIES, categoryMeta, searchCalendarEvents, type CalendarEvent } from '@/lib/calendar-model'
+import { CALENDAR_CATEGORIES, categoryMeta, formatEventGap, searchCalendarEvents, type CalendarEvent } from '@/lib/calendar-model'
 import { CALENDAR_SYNCED_EVENT } from '@/lib/calendar-sync'
 import { loadAllEvents, putEvent, removeEvent } from '@/lib/calendar-store'
 import CalendarSyncPanel from '@/components/apps/calendar/CalendarSyncPanel'
@@ -182,36 +182,45 @@ export default function CalendarApp() {
         {searchQuery.trim() && (
           <div className="mt-3">
             <p className="mb-2 text-xs text-white/50">
-              找到 {searchResults.length} 条结果 · 点击结果定位到当天
+              找到 {searchResults.length} 条结果 · 按时间先后排列 · 点击结果定位到当天
             </p>
             {searchResults.length === 0 ? (
               <p className="py-4 text-center text-sm text-white/40">没有匹配的事件</p>
             ) : (
               <ul className="max-h-72 space-y-2 overflow-y-auto pr-1">
-                {searchResults.map((event) => (
-                  <li key={event.id} className="flex items-start gap-1 rounded-lg bg-white/5 border border-white/10 p-2">
-                    <button
-                      onClick={() => jumpToEvent(event)}
-                      title="定位到这一天"
-                      className="min-w-0 flex-1 text-left hover:bg-white/5"
-                    >
-                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                        <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: event.color }} />
-                        <span className="font-medium">{event.title}</span>
-                        <span className="text-xs text-white/40">
-                          {event.date} · {clockLabel(event)} · {categoryMeta(event.category).label}
-                        </span>
-                      </div>
-                      {event.body && <p className="mt-1 line-clamp-2 whitespace-pre-wrap text-xs text-white/60">{event.body}</p>}
-                    </button>
-                    <button
-                      onClick={() => setDraft(draftFromEvent(event))}
-                      aria-label="编辑此事件"
-                      className="shrink-0 rounded p-1 hover:bg-white/10"
-                    >
-                      <Pencil className="w-3.5 h-3.5 text-white/50" />
-                    </button>
-                  </li>
+                {searchResults.map((event, index) => (
+                  <Fragment key={event.id}>
+                    {index > 0 && (
+                      <li className="flex items-center gap-2 py-0.5 text-[11px] text-white/40" aria-hidden="true">
+                        <span className="h-px flex-1 bg-white/10" />
+                        <span>{formatEventGap(searchResults[index - 1], event)}</span>
+                        <span className="h-px flex-1 bg-white/10" />
+                      </li>
+                    )}
+                    <li className="flex items-start gap-1 rounded-lg bg-white/5 border border-white/10 p-2">
+                      <button
+                        onClick={() => jumpToEvent(event)}
+                        title="定位到这一天"
+                        className="min-w-0 flex-1 text-left hover:bg-white/5"
+                      >
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                          <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: event.color }} />
+                          <span className="font-medium">{event.title}</span>
+                          <span className="text-xs text-white/40">
+                            {event.date} · {clockLabel(event)} · {categoryMeta(event.category).label}
+                          </span>
+                        </div>
+                        {event.body && <p className="mt-1 line-clamp-2 whitespace-pre-wrap text-xs text-white/60">{event.body}</p>}
+                      </button>
+                      <button
+                        onClick={() => setDraft(draftFromEvent(event))}
+                        aria-label="编辑此事件"
+                        className="shrink-0 rounded p-1 hover:bg-white/10"
+                      >
+                        <Pencil className="w-3.5 h-3.5 text-white/50" />
+                      </button>
+                    </li>
+                  </Fragment>
                 ))}
               </ul>
             )}

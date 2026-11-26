@@ -53,6 +53,19 @@ afterEach(async () => {
 })
 
 describe('日历 v2 数据组同步', () => {
+  // 分片目录按同步时刻生成，不能硬编码日期；递归列出 /calendar/data 下所有分片。
+  const listShards = async (fsPromises: any, dir: string): Promise<string[]> => {
+    const entries: string[] = await fsPromises.readdir(dir).catch(() => [])
+    const files: string[] = []
+    for (const entry of entries) {
+      const full = `${dir}/${entry}`
+      const children = await fsPromises.readdir(full).catch(() => null)
+      if (children === null) files.push(full)
+      else files.push(...(await listShards(fsPromises, full)))
+    }
+    return files
+  }
+
   it('attachCalendarRepo 把 cal: 文档写进数据组 fs，并可从 fs 回读', async () => {
     const group = await repo.createAppDataGroup('default', [])
     await db.put({
@@ -75,16 +88,16 @@ describe('日历 v2 数据组同步', () => {
       getDefaultDataGroup: async () => group,
     } as any)
 
-    const dayDir = '/calendar/data/2026/11/25'
-    const files = await group.fs.promises.readdir(dayDir)
-    expect(files.length).toBeGreaterThan(0)
-    const shard = JSON.parse(await group.fs.promises.readFile(`${dayDir}/${files[0]}`, 'utf8'))
+    const shards = await listShards(group.fs.promises, '/calendar/data')
+    expect(shards.length).toBeGreaterThan(0)
+    const shard = JSON.parse(await group.fs.promises.readFile(shards[0], 'utf8'))
     expect(shard.documents.some((d: any) => d._id === 'cal:2026-11-25:event-1')).toBe(true)
 
     // 再放一个「远端已有」的分片，syncCalendarNow 应把它拉回 PouchDB。
+    const shardDir = shards[0].slice(0, shards[0].lastIndexOf('/'))
     const remoteId = 'cal:2026-11-26:event-2'
     await group.fs.promises.writeFile(
-      `${dayDir}/data-remote-0001.json`,
+      `${shardDir}/data-remote-0001.json`,
       JSON.stringify({
         version: '2.0.0',
         timestamp: Date.now(),
@@ -112,6 +125,6 @@ describe('日历 v2 数据组同步', () => {
 
     // 同步后本地文档与 fs 分片都仍存在。
     expect((await db.get('cal:2026-11-25:event-1')).title).toBe('同步测试事件')
-    expect((await group.fs.promises.readdir(dayDir)).length).toBeGreaterThanOrEqual(2)
+    expect((await listShards(group.fs.promises, '/calendar/data')).length).toBeGreaterThanOrEqual(2)
   })
 })

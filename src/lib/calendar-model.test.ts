@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { searchCalendarEvents, type CalendarEvent } from './calendar-model'
+import { formatEventGap, searchCalendarEvents, type CalendarEvent } from './calendar-model'
 
 function event(partial: Partial<CalendarEvent> & Pick<CalendarEvent, 'id' | 'date' | 'title'>): CalendarEvent {
   return {
@@ -46,5 +46,23 @@ describe('searchCalendarEvents', () => {
   it('结果按日期/时间排序', () => {
     const shuffled = [EVENTS[2], EVENTS[0], EVENTS[1]]
     expect(searchCalendarEvents(shuffled, '2026').map((e) => e.id)).toEqual(['a', 'b', 'c'])
+  })
+})
+
+describe('formatEventGap', () => {
+  const at = (date: string, startTime = '', allDay = false) => event({ id: `gap-${date}-${startTime}`, date, title: 'x', startTime, allDay })
+
+  it('同日按分钟/小时显示间隔', () => {
+    expect(formatEventGap(at('2026-11-25', '09:00'), at('2026-11-25', '09:45'))).toBe('相隔 45 分钟')
+    expect(formatEventGap(at('2026-11-25', '09:00'), at('2026-11-25', '11:30'))).toBe('相隔 2 小时 30 分钟')
+  })
+
+  it('跨日按天显示，并保留不足一天的小时', () => {
+    expect(formatEventGap(at('2026-11-25', '09:00'), at('2026-11-26', '09:00'))).toBe('相隔 1 天')
+    expect(formatEventGap(at('2026-11-25', '09:00'), at('2026-11-27', '10:30'))).toBe('相隔 2 天 1 小时')
+  })
+
+  it('全天/同一时刻的显示', () => {
+    expect(formatEventGap(at('2026-11-25', '', true), at('2026-11-25', '', true))).toBe('同一天')
   })
 })
