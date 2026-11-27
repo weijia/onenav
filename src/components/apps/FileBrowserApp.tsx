@@ -27,6 +27,7 @@ import {
   HardDrive,
   Trash2,
   ChevronsDownUp,
+  Layers,
 } from 'lucide-react'
 import {
   fetchDirStructManifests,
@@ -46,6 +47,9 @@ import { buildDiskTree, type DiskTreeResult, type HostNode, type PartitionNode, 
 import { filterTree, normalizeManifests, countTaggedNodes } from './filebrowser/normalize'
 import { volumeSerialInfo } from './filebrowser/volumeSerial'
 import type { FileNodeView, FolderNodeView, FsNodeView, ManifestView, RawManifest } from './filebrowser/types'
+import UfsView from './filebrowser/UfsView'
+import { TagChip, UserTagChip, TagEditorModal } from './filebrowser/tag-ui'
+import { formatCount, formatMtime, formatSize } from './filebrowser/format'
 
 type LoadState = 'loading' | 'error' | 'empty' | 'data'
 
@@ -97,8 +101,11 @@ export default function FileBrowserApp() {
   const [deleting, setDeleting] = useState(false)
   // 本机缓存时间戳：非 null 表示当前画的是缓存（同步组还没连上/还在读），连接后自动换成实时数据。
   const [cacheAt, setCacheAt] = useState<number | null>(null)
-  // 视图：'struct' = 现有「按主机看目录结构」，'disk' = 「主机 → 磁盘 → 逻辑分区 → 卷」逐层下钻。
-  const [view, setView] = useState<'struct' | 'disk'>('struct')
+  // 视图：'struct' = 现有「按主机看目录结构」，'disk' = 「主机 → 磁盘 → 逻辑分区 → 卷」逐层下钻，
+  // 'ufs' = 数据组 /ufs 下的快照（zip-browser「+ufs」写入），可展开只读树并打标签。
+  const [view, setView] = useState<'struct' | 'disk' | 'ufs'>('struct')
+  // UFS 视图自己的刷新计数：顶部「刷新」按钮在 UFS 视图下改这个，不动目录清单的加载态。
+  const [ufsReload, setUfsReload] = useState(0)
   // 主机磁盘文档（数据组里的 host-disks.v2.json）：磁盘视图的数据来源。
   const [hostDisksDoc, setHostDisksDoc] = useState<Record<string, unknown> | null>(null)
   const [hostDisksAt, setHostDisksAt] = useState<number | null>(null)
@@ -385,6 +392,7 @@ export default function FileBrowserApp() {
             {([
               ['struct', '目录视图', FolderTreeIcon],
               ['disk', '磁盘视图', HardDrive],
+              ['ufs', 'UFS 视图', Layers],
             ] as const).map(([key, label, Icon]) => (
               <button
                 key={key}
@@ -393,7 +401,9 @@ export default function FileBrowserApp() {
                 title={
                   key === 'disk'
                     ? '按「主机 → 磁盘 → 逻辑分区 → 卷」逐层下钻，卷里继续看目录树'
-                    : '按主机看目录结构清单（原有视图）'
+                    : key === 'ufs'
+                      ? '浏览数据组 /ufs 下的快照：年份 → 快照 → 只读目录树，可按文件/目录打标签'
+                      : '按主机看目录结构清单（原有视图）'
                 }
                 className={`px-2.5 py-1 rounded-md flex items-center gap-1.5 transition-colors ${
                   view === key ? 'bg-white/15 text-white' : 'text-white/55 hover:text-white/80'
@@ -413,7 +423,11 @@ export default function FileBrowserApp() {
             全部收起
           </button>
           <button
-            onClick={load}
+            onClick={() => {
+              if (view === 'ufs') setUfsReload((v) => v + 1)
+              else void load()
+            }}
+            title={view === 'ufs' ? '刷新 UFS 快照列表' : '重新读取目录清单'}
             className="px-3 py-1.5 rounded-lg text-xs bg-white/5 text-white/70 hover:bg-white/15 hover:text-white flex items-center gap-1.5 transition-colors"
           >
             <RefreshCw className="w-3.5 h-3.5" />
@@ -519,7 +533,7 @@ export default function FileBrowserApp() {
         </div>
       )}
 
-      {state === 'data' && sizeFilter && (
+      {view !== 'ufs' && state === 'data' && sizeFilter && (
         <div className="flex items-center gap-2 text-xs">
           <span className="text-white/45">大小筛选：</span>
           <button
@@ -536,13 +550,13 @@ export default function FileBrowserApp() {
         </div>
       )}
 
-      {state === 'data' && totalMarks > 0 && (
+      {view !== 'ufs' && state === 'data' && totalMarks > 0 && (
         <div className="rounded-lg bg-sky-500/10 border border-sky-400/25 px-3 py-2 text-xs text-sky-100/85 leading-relaxed">
           ↳ 已标记 {totalMarks} 个目录「继续解析下一层」。标记后需在本机重新运行 dir-struct-gen 生成清单，再点「刷新」才会展开。
         </div>
       )}
 
-      {state === 'data' && tagFilter && (
+      {view !== 'ufs' && state === 'data' && tagFilter && (
         <div className="flex items-center gap-2 text-xs">
           <span className="text-white/45">标签筛选：</span>
           <button
@@ -559,7 +573,7 @@ export default function FileBrowserApp() {
       )}
 
       {/* 锁定态不显示任何提示（否则等于宣告「这里藏了 N 个目录」）；仅解锁后给一条状态提示。 */}
-      {state === 'data' && showPrivate && privateCount > 0 && (
+      {view !== 'ufs' && state === 'data' && showPrivate && privateCount > 0 && (
         <div className="rounded-lg border px-3 py-2 text-xs leading-relaxed bg-emerald-500/10 border-emerald-400/25 text-emerald-100/85">
           {`🔓 已显示 ${privateCount} 个隐私目录（含 'private' 标签）。`}
           <button
@@ -628,6 +642,8 @@ export default function FileBrowserApp() {
             </button>
           </div>
         ))}
+
+      {view === 'ufs' && <UfsView collapseSignal={collapseSignal} reloadSignal={ufsReload} />}
 
       {view === 'struct' && state === 'loading' && <LoadingState />}
       {view === 'struct' && state === 'error' && <ErrorState code={errorCode} message={errorMsg} onRetry={load} />}
@@ -827,219 +843,6 @@ function formatGeneratedAt(iso: string | null): string | null {
     hour: '2-digit',
     minute: '2-digit',
   })
-}
-
-function TagChip({
-  tag,
-  active,
-  onClick,
-}: {
-  tag: string
-  active?: boolean
-  onClick?: () => void
-}) {
-  const cls = `px-1.5 py-0.5 rounded text-[10px] font-mono leading-none ${
-    active
-      ? 'bg-indigo-500/35 text-indigo-100 ring-1 ring-indigo-300/50'
-      : 'bg-indigo-500/15 text-indigo-200/90'
-  }`
-  if (onClick) {
-    return (
-      <button type="button" className={cls} onClick={(e) => { e.stopPropagation(); onClick() }}>
-        {tag}
-      </button>
-    )
-  }
-  return <span className={cls}>{tag}</span>
-}
-
-// 用户自定义标签：琥珀色，与清单自带（indigo）标签区分；可点击切换标签筛选。
-function UserTagChip({
-  tag,
-  active,
-  onClick,
-}: {
-  tag: string
-  active?: boolean
-  onClick?: () => void
-}) {
-  const cls = `px-1.5 py-0.5 rounded text-[10px] font-mono leading-none ${
-    active
-      ? 'bg-amber-500/35 text-amber-100 ring-1 ring-amber-300/50'
-      : 'bg-amber-500/15 text-amber-200/90 ring-1 ring-amber-400/20'
-  }`
-  if (onClick) {
-    return (
-      <button type="button" className={cls} onClick={(e) => { e.stopPropagation(); onClick() }}>
-        {tag}
-      </button>
-    )
-  }
-  return <span className={cls}>{tag}</span>
-}
-
-// 标签编辑弹窗：当前标签以可删除芯片展示；输入框回车/逗号加标签；建议整棵树已有标签。
-function TagEditorModal({
-  editor,
-  allTags,
-  onClose,
-  onSave,
-}: {
-  editor: { key: string; path: string; current: string[] } | null
-  allTags: string[]
-  onClose: () => void
-  onSave: (tags: string[]) => void
-}) {
-  const [draft, setDraft] = useState<string[]>(editor?.current ?? [])
-  const [input, setInput] = useState('')
-
-  useEffect(() => {
-    setDraft(editor?.current ?? [])
-    setInput('')
-  }, [editor])
-
-  if (!editor) return null
-
-  const addTag = (raw: string) => {
-    const t = raw.trim()
-    if (!t || draft.includes(t)) {
-      setInput('')
-      return
-    }
-    setDraft((d) => [...d, t])
-    setInput('')
-  }
-  const removeTag = (t: string) => setDraft((d) => d.filter((x) => x !== t))
-  const suggestions = allTags.filter((t) => !draft.includes(t))
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
-      onClick={onClose}
-    >
-      <div
-        className="w-[min(92vw,420px)] rounded-xl bg-[#1b1f27] border border-white/10 p-4 space-y-3 shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between">
-          <h3 className="text-white/90 font-medium text-sm">编辑标签</h3>
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-white/40 hover:text-white text-sm leading-none"
-          >
-            ✕
-          </button>
-        </div>
-        <div className="text-white/40 text-xs font-mono break-all">路径：{editor.path}</div>
-
-        <div className="flex flex-wrap gap-1.5 min-h-[24px]">
-          {draft.length === 0 && <span className="text-white/30 text-xs">暂无标签</span>}
-          {draft.map((t) => (
-            <span
-              key={t}
-              className="px-1.5 py-0.5 rounded text-[11px] bg-amber-500/15 text-amber-200 ring-1 ring-amber-400/20 flex items-center gap-1"
-            >
-              {t}
-              <button
-                type="button"
-                onClick={() => removeTag(t)}
-                className="text-amber-200/70 hover:text-white leading-none"
-              >
-                ✕
-              </button>
-            </span>
-          ))}
-        </div>
-
-        <input
-          autoFocus
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ',') {
-              e.preventDefault()
-              addTag(input)
-            } else if (e.key === 'Backspace' && !input && draft.length) {
-              removeTag(draft[draft.length - 1])
-            } else if (e.key === 'Escape') {
-              onClose()
-            }
-          }}
-          placeholder="输入标签后回车或逗号添加…"
-          className="w-full px-2 py-1.5 rounded-lg bg-white/5 border border-white/10 text-white/85 text-sm outline-none focus:border-white/25"
-        />
-
-        {suggestions.length > 0 && (
-          <div>
-            <div className="text-white/35 text-xs mb-1">建议（已有标签）</div>
-            <div className="flex flex-wrap gap-1.5">
-              {suggestions.map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  onClick={() => addTag(t)}
-                  className="px-1.5 py-0.5 rounded text-[11px] bg-white/5 text-white/60 hover:bg-white/15 hover:text-white"
-                >
-                  {t}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div className="flex justify-end gap-2 pt-1">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-3 py-1.5 rounded-lg bg-white/5 text-white/70 hover:bg-white/15 text-sm"
-          >
-            取消
-          </button>
-          <button
-            type="button"
-            onClick={() => onSave(draft)}
-            className="px-3 py-1.5 rounded-lg bg-amber-500/80 hover:bg-amber-500 text-white text-sm"
-          >
-            保存
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// 字节数 → 人类可读（KB/MB/GB…），用于展示目录总大小。
-function formatSize(bytes?: number): string {
-  if (bytes == null) return '—'
-  if (bytes < 1024) return `${bytes} B`
-  const units = ['KB', 'MB', 'GB', 'TB', 'PB']
-  let v = bytes / 1024
-  let i = 0
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024
-    i++
-  }
-  return `${v.toFixed(v < 10 ? 2 : 1)} ${units[i]}`
-}
-
-// 文件数 → 千分位展示。
-function formatCount(n?: number): string {
-  if (n == null) return '—'
-  return n.toLocaleString('zh-CN')
-}
-
-// 目录自身磁盘修改时间（mtime，毫秒级 epoch）→ 简短日期；用于展示「最后改于」。
-function formatMtime(ms?: number): string | null {
-  if (ms == null || !isFinite(ms)) return null
-  const d = new Date(ms)
-  if (isNaN(d.getTime())) return null
-  const y = d.getFullYear()
-  const mo = String(d.getMonth() + 1).padStart(2, '0')
-  const da = String(d.getDate()).padStart(2, '0')
-  const hh = String(d.getHours()).padStart(2, '0')
-  const mi = String(d.getMinutes()).padStart(2, '0')
-  return `${y}-${mo}-${da} ${hh}:${mi}`
 }
 
 // 目录大小徽标：展示该目录（含子孙）的文件数、逻辑大小、占用空间。

@@ -1,14 +1,16 @@
 // 文件浏览器的本机缓存：让刷新后先画出上次读到的内容，不必空等同步组连接。
 //
-// 缓存两类东西，放同一个 IndexedDB 库的不同 key：
+// 缓存三类东西，放同一个 IndexedDB 库的不同 key：
 // - struct-raws-v1：读取层拼装好的目录清单（RawManifest[]，可能几 MB）；
-// - host-disks-doc-v1：主机磁盘文档（host / 磁盘 / 分区 / 卷，几十 KB）。
+// - host-disks-doc-v1：主机磁盘文档（host / 磁盘 / 分区 / 卷，几十 KB）；
+// - ufs-years-v1：UFS 快照的年份统计（只 readdir 得到，极小）。
 // 连接就绪后照常读远端并覆盖缓存；读失败时继续显示缓存，并提示同步组未连。
 
 const DB_NAME = 'onenav-filebrowser'
 const STORE_NAME = 'kv'
 const CACHE_KEY = 'struct-raws-v1'
 const HOST_DISKS_KEY = 'host-disks-doc-v1'
+const UFS_YEARS_KEY = 'ufs-years-v1'
 /** 超过这个体积就不写缓存（避免把超大清单塞进浏览器存储，拖慢页面） */
 const MAX_CACHE_BYTES = 16 * 1024 * 1024
 
@@ -141,6 +143,22 @@ export async function writeHostDisksCache(doc: Record<string, unknown>): Promise
   return writeCached(HOST_DISKS_KEY, { at: Date.now(), doc })
 }
 
+interface UfsYearsCacheRecord extends CacheEnvelope {
+  years: unknown[]
+}
+
+/** 读 UFS 年份统计缓存（只 readdir 得到的轻量列表）；没有/不可用返回 null。 */
+export async function readUfsYearsCache(): Promise<{ at: number; years: unknown[] } | null> {
+  const rec = await readCached<UfsYearsCacheRecord>(UFS_YEARS_KEY, (v) => Array.isArray(v.years))
+  return rec ? { at: rec.at, years: rec.years } : null
+}
+
+/** 写 UFS 年份统计缓存（列表为空也写，避免冷启动时反复读空） */
+export async function writeUfsYearsCache(years: unknown[]): Promise<boolean> {
+  if (!Array.isArray(years)) return false
+  return writeCached(UFS_YEARS_KEY, { at: Date.now(), years })
+}
+
 /** 清掉缓存（例如用户在设置里重置同步组时）。 */
 export async function clearManifestCache(): Promise<void> {
   const db = await openDb()
@@ -150,6 +168,7 @@ export async function clearManifestCache(): Promise<void> {
       const tx = db.transaction(STORE_NAME, 'readwrite')
       tx.objectStore(STORE_NAME).delete(CACHE_KEY)
       tx.objectStore(STORE_NAME).delete(HOST_DISKS_KEY)
+      tx.objectStore(STORE_NAME).delete(UFS_YEARS_KEY)
       tx.oncomplete = () => resolve()
       tx.onerror = () => resolve()
     } catch {
