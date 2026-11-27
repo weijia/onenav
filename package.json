@@ -34,7 +34,7 @@
     "vconsole": "^3.15.1",
     "workbox-precaching": "^7.4.1",
     "zen-fs-cache": "^1.0.6",
-    "zen-fs-config": "^0.10.3",
+    "zen-fs-config": "^0.10.4",
     "zen-fs-config-ui": "^0.6.4",
     "zen-fs-gitee": "^1.2.43",
     "zen-fs-github": "^1.1.3",
