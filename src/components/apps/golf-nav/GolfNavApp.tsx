@@ -364,11 +364,11 @@ export default function GolfNavApp() {
       if (!pos) pos = await requestPosition(20000)
       if (!pos) {
         if (opts.auto) {
-          setResult('未能获取定位（可能未授权，或系统定位服务未开启），地图仍按球场中心显示；可点「定位」重试，或直接点地图手动设置。')
+          setResult('未能获取定位（可能未授权，或系统定位服务未开启），地图仍按球场中心显示；可点「定位」重试，或开启键盘漫游后点地图设置起点。')
         } else {
           setPosition(tee)
           syncMyPosition(tee)
-          setResult('定位不可用，已使用本洞发球台作为参考位置；可点击地图手动设置。')
+          setResult('定位不可用，已使用本洞发球台作为参考位置；开启键盘漫游后可点击地图设置起点。')
         }
         return
       }
@@ -381,7 +381,7 @@ export default function GolfNavApp() {
       // 退到 13 级让球场和当前位置同时可见。
       centerOn(p, false, dist > 2000 ? 13 : 16)
       const head = acc > 50
-        ? `已按当前位置显示（精度约 ${acc} 米；桌面端通常只有百米级，球场内建议点地图校准）`
+        ? `已按当前位置显示（精度约 ${acc} 米；桌面端通常只有百米级）`
         : `定位成功（精度约 ${acc} 米）`
       setResult(dist > 2000
         ? `${head}。\n当前位置距球场中心约 ${(dist / 1000).toFixed(1)} 公里，可切换洞号回到球场视野。`
@@ -409,6 +409,9 @@ export default function GolfNavApp() {
         ...(routeRef.current ? [{ id: 'route', styleId: 'route', paths: routeRef.current.map(toBusinessPoint) }] : []),
       ])
       adapter.onClick((pt: Point) => {
+        // 只有键盘漫游模式下点地图才改当前位置，避免其它模式误触改点。
+        // 用 ref 读实时状态：回调在 initMap 里注册，闭包捕获的 roaming state 会过期。
+        if (!roamingRef.current) return
         setPosition(pt)
         syncMyPosition(pt)
         setSelected(null)
@@ -709,7 +712,7 @@ export default function GolfNavApp() {
   }
 
   const calculateRoute = () => {
-    if (!position) { setResult('请先定位或点击地图设置位置。'); return }
+    if (!position) { setResult('请先点「定位」获取当前位置。'); return }
     const goal = target === 'tee' ? currentHole.tee : currentHole.green
     const r = findPath(ensureGrid(), cellFor(position), cellFor(goal as Point), { mode: 'walk' })
     if (!r.found) { setResult('当前位置到目标无可行路线。'); return }
@@ -723,7 +726,7 @@ export default function GolfNavApp() {
   }
 
   const calculateShot = () => {
-    if (!position) { setResult('请先定位或点击地图设置位置。'); return }
+    if (!position) { setResult('请先点「定位」获取当前位置。'); return }
     const r = adviseShot(ensureGrid(), position, currentHole.green)
     if (!r.ok || !r.recommended) { setResult(r.reason || '无法生成建议'); return }
     syncMyPosition(position, [
