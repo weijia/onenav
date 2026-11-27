@@ -139,12 +139,12 @@ export default function GolfSyncPanel() {
   }, [])
 
   return (
-    <details className="rounded-lg bg-white/80 border border-slate-200 p-3 text-sm shadow-sm" open>
-      <summary className="cursor-pointer font-medium">
+    <details className="rounded-lg bg-white/5 border border-white/10 p-3 text-sm" open>
+      <summary className="cursor-pointer font-medium text-white/90">
         数据同步组（appId: golf）{ready ? `· 已连接 ${activeId ? activeId.slice(0, 8) : ''}` : '· 未连接'}
       </summary>
       <div className="mt-3 space-y-2">
-        <p className="text-xs opacity-70">
+        <p className="text-xs text-white/50">
           球场数据存独立库，经此同步组备份到远端；两个高尔夫页面共享同一份数据。
           一个 appId 下可能有多份数据组，请确认「当前」那份是真在用的。
         </p>
@@ -156,7 +156,7 @@ export default function GolfSyncPanel() {
           busy={busy}
           dataPath={DATA_PATH}
         />
-          <div className="max-h-96 overflow-auto rounded bg-slate-50 border border-slate-200 p-2">
+          <div className="max-h-96 overflow-auto rounded bg-white/5 p-2">
           <SyncGroupConfigurator
             key={uiNonce}
             appId={APP_ID}
@@ -177,9 +177,9 @@ export default function GolfSyncPanel() {
           >
             立即同步
           </button>
-          {activeId && <span className="font-mono text-xs text-slate-500">组 {activeId}</span>}
+          {activeId && <span className="font-mono text-xs text-white/40">组 {activeId}</span>}
         </div>
-        {message && <p className="text-xs opacity-80">{message}</p>}
+        {message && <p className="text-xs text-white/60">{message}</p>}
       </div>
     </details>
   )
