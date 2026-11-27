@@ -21,6 +21,7 @@ import {
   type UfsNode,
   type UfsSource,
 } from './ufsTree'
+import { appendTagDiff, readShardedMap } from './sharded-tags'
 
 /** 统一从读取层再导出，调用方（UfsView）不必同时依赖 fetch.ts */
 export { RsAuthError, RsNotConnectedError }
@@ -67,6 +68,7 @@ interface GroupPromisesFs {
   writeFile(path: string, data: string | Uint8Array, options?: any): Promise<void>
   unlink(path: string): Promise<void>
   readdir(path: string): Promise<any[]>
+  mkdir(path: string, options?: any): Promise<any>
   open?(path: string, flags?: string): Promise<any>
 }
 
@@ -280,21 +282,18 @@ export async function readUfsBundle(bundlePath: string): Promise<{
   return parseBundleText(text)
 }
 
-/** 某快照的用户标签：rel → tags（根为 ''） */
+/**
+ * 某快照的用户标签：rel → tags（根为 ''）。
+ *
+ * 兼容两代格式（与 zip-browser 的 sharded-tags 逐字对齐）：
+ *   - 旧单片 /ufs-tags/<key>.json            整表 {tags:{...}}，作基线；
+ *   - 新事件片 /ufs-tags/<key>/<年>/*.json   跨年枚举 + 片名升序重放。
+ */
 export async function readUfsTags(bundleId: string): Promise<Record<string, string[]>> {
   try {
     const fs = getFs()
-    const path = `${UFS_TAGS_DIR}/${ufsTagKey(bundleId)}.json`
-    const obj = JSON.parse(await readText(fs, path))
-    const rawTags = obj && typeof obj === 'object' ? obj.tags : null
-    if (!rawTags || typeof rawTags !== 'object' || Array.isArray(rawTags)) return {}
-    const out: Record<string, string[]> = {}
-    for (const [rel, value] of Object.entries(rawTags as Record<string, unknown>)) {
-      if (!Array.isArray(value)) continue
-      const tags = value.filter((t): t is string => typeof t === 'string' && !!t)
-      if (tags.length) out[rel] = tags
-    }
-    return out
+    const key = ufsTagKey(bundleId)
+    return await readShardedMap(fs, `${UFS_TAGS_DIR}/${key}`, `${UFS_TAGS_DIR}/${key}.json`)
   } catch (e) {
     if (isRemoteStorageAuthError(e)) {
       console.warn('[ufs] 读取标签权限不足:', e)
@@ -303,23 +302,16 @@ export async function readUfsTags(bundleId: string): Promise<Record<string, stri
   }
 }
 
-/** 写回某快照的用户标签（空表时直接删除该文件，避免残留空对象） */
+/**
+ * 写回某快照的用户标签：把整表 diff 成事件片追加，不修改已有片。
+ * 调用方仍传整表（签名不变）；清空标签由 remove 事件表达，不删旧片。
+ */
 export async function putUfsTags(bundleId: string, tags: Record<string, string[]>): Promise<void> {
   const fs = getFs()
-  const path = `${UFS_TAGS_DIR}/${ufsTagKey(bundleId)}.json`
+  const key = ufsTagKey(bundleId)
   try {
-    if (!Object.keys(tags).length) {
-      try {
-        await fs.unlink(path)
-      } catch (e) {
-        if (!isMissing(e)) throw e
-      }
-      return
-    }
-    await fs.writeFile(
-      path,
-      JSON.stringify({ version: 1, bundleId, updatedAt: Date.now(), tags }),
-    )
+    const old = await readUfsTags(bundleId)
+    await appendTagDiff(fs, `${UFS_TAGS_DIR}/${key}`, 'tags', old, tags, { bundleId })
   } catch (e) {
     if (isRemoteStorageAuthError(e)) throw new RsAuthError('写入 UFS 标签权限不足')
     throw e

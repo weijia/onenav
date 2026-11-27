@@ -24,6 +24,7 @@ import type { AppDataGroup } from 'zen-fs-config'
 import { isRemoteStorageAuthError } from '@/lib/remotestorage-connection'
 import { mergeShards } from './merge'
 import type { RawManifest } from './types'
+import { appendTagDiff, readShardedMap, safeKey } from './sharded-tags'
 
 /** 空清单重试轮数与间隔：等待后台同步把远端分片拉进本地缓存。 */
 const RETRY_ROUNDS = 4
@@ -114,6 +115,7 @@ interface GroupPromisesFs {
   writeFile(path: string, data: string | Uint8Array, options?: any): Promise<void>
   unlink(path: string): Promise<void>
   readdir(path: string): Promise<string[]>
+  mkdir(path: string, options?: any): Promise<any>
 }
 
 /** 取活动数据组的文件视图；未连接则抛 RsNotConnectedError。 */
@@ -500,32 +502,23 @@ export async function putFolderDeepenMarks(key: string, paths: string[]): Promis
   }
 }
 
-/** 某块盘的用户标签映射：host-relative 路径（盘符开始、/ 连接）→ 标签数组 */
+/** 某块盘的用户标签映射：路径键（卷内 rel / 旧 host-relative）→ 标签数组 */
 export type FileTagsMap = Record<string, string[]>
 
 /**
- * 读取某块盘的用户标签（/file-tags/<key>.json）。
+ * 读取某块盘的用户标签。
+ *
+ * 兼容两代格式（与 zip-browser 的 sharded-tags 逐字对齐）：
+ *   - 旧单片 /file-tags/<key>.json            整表 {tags:{...}}，作基线；
+ *   - 新事件片 /file-tags/<key>/<年>/*.json   跨年枚举 + 片名升序重放。
  * 404 / 解析失败 / 未连接 → 返回空对象（不抛错，避免阻断浏览）。
  */
 export async function getFileTags(key: string): Promise<FileTagsMap> {
   try {
     const fs = getFs()
-    const p = `${FILE_TAGS_DIR}/${sanitizeKey(key)}.json`
-    const text = await readText(fs, p)
-    try {
-      const obj = JSON.parse(text)
-      const rawTags = obj && typeof obj === 'object' ? (obj.tags as unknown) : null
-      if (!rawTags || typeof rawTags !== 'object' || Array.isArray(rawTags)) return {}
-      const out: FileTagsMap = {}
-      for (const [path, value] of Object.entries(rawTags as Record<string, unknown>)) {
-        if (!path || !Array.isArray(value)) continue
-        const tags = value.filter((t): t is string => typeof t === 'string' && !!t)
-        if (tags.length) out[path] = tags
-      }
-      return out
-    } catch {
-      return {}
-    }
+    // 新片目录用 safeKey（与 zip-browser 对齐）；旧单片基线用历史 sanitizeKey 路径。
+    const identity = safeKey(key)
+    return await readShardedMap(fs, `${FILE_TAGS_DIR}/${identity}`, `${FILE_TAGS_DIR}/${sanitizeKey(key)}.json`)
   } catch (e) {
     if (isRemoteStorageAuthError(e)) {
       // 权限问题仅告警，不打断浏览
@@ -536,14 +529,16 @@ export async function getFileTags(key: string): Promise<FileTagsMap> {
 }
 
 /**
- * 写回某块盘的用户标签（/file-tags/<key>.json）。
+ * 写回某块盘的用户标签：把整表 diff 成事件片追加，不修改已有片。
+ * 调用方仍传整表（签名不变），底层只新建 <key>/<年>/tags-<ts>-<rand>.json。
  * 权限错误（401/403）抛 RsAuthError，由调用方提示检查后端；其它错误原样抛出。
  */
 export async function putFileTags(key: string, map: FileTagsMap): Promise<void> {
   const fs = getFs()
-  const p = `${FILE_TAGS_DIR}/${sanitizeKey(key)}.json`
+  const identity = safeKey(key)
   try {
-    await fs.writeFile(p, JSON.stringify({ tags: map }))
+    const oldMap = await getFileTags(key)
+    await appendTagDiff(fs, `${FILE_TAGS_DIR}/${identity}`, 'tags', oldMap, map, { key })
   } catch (e) {
     if (isRemoteStorageAuthError(e)) throw new RsAuthError(FOLDERS_AUTH_MSG)
     throw e
