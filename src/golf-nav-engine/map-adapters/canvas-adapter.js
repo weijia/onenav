@@ -65,7 +65,7 @@ export class CanvasAdapter {
           this.featureClickHandler({
             id: hit.id, featureType: hit.featureType, hole: hit.hole,
             featureIndex: hit.featureIndex, styleId: hit.styleId, kind: hit.kind,
-            name: hit.name, sourceId: hit.sourceId,
+            name: hit.name, note: hit.note, sourceId: hit.sourceId,
           });
         }
         return;
@@ -133,7 +133,7 @@ export class CanvasAdapter {
         this._hitRegions.push({
           id: poly.id, kind: 'polygon', points: pts, featureType: poly.featureType,
           hole: poly.hole, featureIndex: poly.featureIndex, styleId: poly.styleId,
-          name: poly.name, sourceId: poly.sourceId,
+          name: poly.name, note: poly.note, sourceId: poly.sourceId,
         });
       }
       const { color, opacity } = parseColor(STYLE_COLORS[poly.styleId] || STYLE_COLORS.fairway);
@@ -156,7 +156,7 @@ export class CanvasAdapter {
         this._hitRegions.push({
           id: line.id, kind: 'line', points: pts, featureType: line.featureType,
           hole: line.hole, featureIndex: line.featureIndex, styleId: line.styleId,
-          name: line.name, sourceId: line.sourceId,
+          name: line.name, note: line.note, sourceId: line.sourceId,
         });
       }
       const style = LINE_STYLES[line.styleId] || LINE_STYLES.center;

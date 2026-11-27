@@ -12,6 +12,7 @@ export const STYLE_COLORS = {
   tree: 'rgba(60, 130, 70, 0.9)',
   outOfBounds: 'rgba(200, 90, 90, 0.28)',
   cartPath: 'rgba(255, 255, 255, 0.9)',
+  rest: 'rgba(168, 85, 247, 0.40)',
 };
 
 export const FEATURE_LABELS = {
@@ -24,6 +25,7 @@ export const FEATURE_LABELS = {
   tree: '树木',
   cartPath: '球车道',
   outOfBounds: '界外区',
+  rest: '休息区',
   center: '球道中心线',
 };
 

@@ -46,9 +46,9 @@ const ROAM_STEP_METERS = [2, 5, 10, 20, 50, 100]
 // 漫游栅格半径（米）：以当前位置为中心现建，不再受球场 bounds 限制。
 // 500 米半径 + 2 米分辨率 ≈ 500×500 格，重建一次也在毫秒级。
 const ROAM_GRID_RADIUS_METERS = 500
-// 避障漫游把**所有面状标注**都当障碍：球道、果岭、发球台、长草区、沙坑、水域、树木、界外。
-// 球车道是线状导航辅助，不算区域；找路/击球决策仍用引擎默认的真障碍集合。
-const ROAM_BLOCKING_TYPES = ['rough', 'fairway', 'green', 'tee', 'bunker', 'water', 'tree', 'outOfBounds']
+// 避障漫游把**所有面状标注**都当障碍：球道、果岭、发球台、长草区、沙坑、水域、树木、界外、休息区。
+// 球车道是线状导航辅助，不算区域；找路/击球决策用引擎默认阻挡集合（真障碍 + 休息区）。
+const ROAM_BLOCKING_TYPES = ['rough', 'fairway', 'green', 'tee', 'bunker', 'water', 'tree', 'outOfBounds', 'rest']
 
 // 键盘映射：W/A/S/D 对应 上/左/下/右；同时兼容 ↑↓←→。
 // 用 e.code 优先（不受输入法/大小写影响），e.key 兜底。
@@ -141,7 +141,7 @@ export default function GolfNavApp() {
   highlightIdsRef.current = highlightIds
 
   // 分类筛选只排除「已知类型且未被选中」的要素；未知类型一律保留。
-  // 否则全选 9 个已知类型时，数据里若有不在 FEATURE_TYPES 里的自定义标注会被滤掉，
+  // 否则全选全部已知类型时，数据里若有不在 FEATURE_TYPES 里的自定义标注会被滤掉，
   // 看上去就像「点了全部显示反而什么都没了」。
   const passType = useCallback((ft?: string) => {
     if (!activeTypes.length) return true
@@ -311,6 +311,7 @@ export default function GolfNavApp() {
       featureIndex: g.featureIndex,
       styleId: g.styleId,
       name: g.name,
+      note: g.note,
       sourceId: g.sourceId,
       kind: g.geomKind,
     }
@@ -838,7 +839,7 @@ export default function GolfNavApp() {
                 <button type="button" onClick={() => roamStep('ArrowDown')} title="向下（S）" className="h-11 w-11 rounded border border-slate-300 bg-white shadow-sm text-slate-800 active:bg-sky-600 active:text-white text-xl touch-manipulation">↓</button>
                 <span />
               </div>
-              <p className="mt-2 text-xs opacity-60">键盘 W↑ A← S↓ D→（也支持 ↑↓←→）或点屏幕方向键；按实际米数移动，坐标每按一次都会更新，按住可连续移动。所有已标注区域（球道、果岭、发球台、长草区、沙坑、水域、树木、界外）都会挡住脚步，遇障碍停在边缘外。</p>
+              <p className="mt-2 text-xs opacity-60">键盘 W↑ A← S↓ D→（也支持 ↑↓←→）或点屏幕方向键；按实际米数移动，坐标每按一次都会更新，按住可连续移动。所有已标注区域（球道、果岭、发球台、长草区、沙坑、水域、树木、界外、休息区）都会挡住脚步，遇障碍停在边缘外。</p>
             </div>
           )}
           {selected && (
@@ -847,6 +848,7 @@ export default function GolfNavApp() {
               <p className="text-sm">{selected.name || LABELS[selected.featureType] || selected.featureType}</p>
               <p className="text-sm opacity-80">类型：{LABELS[selected.featureType] || selected.featureType}</p>
               <p className="text-sm opacity-80">第 {selected.hole} 洞 · {(selected.kind || selected.geomKind) === 'polygon' ? '面状区域' : '线状要素'}</p>
+              {selected.note && <p className="mt-1 text-sm whitespace-pre-line opacity-80">备注：{selected.note}</p>}
               <button
                 onClick={() => setSelected(null)}
                 className="mt-2 rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm"
@@ -925,7 +927,7 @@ export default function GolfNavApp() {
                               key={g.id}
                               onClick={() => selectFromList(g)}
                               className={`w-full text-left rounded border px-2 py-1 text-xs transition truncate ${active ? 'bg-sky-100 ring-1 ring-sky-400 border-sky-300' : 'bg-slate-50 border-slate-200 hover:bg-slate-100'}`}
-                              title={g.name || `${LABELS[type] || type} ${i + 1}`}
+                              title={g.note ? `${g.name || `${LABELS[type] || type} ${i + 1}`}：${g.note}` : (g.name || `${LABELS[type] || type} ${i + 1}`)}
                             >
                               {g.name || `${LABELS[type] || type} ${i + 1}`}
                             </button>

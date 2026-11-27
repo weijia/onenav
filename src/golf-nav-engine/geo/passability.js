@@ -8,18 +8,18 @@ const BASE_COST = {
   tee: 1,
   cartPath: 0.6,
 };
-const APPLY_ORDER = ['rough', 'fairway', 'green', 'tee', 'cartPath', 'bunker', 'water', 'tree', 'outOfBounds'];
-// 默认阻挡集合：只把真障碍算不可通行，供找路/击球决策使用。
-const BLOCKING = new Set(['bunker', 'water', 'tree', 'outOfBounds']);
+const APPLY_ORDER = ['rough', 'fairway', 'green', 'tee', 'cartPath', 'bunker', 'water', 'tree', 'outOfBounds', 'rest'];
+// 默认阻挡集合：真障碍 + 休息区（人不穿过休息区），供找路/击球决策使用。
+const BLOCKING = new Set(['bunker', 'water', 'tree', 'outOfBounds', 'rest']);
 // 障碍类型 → 数字编码（供 TypedArray 存储），以及反查表。
 // 编码覆盖全部要素类型：避障漫游可以把整片标注区域（长草区/球道/果岭/发球台）都当障碍。
 const BLOCK_CODE = {
   bunker: 1, water: 2, tree: 3, outOfBounds: 4,
-  rough: 5, fairway: 6, green: 7, tee: 8, cartPath: 9,
+  rough: 5, fairway: 6, green: 7, tee: 8, cartPath: 9, rest: 10,
 };
 const CODE_BLOCK = {
   1: 'bunker', 2: 'water', 3: 'tree', 4: 'outOfBounds',
-  5: 'rough', 6: 'fairway', 7: 'green', 8: 'tee', 9: 'cartPath',
+  5: 'rough', 6: 'fairway', 7: 'green', 8: 'tee', 9: 'cartPath', 10: 'rest',
 };
 
 function mPoint(value, origin) {

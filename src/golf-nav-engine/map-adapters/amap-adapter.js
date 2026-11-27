@@ -82,6 +82,7 @@ export class AmapAdapter {
           featureIndex: geom.featureIndex,
           styleId: geom.styleId,
           name: geom.name,
+          note: geom.note,
           sourceId: geom.sourceId,
           kind,
         });

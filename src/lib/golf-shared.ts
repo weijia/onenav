@@ -121,6 +121,7 @@ const AREA_TO_FEATURE: Record<string, string> = {
   closed: 'outOfBounds',
   cartPath: 'cartPath',
   cartpath: 'cartPath',
+  rest: 'rest',
 }
 
 const FACILITY_TO_FEATURE: Record<string, string> = {
@@ -131,6 +132,7 @@ const FACILITY_TO_FEATURE: Record<string, string> = {
   tee: 'tee',
   tree: 'tree',
   cartpath: 'cartPath',
+  rest: 'rest',
 }
 
 function circleToPolygon(center: LngLat, radiusMeters: number): LngLat[] {

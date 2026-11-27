@@ -2,7 +2,7 @@
 import { bboxOf } from '../geo/geometry.js';
 
 export const FEATURE_TYPES = [
-  'fairway', 'green', 'tee', 'rough', 'bunker', 'water', 'tree', 'cartPath', 'outOfBounds',
+  'fairway', 'green', 'tee', 'rough', 'bunker', 'water', 'tree', 'cartPath', 'outOfBounds', 'rest',
 ];
 
 function isPoint(v) {
