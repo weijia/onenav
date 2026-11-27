@@ -200,6 +200,13 @@ export default function MapCanvas(props: MapCanvasProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // 绘制/测量模式下，把地图光标从默认抓手改为箭头(default)，便于逐点点选落位
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    el.style.cursor = props.drawMode !== 'none' ? 'default' : ''
+  }, [props.drawMode])
+
   // ── 2. 底图切换 ──────────────────────────────────────
   useEffect(() => {
     const map = mapRef.current
