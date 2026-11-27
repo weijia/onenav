@@ -807,6 +807,12 @@ function isOpenRel(open: Record<string, boolean>, rel: string): boolean {
 }
 
 /** 树行：目录可展开，文件只读；每行右侧标签按钮 */
+function shortHash(hash: string): string {
+  // bundle 里的 hash 形如 "sha256:abcdef…"，去掉算法前缀只留前 10 位十六进制
+  const hex = hash.replace(/^sha256:/i, '')
+  return hex.slice(0, 10)
+}
+
 function Row({
   node,
   depth,
@@ -911,7 +917,7 @@ function Row({
             className="shrink-0 flex items-center gap-0.5 px-1 py-0.5 rounded text-[10px] font-mono leading-none bg-white/5 text-white/35 hover:text-white/70 hover:bg-white/10"
           >
             <Hash className="w-3 h-3" />
-            {copied ? '已复制' : node.hash.slice(0, 8)}
+            {copied ? '已复制' : shortHash(node.hash)}
           </button>
         )}
 

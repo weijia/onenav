@@ -180,7 +180,11 @@ export function TagEditorModal({
           </button>
           <button
             type="button"
-            onClick={() => onSave(draft)}
+            onClick={() => {
+              // 输入框里还没回车的那段也算上，避免「打完字直接点保存」丢标签
+              const pending = input.trim()
+              onSave(pending && !draft.includes(pending) ? [...draft, pending] : draft)
+            }}
             className="px-3 py-1.5 rounded-lg bg-amber-500/80 hover:bg-amber-500 text-white text-sm"
           >
             保存
