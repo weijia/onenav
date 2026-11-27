@@ -83,6 +83,7 @@ export type AreaType =
   | 'ob' // 界外
   | 'woods' // 树林
   | 'closed' // 禁区 / 施工区
+  | 'rest' // 休息区（楼盘 / 大楼框）
 
 export interface AreaShape {
   id: string
@@ -233,6 +234,7 @@ export const AREA_TYPES: Record<AreaType, AreaTypeMeta> = {
   ob: { label: '界外 OB', color: '#dc2626', fillColor: '#ef4444', fillOpacity: 0.06, dashArray: '6 6' },
   woods: { label: '树林', color: '#14532d', fillColor: '#166534', fillOpacity: 0.35 },
   closed: { label: '禁区/施工', color: '#6b7280', fillColor: '#9ca3af', fillOpacity: 0.35, dashArray: '4 4' },
+  rest: { label: '休息区', color: '#a855f7', fillColor: '#a855f7', fillOpacity: 0.18 },
 }
 
 export const AREA_TYPE_KEYS = Object.keys(AREA_TYPES) as AreaType[]
