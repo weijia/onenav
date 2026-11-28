@@ -23,7 +23,12 @@ import { DataGroupChoiceList } from 'zen-fs-config-ui/react'
 const APP_ID = 'golf'
 const DATA_PATH = '/golf'
 
-export default function GolfSyncPanel() {
+interface Props {
+  /** 外壳主题：地图页深色传 dark，导航页白底传 light */
+  theme?: 'dark' | 'light'
+}
+
+export default function GolfSyncPanel({ theme = 'dark' }: Props) {
   const [ready, setReady] = useState(false)
   const [message, setMessage] = useState('')
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -138,13 +143,19 @@ export default function GolfSyncPanel() {
     setMessage(ok ? '同步完成' : `同步失败：${getGolfSyncError() ?? '数据组未连接'}`)
   }, [])
 
+  const dark = theme === 'dark'
   return (
-    <details className="rounded-lg bg-white/5 border border-white/10 p-3 text-sm" open>
-      <summary className="cursor-pointer font-medium text-white/90">
+    <details
+      className={`rounded-lg border p-3 text-sm ${
+        dark ? 'bg-white/5 border-white/10' : 'bg-white border-slate-200'
+      }`}
+      open
+    >
+      <summary className={`cursor-pointer font-medium ${dark ? 'text-white/90' : 'text-slate-800'}`}>
         数据同步组（appId: golf）{ready ? `· 已连接 ${activeId ? activeId.slice(0, 8) : ''}` : '· 未连接'}
       </summary>
       <div className="mt-3 space-y-2">
-        <p className="text-xs text-white/50">
+        <p className={`text-xs ${dark ? 'text-white/50' : 'text-slate-500'}`}>
           球场数据存独立库，经此同步组备份到远端；两个高尔夫页面共享同一份数据。
           一个 appId 下可能有多份数据组，请确认「当前」那份是真在用的。
         </p>
@@ -155,8 +166,9 @@ export default function GolfSyncPanel() {
           onPick={onPick}
           busy={busy}
           dataPath={DATA_PATH}
+          variant={dark ? 'dark' : 'light'}
         />
-          <div className="max-h-96 overflow-auto rounded bg-white/5 p-2">
+          <div className={`max-h-96 overflow-auto rounded p-2 ${dark ? 'bg-white/5' : 'bg-slate-50'}`}>
           <SyncGroupConfigurator
             key={uiNonce}
             appId={APP_ID}
@@ -177,9 +189,13 @@ export default function GolfSyncPanel() {
           >
             立即同步
           </button>
-          {activeId && <span className="font-mono text-xs text-white/40">组 {activeId}</span>}
+          {activeId && (
+            <span className={`font-mono text-xs ${dark ? 'text-white/40' : 'text-slate-500'}`}>
+              组 {activeId}
+            </span>
+          )}
         </div>
-        {message && <p className="text-xs text-white/60">{message}</p>}
+        {message && <p className={`text-xs ${dark ? 'text-white/60' : 'text-slate-600'}`}>{message}</p>}
       </div>
     </details>
   )

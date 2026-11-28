@@ -969,7 +969,7 @@ export default function GolfNavApp() {
           <div
             className={`absolute top-14 right-3 z-[650] w-96 max-w-[calc(100%-1.5rem)] rounded-lg bg-white border border-slate-200 text-slate-800 shadow-xl ${syncOpen ? '' : 'hidden'}`}
           >
-            <GolfSyncPanel />
+            <GolfSyncPanel theme="light" />
           </div>
           <div ref={mapEl} className="absolute inset-0 rounded-lg overflow-hidden bg-slate-200" />
         </div>
