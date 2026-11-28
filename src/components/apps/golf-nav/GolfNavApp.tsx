@@ -117,6 +117,11 @@ export default function GolfNavApp() {
   const roamingRef = useRef(false)
   const autoLocatedRef = useRef(false) // 首次建图后只自动定位一次，切底图不重复打断视野
   const locatingRef = useRef(false) // 定位进行中，避免连点或严格模式双挂载重复请求
+  // 持续跟随定位：watchPosition 监听位置，回调只平移地图、不改缩放；用户手动拖图/缩放后暂停自动居中。
+  const [following, setFollowing] = useState(false)
+  const followingRef = useRef(false)
+  const watchIdRef = useRef<number | null>(null)
+  const pausedByUserRef = useRef(false)
 
   // 当前应高亮的几何 id：选中的单个标注优先；否则聚焦分类时高亮该分类跨所有洞的全部区域
   const highlightIds = useMemo(() => {
@@ -302,6 +307,56 @@ export default function GolfNavApp() {
     if (!c || latLngDistance(c, p) > 60) centerOn(p, true)
   }, [centerOn])
 
+  // ---- 持续跟随定位（watchPosition）----
+  // 停止持续定位监听；卸载/关闭跟随时调用。
+  const stopWatch = useCallback(() => {
+    if (watchIdRef.current != null && navigator.geolocation) {
+      try { navigator.geolocation.clearWatch(watchIdRef.current) } catch { /* ignore */ }
+    }
+    watchIdRef.current = null
+  }, [])
+
+  // watch 回调：更新自身标记与位置；跟随中且未被手动暂停时平移（保留当前缩放，不碰 zoom）。
+  // 键盘漫游以按键为准，定位回调不覆盖漫游设置的位置。
+  const onWatchPosition = useCallback((pos: GeolocationPosition) => {
+    if (roamingRef.current) return
+    const p = { lat: pos.coords.latitude, lng: pos.coords.longitude }
+    setPosition(p)
+    syncMyPosition(p)
+    if (followingRef.current && !pausedByUserRef.current) followIfNeeded(p)
+  }, [syncMyPosition, followIfNeeded])
+
+  // 启动持续定位监听（幂等：先清旧句柄）。
+  const startWatch = useCallback(() => {
+    if (!navigator.geolocation) return
+    if (watchIdRef.current != null) stopWatch()
+    watchIdRef.current = navigator.geolocation.watchPosition(
+      onWatchPosition,
+      () => { /* 定位失败的提示由单次 locate 负责；watch 静默继续 */ },
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 },
+    )
+  }, [onWatchPosition, stopWatch])
+
+  // 开启跟随：清掉手动暂停标志，启动监听；已有位置先居中一次。
+  const enableFollow = useCallback(() => {
+    followingRef.current = true
+    setFollowing(true)
+    pausedByUserRef.current = false
+    startWatch()
+    if (positionRef.current) followIfNeeded(positionRef.current)
+  }, [startWatch, followIfNeeded])
+
+  const disableFollow = useCallback(() => {
+    followingRef.current = false
+    setFollowing(false)
+    stopWatch()
+  }, [stopWatch])
+
+  const toggleFollow = useCallback(() => {
+    if (followingRef.current) disableFollow()
+    else enableFollow()
+  }, [enableFollow, disableFollow])
+
   // 从「标注列表」点击一条：构造与地图点击一致的 hit，复用同一套高亮链路；并把地图定位到该标注。
   const selectFromList = useCallback((g: any) => {
     const hit = {
@@ -381,6 +436,8 @@ export default function GolfNavApp() {
       // 桌面端只有 IP/WiFi 级的百米精度，定位点常远离球场；此时按 16 级缩放只会看到空白，
       // 退到 13 级让球场和当前位置同时可见。
       centerOn(p, false, dist > 2000 ? 13 : 16)
+      // 单次定位成功后进入持续跟随：后续位置更新只平移、不再改缩放。
+      enableFollow()
       const head = acc > 50
         ? `已按当前位置显示（精度约 ${acc} 米；桌面端通常只有百米级）`
         : `定位成功（精度约 ${acc} 米）`
@@ -390,7 +447,7 @@ export default function GolfNavApp() {
     } finally {
       locatingRef.current = false
     }
-  }, [currentHole, center, requestPosition, syncMyPosition, centerOn])
+  }, [currentHole, center, requestPosition, syncMyPosition, centerOn, enableFollow])
 
   const initMap = useCallback((p: Provider) => {
     if (!mapEl.current) return
@@ -425,6 +482,13 @@ export default function GolfNavApp() {
       adapter.setSelection(highlightIdsRef.current)
       if (positionRef.current) {
         adapter.setMarkers([myMarker(positionRef.current, roamingRef.current ? headingRef.current : undefined)])
+      }
+      // 用户手动拖拽或缩放地图后，暂停跟随的自动居中（标记仍随定位更新）；点「定位」/重新开启跟随恢复。
+      const baseMap: any = (adapter as any).map
+      if (baseMap && typeof baseMap.on === 'function') {
+        const pauseFollow = () => { pausedByUserRef.current = true }
+        baseMap.on('dragstart', pauseFollow)
+        baseMap.on('zoomstart', pauseFollow)
       }
       setProvider(p)
       setNotice('')
@@ -469,7 +533,11 @@ export default function GolfNavApp() {
 
   useEffect(() => {
     initMap('amap')
-    return () => { try { adapterRef.current && adapterRef.current.destroy() } catch { /* ignore */ } }
+    return () => {
+      try { if (watchIdRef.current != null && navigator.geolocation) navigator.geolocation.clearWatch(watchIdRef.current) } catch { /* ignore */ }
+      watchIdRef.current = null
+      try { adapterRef.current && adapterRef.current.destroy() } catch { /* ignore */ }
+    }
   }, [])
 
   const ensureGrid = () => {
@@ -759,6 +827,11 @@ export default function GolfNavApp() {
           {course.holes.map((h: any) => <option key={h.number} value={h.number}>第 {h.number} 洞 · Par {h.par}</option>)}
         </select>
         <button onClick={() => { void locate() }} className="rounded border border-slate-300 bg-white px-3 py-1 text-slate-800 shadow-sm hover:bg-slate-100">定位</button>
+        <button
+          onClick={toggleFollow}
+          className={`rounded px-3 py-1 shadow-sm ${following ? 'bg-emerald-600 text-white ring-1 ring-emerald-300' : 'border border-slate-300 bg-white text-slate-800 hover:bg-slate-100'}`}
+          title="持续跟随当前位置：地图只平移、不改变缩放。手动拖图或缩放后会暂停自动居中，点「定位」恢复"
+        >{following ? '📍 跟随中' : '📍 跟随'}</button>
         <button
           onClick={toggleRoaming}
           className={`rounded px-3 py-1 shadow-sm ${roaming ? 'bg-sky-600 text-white ring-1 ring-sky-300' : 'border border-slate-300 bg-white text-slate-800 hover:bg-slate-100'}`}
